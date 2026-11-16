@@ -2,20 +2,20 @@
 // the one the guards were generated from, this classification decides whether only a sync an agent may
 // run is needed (the edit does not widen, and the guard judges calls under it at once) or a person must
 // confirm it at sync (it widens, and the guard keeps judging calls under the configuration last synced).
+// It is the one rule for who may change what agents may do: an agent may apply everything else, and
+// a widening waits for a person's yes at `sync --interactive`.
 // It fails closed: a field with no rule here widens whenever it changes, so a field added to the
 // schema later is a person's decision until someone writes down why it is not. A rule exists only
 // for a field that cannot widen the guard's trust inputs (the commands agents run unprompted, the
-// roots they write, the secrets they are kept from, who passes a gate) in the direction it admits.
-// Work gates, autonomy, testing, browser and command fields remain person-held. Guard and MCP
-// changes are admitted only in the restrictive directions named below, and MCP approvals in any
-// direction while both configurations delegate them to the agent.
+// roots they write, the secrets they are kept from, what grades their work) in the direction it
+// admits. Work, testing, browser and command fields remain person-held. Guard and MCP changes are
+// admitted only in the restrictive directions named below.
 // The rules read the configuration rather than compare the guard policy each side would build: most
 // of what they judge (Compose files and profiles, resettable volumes, the tools guarded, a sibling's
 // operator gate) never reaches that policy, and building it observes the checkouts on disk.
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
-import { effectivePolicy } from '../autonomy.js'
 import { parseCockpitConfigBytes, readBoundedInput } from '../config/load.js'
 import type { ENVIRONMENT_CODES, EnvironmentDiagnostic } from '../environment/contract.js'
 import { hasErrorCode } from '../environment/contract.js'
@@ -23,7 +23,6 @@ import { cockpitCommand } from '../fix-catalogue.js'
 import { McpAllowedTools, type CockpitConfig } from '../schema.js'
 import { sha256Hex } from '../sha256.js'
 import { GUARD_HELD_CALLS, GUARD_UNHELD_CALLS } from '../surfaces/harness-registry.js'
-import { ANSWER_CONFIRMATION_PATH, confirmedAnswers } from './answer-confirmation.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from './local-identity.js'
 
 type PolicyChange = Readonly<{ kind: 'non-widening' }> | Readonly<{ kind: 'widening'; fields: readonly string[] }>
@@ -73,16 +72,9 @@ const toolRestrictionNarrowing: Rule = (before: unknown, after: unknown, at: str
         || gains(from.data[name]!, to.data[name]!)).map(name => `${at}.${name}`)
 }
 
-/** Shared by the edit pin and the unsynced-policy hold so revocation never needs a second approval. */
-export function mcpPolicyWideningFields(before: unknown, after: unknown, at = 'mcp'): readonly string[] {
-    return walk(before ?? {}, after ?? {}, { approved: approvalRemovals, allowed_tools: toolRestrictionNarrowing }, at)
-}
-
-// The edit pin strips mcp.approved from both sides under the same condition, so an approval it lets
-// through is not then held for a person. Tool restrictions stay compared: delegating which servers run
-// does not delegate what their tools may do.
-const delegatedMcpPolicyWideningFields: Rule = (before: unknown, after: unknown, at: string) =>
-    walk(before ?? {}, after ?? {}, { approved: safe, allowed_tools: toolRestrictionNarrowing }, at)
+// Revoking an approval or narrowing a tool list never needs a person.
+const mcpPolicyWideningFields: Rule = (before: unknown, after: unknown, at: string) =>
+    walk(before ?? {}, after ?? {}, { approved: approvalRemovals, allowed_tools: toolRestrictionNarrowing }, at)
 
 // The fields of an existing sibling that say what it is for. Everything else about a sibling decides
 // what the agent may write or read: its directory is a writable root, its environment files are the
@@ -118,9 +110,6 @@ const installPolicies: Rule = (before: CockpitConfig['environment']['install_pol
 
 // Keyed by schema path from the configuration's root.
 const CHANGE_RULES: Rules = {
-    // Removing an entry would claim a person stated an answer nobody stated; policyChange admits the
-    // removal of one an observation recorded as confirmed for exactly the new configuration.
-    unconfirmed: onlyAdds,
     'cockpit.guide_cap': safe,
     'guards.allow': onlyRemoves,
     'guards.deny': onlyAdds,
@@ -167,15 +156,10 @@ export const POLICY_CHANGE_RULE_PATHS: readonly string[] = Object.freeze([...Obj
 
 /**
  * Whether `after` lets agents do anything `before` did not, over the loaded configurations. Only a
- * difference a rule above proves safe is non-widening; every other difference widens. `confirmed`
- * names the answers whose recorded observation matches `after`; only those may leave `unconfirmed`.
+ * difference a rule above proves safe is non-widening; every other difference widens.
  */
-export function policyChange(before: CockpitConfig, after: CockpitConfig, confirmed: ReadonlySet<string> = new Set()): PolicyChange {
-    const unconfirmed: Rule = (from: readonly string[] = [], to: readonly string[] = [], at: string) =>
-        gains(to, from.filter(answer => !confirmed.has(answer))) ? [at] : []
-    // A changed mcp_approve is compared under autonomy like any other decider, so it stays held either way.
-    const delegated = [before, after].every(config => effectivePolicy(config).autonomy.mcp_approve === 'agent')
-    const fields = walk(before, after, { ...CHANGE_RULES, unconfirmed, ...delegated ? { mcp: delegatedMcpPolicyWideningFields } : {} }, '')
+export function policyChange(before: CockpitConfig, after: CockpitConfig): PolicyChange {
+    const fields = walk(before, after, CHANGE_RULES, '')
     return fields.length ? { kind: 'widening', fields: [...new Set(fields)] } : { kind: 'non-widening' }
 }
 
@@ -184,25 +168,22 @@ type GuardConfigChange = Readonly<{ kind: 'unchanged' | 'unrecorded' }> | Policy
 /**
  * How the current configuration differs from the one the guards were generated from. `recorded` is
  * the copy sync kept of that configuration; one missing, or not the configuration `generatedSha256`
- * names, cannot show the edit is safe. `confirmations` is the machine-local record `cockpit confirm`
- * keeps of the observations that confirmed answers.
+ * names, cannot show the edit is safe.
  */
 export function guardConfigChange(generatedSha256: string, recorded: Uint8Array | undefined,
-    current: Readonly<{ sha256: string; config: CockpitConfig }>, confirmations?: Uint8Array): GuardConfigChange {
+    current: Readonly<{ sha256: string; config: CockpitConfig }>): GuardConfigChange {
     if (current.sha256 === generatedSha256) return { kind: 'unchanged' }
     const before = recorded && sha256Hex(recorded) === generatedSha256 ? parseCockpitConfigBytes(recorded) : undefined
-    return before ? policyChange(before, current.config, confirmedAnswers(confirmations, current.config)) : { kind: 'unrecorded' }
+    return before ? policyChange(before, current.config) : { kind: 'unrecorded' }
 }
 
 /** Why a changed configuration needs a person before the guard applies it, for a hold or a check. */
 export function guardConfigHeldReason(change: Exclude<GuardConfigChange, Readonly<{ kind: 'unchanged' | 'non-widening' }>>): string {
     return change.kind === 'widening'
         ? `it widens what agents may do (${change.fields.join(', ')})`
-        : `the configuration they were generated from is not recorded in ${GUARD_LOCAL_PATHS.generatedConfig}, so the edit cannot be shown not to widen what agents may do`
+        : `the configuration they were generated from is missing from ${GUARD_LOCAL_PATHS.generatedConfig} or no longer loads there, so the edit cannot be shown not to widen what agents may do`
 }
 
-/** What restoring the recorded configuration costs, for every message that offers it. */
-export const GUARD_RESTORE_LIMIT = 'an agent can restore only what was recorded, so authority never exceeds the recorded policy, and this may also discard a person\'s unsynced narrowing edit'
 
 /**
  * How the configuration on disk differs from the one the guards on this machine were generated from,
@@ -222,15 +203,18 @@ export async function observeGuardConfigChange(root: string,
     const identityBytes = await local(GUARD_LOCAL_PATHS.identity)
     const identity = identityBytes && parseGuardLocalIdentity(identityBytes.toString('utf8'))
     if (!identity) return undefined
-    return guardConfigChange(identity.configSha256, await local(GUARD_LOCAL_PATHS.generatedConfig), current,
-        await local(ANSWER_CONFIRMATION_PATH))
+    return guardConfigChange(identity.configSha256, await local(GUARD_LOCAL_PATHS.generatedConfig), current)
 }
 
-/** Sync's refusal of an edit that widens the guard, until a person confirms it. */
-export function guardWideningUnconfirmedDiagnostic(fields: readonly string[], configPath: string): EnvironmentDiagnostic {
+/**
+ * Sync's refusal of an edit that widens the guard, or of one it cannot compare because the record of the
+ * configuration last synced is missing or no longer loads, until a person confirms it.
+ */
+export function guardWideningUnconfirmedDiagnostic(fields: readonly string[] | 'unrecorded', configPath: string): EnvironmentDiagnostic {
+    const reason = fields === 'unrecorded' ? guardConfigHeldReason({ kind: 'unrecorded' }) : `widens what agents may do (${fields.join(', ')})`
     return { severity: 'error' as const, target: 'guard',
         code: 'GUARD_CONFIG_WIDENED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED,
-        message: `cockpit.toml changed since the guards were generated and widens what agents may do (${fields.join(', ')}); nothing was written, as sync applies it only once a person confirms it`,
+        message: `cockpit.toml changed since the guards were generated and ${reason}; nothing was written, as sync applies it only once a person confirms it`,
         fix: `a person runs ${cockpitCommand('sync', { config: configPath, args: '--interactive' })} in a terminal outside the agent and CI, reads the change it shows and answers yes, or the change is reverted` }
 }
 
@@ -242,7 +226,7 @@ export async function inspectGuardConfigChange(root: string, configPath: string,
     if (change.kind === 'non-widening') return [{ severity: 'warning' as const, target: 'guard',
         code: 'GUARD_CONFIG_UNSYNCED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_UNSYNCED,
         message: 'cockpit.toml changed since the guards were generated without widening what agents may do; the guard judges agent calls under it, while the generated files still follow the configuration last synced until it is synced',
-        fix: `run ${cockpitCommand('sync', { config: configPath })}; an agent may run it where [autonomy] sync = "agent". If sync refuses the edit, undo it: the guard admits one edit of ${configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}; ${GUARD_RESTORE_LIMIT}` }]
+        fix: `run ${cockpitCommand('sync', { config: configPath })}; an agent may run it while the guard can build its policy from the edit. Where it cannot, calls are judged under the configuration last synced and an agent's sync is refused: correct or revert the edit, or a person runs sync with --interactive` }]
     return [{ severity: 'error' as const, target: 'guard',
         code: 'GUARD_CONFIG_WIDENED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED,
         message: `cockpit.toml changed since the guards were generated and ${guardConfigHeldReason(change)}; ${change.kind === 'widening'

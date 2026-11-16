@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { ANSWER_CONFIRMATIONS, isUnconfirmedAnswerName, unconfirmedFix } from '../guards/answer-confirmation.js'
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path'
 import { parse as parseYaml } from 'yaml'
@@ -117,10 +116,13 @@ interface DocumentConfigurationQuestion {
 export type { GradingProposal } from './derive.js'
 export type { AnswerProvenance, DerivedAnswer, UnconfirmedAnswer } from './render.js'
 
-/** Whether an interview field is a trust decision, which only a person may state or confirm. */
+// The answers that constrain what agents may do or what grades their work. An answers file cannot show
+// a person chose one, so cockpit.toml never presents one it supplied as a person's.
+const TRUST_DECISIONS: ReadonlySet<string> = new Set(['guards', 'testing', 'environment.install_policies', 'sibling', 'work.grading', 'environment.posture'])
+
+/** Whether an interview field is a trust decision, which an answers file cannot show a person made. */
 export function isTrustDecision(field: string): boolean {
-    const confirmation = isUnconfirmedAnswerName(field) ? ANSWER_CONFIRMATIONS[field] : undefined
-    return confirmation?.by === 'person' && confirmation.trustDecision
+    return TRUST_DECISIONS.has(field)
 }
 
 export function isAnswerProvenance(value: unknown): value is AnswerProvenance {
@@ -936,8 +938,8 @@ async function completeConfigurationDocument(
     let inference: InferenceResult | undefined
     let siblingRows: CockpitConfig['sibling'] | undefined
     let siblingAnswerRows: readonly Record<string, unknown>[] = []
-    // Every answer a person did not state is listed in cockpit.toml, so it never reads as theirs; one
-    // accepted as read names the file it was read from instead.
+    // Every answer a person did not state is named in a comment in cockpit.toml, so it never reads as
+    // theirs in the diff; one accepted as read names the file it was read from instead.
     const unconfirmed: UnconfirmedAnswer[] = []
     const derived: DerivedAnswer[] = []
     const record = (field: UnconfirmableAnswer, read: Readonly<{ provenance: AnswerProvenance; source?: string }>) => {
@@ -1210,8 +1212,7 @@ async function completeConfigurationDocument(
     record('work.grading', gradingRead)
     answerIndex += 1
 
-    const candidate = CockpitConfig.safeParse({ ...(unconfirmed.length === 0 ? {} : { unconfirmed: unconfirmed.map(row => row.field) }),
-        ...defaults, cockpit: { ...defaults.cockpit, name,
+    const candidate = CockpitConfig.safeParse({ ...defaults, cockpit: { ...defaults.cockpit, name,
         siblings_root: siblingsRoot },
         sibling: siblingRows, ports: parsedPorts.data, guards: parsedGuards.data, environment, ...(testing ? { testing } : {}),
         work: { ...defaults.work, grading: parsedGrading.data },
@@ -1260,8 +1261,8 @@ async function completeConfigurationDocument(
     const artifact = renderCompleteDocument(candidate.data, SCHEMA_DIRECTIVE, decisions, unconfirmed, derived)
     const diagnostics = diagnosticsFor(attributions, [])
     for (const row of unconfirmed) diagnostics.push({ severity: 'warning', code: 'DOCUMENT_ANSWER_UNCONFIRMED', target: row.field,
-        message: `${unconfirmedReason(row)}, so cockpit.toml lists it under unconfirmed and doctor warns until a person confirms it`,
-        fix: unconfirmedFix([row.field]) })
+        message: `${unconfirmedReason(row)}, so cockpit.toml names it in a comment`,
+        fix: `a person reviews ${row.field} in the cockpit.toml diff and corrects it if it is wrong before committing` })
     if (noGuardHosts) diagnostics.push({ severity: 'info', code: 'DOCUMENT_GUARD_HOSTS_NONE', target: 'guards',
         message: `${noGuardHostsDecision(guardRead.provenance)}, so the guard denies no command by host`,
         fix: 'list the hosts in guards.hosted_db_hosts and guards.vendor_endpoint_hosts and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> once a non-local environment exists' })

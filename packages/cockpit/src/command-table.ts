@@ -1,6 +1,6 @@
 import { SURFACE_TARGETS } from './surfaces/contract.js'
 import { parseArgs, type ParseArgsConfig } from 'node:util'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { isSensitiveGuardName, WRAPPING_COMMANDS } from './guards/evaluator.js'
 import { GUARD_HANDLER_ARGV } from './guards/harness-adapter.js'
 
@@ -14,7 +14,6 @@ export type WorkHandlerIdentifier =
 
 export type HandlerIdentifier = WorkHandlerIdentifier
     | 'check'
-    | 'confirm'
     | 'docs-check'
     | 'env-keys'
     | 'env-schema'
@@ -89,8 +88,6 @@ export interface CommandDefinition {
 }
 
 const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
-    'accept-defaults': 'Accept the displayed defaults with their exact SHA-256 digest',
-    'accept-preview': 'Accept the displayed init preview with its exact SHA-256 digest',
     'accept-reset': 'Accept the displayed answer reset with its exact SHA-256 digest',
     abandon: 'Close the order as abandoned; --note says why',
     clear: 'Serve the sibling from its declared checkout again',
@@ -168,8 +165,8 @@ type AgentLimits = Readonly<{
     /** The positional, by index, that names a directory an agent may name only inside the allowed roots. */
     confined?: number
     // Admitted only where cockpit.toml grants it: browser preapproval, on by default for and allowed
-    // only on isolated data that cannot reach production, or an [autonomy] field set to agent. A dry
-    // run writes nothing, so no grant gates it.
+    // only on isolated data that cannot reach production, or the fixed rule: reset only where a seed is
+    // declared. A dry run writes nothing, so no grant gates it.
     requires?: OrdinaryGrant
     // These flags, which the command otherwise lets an agent run, are admitted where cockpit.toml grants it.
     flagGrant?: Readonly<{ flags: readonly string[]; grant: OrdinaryGrant }>
@@ -219,14 +216,14 @@ const sources = [
     {
         name: 'init',
         stage: 'set-up',
-        summary: 'Preview, then accept, a first cockpit setup for one or more agent tools',
+        summary: 'Preview a first cockpit setup for one or more agent tools, then write it from answers',
         usage: '[<root>] [options]',
         handler: 'init',
         visibility: 'public',
-        agent: { personFlags: ['interactive', 'answers', 'accept-preview', 'accept-defaults', 'scaffold-compose', 'command', 'port', 'with'] },
+        agent: { personFlags: ['interactive', 'answers', 'scaffold-compose', 'command', 'port', 'with'] },
         flags: { target: str(),
             interactive: bool(), json: jsonFlag,
-            answers: str(), 'accept-preview': str(), 'accept-defaults': str(),
+            answers: str(),
             'reset-answer': str(), 'accept-reset': str(),
             'scaffold-compose': str(), command: str(), port: str(), with: str() },
     },
@@ -236,7 +233,6 @@ const sources = [
         summary: 'Clone or locate the declared sibling repositories and link them',
         handler: 'setup',
         visibility: 'public',
-        agent: { flagGrant: { flags: ['write-instruction-pointers', 'write-instruction-files'], grant: 'autonomy-instruction-files' } },
         flags: { config: configFlag, 'write-instruction-pointers': bool(), 'write-instruction-files': bool(), json: jsonFlag },
     },
     {
@@ -278,18 +274,9 @@ const sources = [
         handler: 'tool',
         visibility: 'public',
         // tool add edits only [surfaces] tools, and an added tool never widens what agents may do, so the
-        // agent syncs it as [autonomy] sync allows. tool remove deletes that tool's guard, so it is a person's.
+        // agent syncs it. tool remove deletes that tool's guard, so it is a person's.
         agent: { operations: ['add'] },
         flags: { config: configFlag, 'dry-run': bool(), json: jsonFlag },
-    },
-    {
-        name: 'confirm',
-        stage: 'set-up',
-        summary: 'Confirm an init answer no person stated by running the observation that verifies it',
-        usage: '<answer> [options]',
-        handler: 'confirm',
-        visibility: 'public',
-        flags: configured,
     },
     {
         name: 'upgrade',
@@ -299,8 +286,7 @@ const sources = [
         handler: 'upgrade',
         visibility: 'public',
         // The install is exact and its sync child decides as sync does, so an agent runs the real upgrade
-        // exactly where [autonomy] sync lets it sync.
-        agent: { requires: 'autonomy-sync' },
+        // as it runs sync.
         flags: { config: configFlag, 'dry-run': bool(), json: jsonFlag },
     },
     {
@@ -309,10 +295,9 @@ const sources = [
         summary: 'Write the Compose ownership override and agent files from cockpit.toml',
         handler: 'sync',
         visibility: 'public',
-        // A real sync rewrites the guard's own files from a configuration the guard already pins, and
-        // applies an edit that widens it only once a person confirms it, so it is an agent's only where
-        // [autonomy] sync = "agent".
-        agent: { personFlags: ['interactive'], requires: 'autonomy-sync' },
+        // A real sync applies an edit that widens what agents may do only once a person confirms it with
+        // --interactive, so an agent's sync applies everything else.
+        agent: { personFlags: ['interactive'] },
         flags: { config: configFlag, 'dry-run': bool(), interactive: bool(), json: jsonFlag },
     },
     {
@@ -413,11 +398,12 @@ const sources = [
     {
         name: 'reset',
         stage: 'run-the-stack',
-        summary: 'Preview a reset, then approve it interactively or apply it as [autonomy] reset allows (on the active local Docker context)',
+        summary: 'Preview a reset, then approve it interactively, or apply it where a seed is declared (on the active local Docker context)',
         handler: 'reset',
         visibility: 'public',
-        // Reset deletes stack data, so an agent applies one only where [autonomy] reset = "agent".
-        agent: { personFlags: ['interactive'], requires: 'autonomy-reset' },
+        // Reset deletes stack data, so an agent applies one only where a declared seed refills it; the
+        // preview without --apply deletes nothing.
+        agent: { personFlags: ['interactive'], flagGrant: { flags: ['apply'], grant: 'seeded-reset' } },
         flags: { config: configFlag, interactive: bool(), apply: bool(), json: jsonFlag },
     },
     {
@@ -428,7 +414,7 @@ const sources = [
         handler: 'stacks',
         visibility: 'public',
         // --apply removes only stacks whose checkout is gone; the command itself refuses one that
-        // deletes volumes unless [autonomy] reset allows it.
+        // deletes volumes unless an agent may reset.
         agent: personFlag,
         flags: { config: configFlag, apply: bool(), interactive: bool(), json: jsonFlag },
     },
@@ -455,11 +441,11 @@ const sources = [
     // `up` already has; a selector reaches a stage only through the arguments that stage declares.
     { name: 'test-run', handler: 'test-run', stage: 'test-and-grade', summary: 'Run a declared product test gate and report which tests it selected', visibility: 'public',
         flags: { ...configured, gate: str(), mode: str('canonical'), select: str() } },
-    // A gated step passes for the agent only where [work.gates] says agent; under person the command
-    // waits for the digest a person types after --interactive, which no agent invocation carries.
+    // A step that would let the agent lower the bar its own work is held to waits for the digest a
+    // person types after --interactive, which no agent invocation carries.
     { name: 'work status', handler: 'work-status', stage: 'test-and-grade', summary: 'Report each work order, its state and how it closed', visibility: 'public',
         flags: { ...configured, 'work-order': str() } },
-    { name: 'work accept', handler: 'work-accept', stage: 'test-and-grade', summary: 'Accept a work order, or a change to an accepted one, as [work.gates] allows', visibility: 'public',
+    { name: 'work accept', handler: 'work-accept', stage: 'test-and-grade', summary: 'Accept a work order, or a change to an accepted one', visibility: 'public',
         agent: personFlag,
         flags: { ...configured, 'work-order': workOrderFlag, interactive: bool() } },
     { name: 'work check', handler: 'work-check', stage: 'test-and-grade', summary: "Run every criterion's check and the order's gates", visibility: 'public',
@@ -470,10 +456,9 @@ const sources = [
     { name: 'work decide', handler: 'work-decide', stage: 'test-and-grade', summary: 'Resolve a recorded decision: write or cite its decision record, or say it is not lasting', visibility: 'public',
         flags: { ...configured, 'work-order': workOrderFlag, decision: str(), record: bool(), 'record-file': str(),
             supersedes: str(), none: bool(), reason: str() } },
-    { name: 'work answer', handler: 'work-answer', stage: 'test-and-grade', summary: 'Answer an open question on an order, as [work.gates] allows', visibility: 'public',
-        agent: personFlag,
-        flags: { ...configured, 'work-order': workOrderFlag, question: str(), text: str(), interactive: bool() } },
-    { name: 'work acknowledge', handler: 'work-acknowledge', stage: 'test-and-grade', summary: 'Acknowledge that an order weakened tests, as [work.gates] allows', visibility: 'public',
+    { name: 'work answer', handler: 'work-answer', stage: 'test-and-grade', summary: 'Answer an open question on an order', visibility: 'public',
+        flags: { ...configured, 'work-order': workOrderFlag, question: str(), text: str() } },
+    { name: 'work acknowledge', handler: 'work-acknowledge', stage: 'test-and-grade', summary: 'Acknowledge that an order weakened tests', visibility: 'public',
         agent: personFlag,
         flags: { ...configured, 'work-order': workOrderFlag, note: str(), interactive: bool() } },
     // Grading hands the order to an evaluator running apart from the agent that did the work, unless
@@ -491,7 +476,7 @@ const sources = [
     // holder gone where a pid probe cannot see: the lock's host and the containers cockpit labels.
     { name: 'work recover', handler: 'work-recover', stage: 'test-and-grade', summary: "Inspect or remove a crashed command's work-order lock", visibility: 'public',
         flags: { ...configured, 'work-order': workOrderFlag, apply: bool() } },
-    { name: 'work verify', handler: 'work-verify', stage: 'test-and-grade', summary: 'Check every record against its order; in CI, pass the steps gated on ci', visibility: 'public',
+    { name: 'work verify', handler: 'work-verify', stage: 'test-and-grade', summary: 'Check every record against its order', visibility: 'public',
         flags: configured },
     { name: 'grade', handler: 'grade-criteria', stage: 'test-and-grade', summary: 'Independently grade uncommitted work against a criteria file, with no work order', visibility: 'public',
         flags: { ...configured, criteria: str(), evaluator: str() } },
@@ -525,7 +510,25 @@ export const internalCommands: readonly InternalCommandDefinition[] = Object.fre
     argv: GUARD_HANDLER_ARGV, options: Object.freeze({ harness: Object.freeze({ type: 'string' }) }),
 })])
 
-export type OrdinaryGrant = 'browser-preapproval' | 'autonomy-sync' | 'autonomy-reset' | 'autonomy-instruction-files'
+export type OrdinaryGrant = 'browser-preapproval' | 'seeded-reset'
+
+/**
+ * The configuration file the cockpit command `args` spell would load, as the CLI resolves it from `cwd`:
+ * its --config, or for init the cockpit.toml of the root it names. Undefined when it loads none, such as
+ * a command missing --config, which the CLI refuses itself; 'unclear' when its words do not settle one.
+ */
+export function commandConfiguration(args: readonly string[], cwd: string): string | undefined | 'unclear' {
+    const spelling = commandSpelling(args)
+    const definition = commands.find(row => row.name === spelling.name)
+    if (!definition) return undefined
+    const separator = spelling.rest.indexOf('--')
+    const own = separator < 0 ? spelling.rest : spelling.rest.slice(0, separator)
+    if (own.filter(word => word === '--config' || word.startsWith('--config=')).length > 1) return 'unclear'
+    const { values, positionals } = parseArgs({ args: [...own], options: definition.options, strict: false, allowPositionals: true })
+    if (definition.name === 'init') return join(resolve(cwd, String(positionals[0] ?? '.')), 'cockpit.toml')
+    if (values.config === undefined) return undefined
+    return typeof values.config === 'string' && values.config !== '' ? resolve(cwd, values.config) : 'unclear'
+}
 
 /**
  * Whether an agent may run the cockpit command `args` spell (the words after the launcher) in `cwd`

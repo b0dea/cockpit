@@ -42,9 +42,8 @@ Replace `claudecode` with `codexcli` or `opencode`, or list several, yours first
 later.
 
 A single product repository gets an in-repo cockpit: `cockpit.toml`, the instructions and the guard
-live in the repository itself, with `siblings_root = "."`. `init` previews every file and accepts
-only the exact digest of that preview, then asks for each fact it cannot read from the repository
-([The init interview](#the-init-interview)).
+live in the repository itself, with `siblings_root = "."`. `init` previews every file, then asks
+for each fact it cannot read from the repository ([The init interview](#the-init-interview)).
 
 To adopt the instructions and guards before the runtime, answer `environment.compose_files` with
 `[]`, even if the repository has Compose files. `init` skips the machine floor and runtime posture
@@ -60,9 +59,10 @@ npx --no cockpit check --config ./cockpit.toml
 ```
 
 - `sync --dry-run` lists every write and removal. Read it.
-- `sync` publishes all generated files as one recoverable transaction. It refuses to remove a stale
-  generated file unless `[autonomy] stale_delete` lets it, or a person approves exactly that removal
-  with `sync --interactive`.
+- `sync` publishes all generated files as one recoverable transaction. It also removes
+  files it generated before and no longer generates. An agent's `sync` refuses a change to
+  `cockpit.toml` that widens what agents may do; a person applies it with `sync --interactive` and
+  one yes ([Who decides](safety-and-autonomy.md#who-decides)).
 - `check` confirms nothing has drifted and never changes a file.
 
 Review the output and commit it. Run `npx --no cockpit doctor --config ./cockpit.toml` for what is
@@ -91,16 +91,15 @@ A clean-looking configuration with invented values in it is the failure cockpit 
 The agent follows these rules for the whole setup:
 
 1. **Ask the human first, and wait for a yes,** before creating a Git remote or hosted repository,
-   running a destructive command (`reset`, `sync --interactive` removals, deleting files), moving a
-   team's settings file under `cockpit/adopted/`, accepting an `init` digest, or changing a product repository in any way
+   running a destructive command (`reset`, deleting files), moving a
+   team's settings file under `cockpit/adopted/`, or changing a product repository in any way
    the next sentences do not allow (adopting a test framework or a dependency, for example). A
    person approves or runs staging and the commit of the cockpit: the agent hands them the command.
    A Dockerfile, Compose file or `.env.schema` the product needs goes on a new branch in that
    sibling's checkout, started with no uncommitted changes, and the hand-back shows its diff against
    the branch it started from. Nothing is pushed.
-2. **Show the exact preview before asking:** the `sync --dry-run` listing, the `init` preview with
-   its `previewSha256`, the answers file or the defaults digest. Consent binds to those bytes, and a
-   digest from anything but the latest pending run is refused.
+2. **Show the exact preview before asking:** the `sync --dry-run` listing, the `init` preview and
+   the answers file.
 3. **Never invent a configuration value.** A port, image, command, health check, purpose or name
    comes from a file the agent read or from the human; otherwise it leaves a named gap and asks.
 4. **Only what init read exactly is the agent's to accept.** `init` labels each proposal with
@@ -117,11 +116,9 @@ The agent follows these rules for the whole setup:
    explicit yes to that exact change, and a product file goes on a branch as rule 1 says. Every
    answer the agent chose itself is marked `"agent-default"` (below), and its report ends with each
    default, its field and its value.
-7. **Confirm a default only by observing it.** The agent clears an `unconfirmed` entry only with
-   `cockpit confirm`, which runs the observation that verifies that answer on this machine and
-   records it. The trust decisions (`guards`, `testing`, `environment.install_policies`, `sibling`,
-   `environment.posture`, `work.grading`) and the answers no observation settles (`cockpit.name`,
-   `estate.runnable`, `environment.test_data`) stay a person's (below).
+7. **A person reviews the diff before the commit.** `init` writes only inside the cockpit root. A
+   widening of what agents may do waits for the person's `sync --interactive` yes
+   ([Safety and autonomy](safety-and-autonomy.md#who-decides)).
 
 These rules are instructions, not enforcement. The guard cockpit installs later blocks some
 commands; see [Safety and autonomy](safety-and-autonomy.md).
@@ -152,52 +149,19 @@ so the value is never recorded as theirs:
 guards = "agent-default"
 ```
 
-Each such field is written under `unconfirmed` at the top of `cockpit.toml`, listed in
-`result.unconfirmed`, and reported by `doctor` as `DECLARATION_UNCONFIRMED` until it is confirmed.
-An `environment.machine` floor the file does not attribute is recorded as unattributed, because no
+Each such field is named in a `# Not stated by a person: …; review it in this diff.` comment in
+`cockpit.toml`, so the person who reviews the diff sees which values nobody chose. An
+`environment.machine` floor the file does not attribute is recorded as unattributed, because no
 file records its free disk or cold start time.
 
-An agent can write an answers file, so the file cannot show that a person made a trust decision.
-Every trust answer it supplies (`sibling`, `environment.install_policies`, `environment.posture`,
-`testing`, `guards`, `work.grading`) is written under `unconfirmed` whatever its `[provenance]` says.
-Until a person confirms it, the stronger default holds where one exists: grading runs as
-`independent`, and the guard admits no install policy's build or test command. A person driving
-onboarding with an answers file confirms each one afterwards, as below: `cockpit confirm` refuses
-them.
-
-Three answers are facts about this machine and the running product, so an agent confirms them by
-observation, one at a time:
-
-```sh
-./node_modules/@b00dea/cockpit/bin/cockpit.mjs confirm ports.bases --config cockpit.toml --json
-```
-
-| Answer | The observation that confirms it |
-|---|---|
-| `ports.bases` | `preflight` passes with the stack up and its port family leased on the declared bases |
-| `environment.compose_files` | `check` passes, which parses the Compose files and resolves the stack's topology |
-| `environment.machine` | the runtime measured on this machine meets the declared memory, CPU and free-disk floor |
-
-When the observation passes, `confirm` removes that one entry from `unconfirmed` (every other byte
-stays) and records what ran, when, its result and an evidence digest in
-`.cockpit/local/answer-confirmations`. That file is machine-local and ignored, and the guard denies
-agent writes to it. The guard treats the removed entry as non-widening only while that record
-matches the configuration on disk, so the agent's own sync applies it where
-`[autonomy] sync = "agent"`; any other edit, or a clone without the record, leaves it to a person. A
-failed observation is refused with `CONFIRM_OBSERVATION_FAILED` beside the diagnostics that explain
-it.
-
-Every other answer is refused with `CONFIRM_PERSON_REQUIRED`. A person confirms the value with
-whoever owns the product, corrects it if it is wrong, deletes its `unconfirmed` entry and its
-`# Unconfirmed` comment, and runs `cockpit sync --interactive` in a terminal outside the agent. That
-asks them to accept a confirmed value weaker than the policy the last sync recorded, such as
-`work.grading = "off"`, and then lists the files it wrote, `.cockpit/policy.json` among them the
-first time, for the person to commit.
+An agent can write an answers file, so the file cannot show that a person made a trust decision. Every
+trust answer it supplies (`sibling`, `environment.install_policies`, `environment.posture`,
+`testing`, `guards`, `work.grading`) is named in the same comment whatever its `[provenance]` says.
 
 A field whose `interview.outstanding` entry says `confirmedBy = "agent"` can instead be marked
 `"derived"`, with or without a value: `init` answers it with the value it read, refuses
 (`DOCUMENT_CONFIGURATION_ANSWER_NOT_DERIVED`) a value that differs or a field it read no complete
-value for, and writes a `# Derived:` comment naming the source instead of an `unconfirmed` entry:
+value for, and writes a `# Derived:` comment naming the source:
 
 ```toml
 [provenance]
@@ -234,19 +198,21 @@ only warn, with `GIT_WORKING_TREE_DIRTY`.
 ## The init interview
 
 `init` reads the repositories under the directory and asks for every fact it cannot read from them.
-Preview first, then accept in a terminal:
+Bare `init` previews and writes nothing; it lists the interview so an agent can prepare answers.
+`--answers <file>` writes from an answers file, and `--interactive` asks the questions at a terminal
+and writes:
 
 ```sh
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs init "$(pwd)" --target <tool> --json
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs init "$(pwd)" --target <tool> --answers ./answers.toml --json
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs init "$(pwd)" --target <tool> --interactive
 ```
 
-The preview writes nothing. It returns the setup skill files it would install, under `writes` every
-other path `init` creates or changes once accepted (`cockpit.toml`, the root **AGENTS.md**,
-**package.json**, **.gitignore** and each tool's files), a `previewSha256` digest and the next step; `--interactive` asks you to confirm the displayed preview with `yes`, binding its digest
-internally. It also confirms the concrete configuration defaults without hash transcription. Later
-authenticated draft stages reuse the accepted preview. Re-running resumes where it stopped, and a
-changed repository invalidates earlier answers. What you get depends on what it finds:
+The preview returns the setup skill files it would install and under `writes` every other path
+`init` creates or changes (`cockpit.toml`, the root **AGENTS.md**, **package.json**, **.gitignore**
+and each tool's files). The configuration defaults are written as drafted. To resume an init that
+stopped, rerun it with the same `--answers` file (or `--interactive`); a changed repository
+invalidates earlier answers. What you get depends on what it finds:
 
 - **A product repository** (a Git checkout with a language manifest, Dockerfile or Compose file)
   gets an in-repo cockpit and declares only that repository. For a folder of its own beside the
@@ -286,26 +252,21 @@ Sources `init` could not use, including a runtime it could not measure, are list
 ### Without a terminal
 
 An agent or CI job has no terminal, so `--interactive` refuses with `INIT_TERMINAL_REQUIRED`. Pass
-consent and answers as arguments instead; there is no blanket `--yes`.
+the answers as a file instead.
 
-1. Run the `--json` preview. It returns the `previewSha256` and, under `interview.outstanding`,
-   every field the interview will still ask, each with a `why`, its `proposals` and `confirmedBy`.
-2. Write the answers as TOML keyed by field, and show them to the human with the digest.
-3. Rerun with `--accept-preview <previewSha256>` and `--answers <file>`. The run stops at the first
-   unanswered field, with `interview.outstanding` listing only the fields the file still lacks, or at
-   `configuration.defaults`, where `result.question.document` is the review
-   draft (an array of lines). Its provenance comments split the surfaced defaults in two: schema
-   defaults and the cockpit's own layout, which the agent accepts, and the security boundaries
-   (protected branches, guard allow and deny lists, approved MCP servers, resettable volumes,
-   generated host paths), which a person confirms. `result.question.expectedSha256` covers only the
-   second group, and the human reads it before accepting that digest.
-4. Rerun with `--accept-defaults <expectedSha256>` as well. A digest that is not the pending one is
-   refused (`INIT_PREVIEW_NOT_ACCEPTED`, `INIT_DEFAULTS_NOT_ACCEPTED`).
+1. Run the `--json` preview. Under `interview.outstanding` it lists every field the interview will
+   still ask, each with a `why`, its `proposals` and `confirmedBy`.
+2. Write the answers as TOML keyed by field.
+3. Rerun with `--answers <file>`. The run stops at the first unanswered field, with
+   `interview.outstanding` listing only the fields the file still lacks; once all are answered it
+   writes.
 
 ```sh
-./node_modules/@b00dea/cockpit/bin/cockpit.mjs init "$(pwd)" --target <tool> --accept-preview <previewSha256> --answers ./answers.toml --json
-./node_modules/@b00dea/cockpit/bin/cockpit.mjs init "$(pwd)" --target <tool> --accept-preview <previewSha256> --answers ./answers.toml --accept-defaults <expectedSha256> --json
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs init "$(pwd)" --target <tool> --answers ./answers.toml --json
 ```
+
+The person reviews the written diff before committing; answers no person stated are named in
+`# Not stated by a person: …` comments in it.
 
 For a directory with one library and nothing runnable, the whole answers file is:
 
@@ -334,7 +295,7 @@ grading = "independent"
 
 | Field | Answer |
 |---|---|
-| `cockpit.root` | `"dedicated"` or `"in-repo"`; asked only where both are possible, and a digest flag takes `"in-repo"` |
+| `cockpit.root` | `"dedicated"` or `"in-repo"`; asked only where both are possible, and an answers file without it takes `"in-repo"` |
 | `cockpit.name` | always asked; the root directory's name is proposed. It scopes Compose projects, state and generated files ([Rename a cockpit](#rename-a-cockpit)) |
 | `sibling` | one `[[sibling]]` table per repository |
 | `estate.runnable` | one table per repository whose run command was unknown, keyed by its slug |
@@ -354,7 +315,7 @@ every run; a different value for a recorded field is refused (`INIT_ANSWER_CONFL
 anything is published. Preview resetting one, and every later dependent answer, with
 `cockpit init <root> --target <tool> --reset-answer <field> --json`, then repeat with
 `--accept-reset <previewSha256>`. Once `cockpit.toml` is written, recorded answers can no longer be
-reset: edit the value in `cockpit.toml` and rerun `init` with `--accept-preview`.
+reset: edit the value in `cockpit.toml` and rerun `init` with the same answers file.
 
 ## Chapter 2: several repositories and a Compose stack
 
@@ -421,8 +382,8 @@ same checks.
 
 ### Start from init
 
-Preview for one harness, then accept. Replace `<tool>` with its [target](#install-cockpit); the
-first command writes nothing, and the second needs a terminal to confirm that exact preview:
+Preview for one harness, then answer. Replace `<tool>` with its [target](#install-cockpit); the
+first command writes nothing, and the second asks the questions at a terminal and writes:
 
 ```sh
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs init . --target <tool> --json
@@ -506,7 +467,7 @@ tools` does not list.
 
 Retire the old path only when everything it did passes under cockpit (`check`, `up` and `preflight`
 for the same configuration and runtime) and you know how to roll back. Destructive environment
-commands, stale-output removal, changes to external services and publication stay explicit human
+commands, changes to external services and publication stay explicit human
 decisions.
 
 ## Add or remove a repository
@@ -619,7 +580,8 @@ fixed once per run ([Choose the Docker daemon](environment.md#choose-the-docker-
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config ./cockpit.toml
 ```
 
-Review and commit the regenerated files. [Upgrade cockpit](harness-surfaces.md#upgrade-cockpit) has
+Review and commit the regenerated files. If the new version widens what agents may do, the first
+sync waits for a person's `sync --interactive` yes. [Upgrade cockpit](harness-surfaces.md#upgrade-cockpit) has
 the details.
 
 ## Install from source

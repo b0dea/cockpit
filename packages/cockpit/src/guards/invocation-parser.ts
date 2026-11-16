@@ -42,7 +42,7 @@ export interface ParsedInvocation {
     /** It runs as a background job, which outlives the call: its list ends in `&`, or `nohup` or `setsid` detaches it. */
     readonly background?: true
 }
-/** The new text a file tool call carries, as the payload spells it, kept so the policy pin can apply it. */
+/** The new text a file tool call carries, as the payload spells it, kept so the guard can judge the text an instruction file would hold. */
 export type GuardFileContent =
     | Readonly<{ kind: 'replace'; path: string; old: string; new: string; all: boolean }>
     | Readonly<{ kind: 'write'; path: string; content: string }>

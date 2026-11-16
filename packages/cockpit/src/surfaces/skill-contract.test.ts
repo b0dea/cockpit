@@ -6,9 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-import { effectivePolicy } from '../autonomy.js'
 import { runCli } from '../cli.js'
-import { Autonomy, Work } from '../schema.js'
 import { commands } from '../command-table.js'
 
 import { SURFACE_TARGETS, type SurfaceTarget } from './contract.js'
@@ -501,18 +499,18 @@ describe('shipped procedure commands', () => {
             const handler = async () => { invoked = true; return { status: 0, result: null, diagnostics: [] } }
             let output = ''
             const sink = { write: (text: string) => { output += text; return true } }
-            const status = await runCli(argv, { stdout: sink, stderr: sink, confirmInit: async preview => preview.previewSha256,
-                confirmWorkOrder: async candidate => candidate.digest, confirmStaleRemoval: async () => undefined }, {
+            const status = await runCli(argv, { stdout: sink, stderr: sink,
+                confirmWorkOrder: async candidate => candidate.digest, confirmWidening: async () => true }, {
                 init: async input => { invoked = true; return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: [], result: { stage: 'surface-previewed', root: input.root, target: input.target, previewSha256: 'a'.repeat(64), files: [] } } },
                 // The documented work commands are the agent's; a gate the policy gives an agent needs no binding.
                 beginOperatorWorkApplication: async () => { invoked = true; return { status: 0, result: null, diagnostics: [] } },
                 // A prune reads the machine's stacks, which a routing check has none of.
                 beginStacksPrune: async () => { invoked = true; return { status: 0, result: null, diagnostics: [] } },
-                // The policy sync decides by, in place of a cockpit.toml on disk.
-                loadPolicy: async () => ({ current: effectivePolicy({ work: Work.parse({}), autonomy: Autonomy.parse({}) }), record: async () => {} }),
+                // What sync decides by, in place of a cockpit.toml on disk.
+                loadPolicy: async () => ({ configSha256: 'a'.repeat(64), widened: [], unrecorded: false, seeded: false, approveMcp: async () => 'a'.repeat(64) }),
                 ...Object.fromEntries(commands.filter(command => command.handler !== 'init').map(command => [command.handler, handler])),
                 sync: async input => { invoked = true; return { status: 0, diagnostics: [], result: {
-                    action: 'sync' as const, dryRun: input.dryRun === true, changes: [],
+                    action: 'sync' as const, dryRun: input.dryRun === true, sourceSha256: 'a'.repeat(64), changes: [],
                 } } },
             }, { env: humanEnvironment })
             expect(status, `${argv.join(' ')}: ${output}`).toBe(0)

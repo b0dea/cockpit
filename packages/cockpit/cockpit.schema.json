@@ -2,29 +2,6 @@
   "$schema": "http://json-schema.org/draft-04/schema#",
   "type": "object",
   "properties": {
-    "unconfirmed": {
-      "description": "Answers no person has stated yet; init writes them and doctor reports them.",
-      "minItems": 1,
-      "maxItems": 12,
-      "type": "array",
-      "items": {
-        "type": "string",
-        "enum": [
-          "cockpit.name",
-          "sibling",
-          "estate.runnable",
-          "ports.bases",
-          "environment.install_policies",
-          "environment.test_data",
-          "environment.compose_files",
-          "environment.machine",
-          "environment.posture",
-          "testing",
-          "guards",
-          "work.grading"
-        ]
-      }
-    },
     "cockpit": {
       "type": "object",
       "properties": {
@@ -219,6 +196,7 @@
                       "description": "JSON file in the sibling with a top-level mcpServers object, as agent tools read from .mcp.json."
                     },
                     "provenance": {
+                      "description": "Where this MCP source declaration came from.",
                       "type": "object",
                       "properties": {
                         "source": {
@@ -248,59 +226,17 @@
                           "maxLength": 4096,
                           "pattern": "\\S",
                           "description": "Why the value is what it is."
-                        },
-                        "confirmed": {
-                          "description": "Set to true once a person has confirmed an inferred value; inferred values require it.",
-                          "type": "boolean"
                         }
                       },
                       "required": [
                         "source",
                         "reason"
                       ],
-                      "additionalProperties": false,
-                      "description": "Where this MCP source declaration came from.",
-                      "anyOf": [
-                        {
-                          "not": {
-                            "required": [
-                              "kind"
-                            ]
-                          }
-                        },
-                        {
-                          "properties": {
-                            "kind": {
-                              "enum": [
-                                "declared",
-                                "measured"
-                              ]
-                            }
-                          }
-                        },
-                        {
-                          "properties": {
-                            "kind": {
-                              "enum": [
-                                "inferred"
-                              ]
-                            },
-                            "confirmed": {
-                              "enum": [
-                                true
-                              ]
-                            }
-                          },
-                          "required": [
-                            "confirmed"
-                          ]
-                        }
-                      ]
+                      "additionalProperties": false
                     }
                   },
                   "required": [
-                    "path",
-                    "provenance"
+                    "path"
                   ],
                   "additionalProperties": false
                 },
@@ -814,7 +750,7 @@
         },
         "approved": {
           "default": {},
-          "description": "Approved MCP servers, each mapped to the sha256 of the declaration a person reviewed; others stay disabled.",
+          "description": "Approved MCP servers, each mapped to the sha256 of the declaration a person approved; sync --interactive writes them. Others stay disabled.",
           "type": "object",
           "additionalProperties": false,
           "patternProperties": {
@@ -885,118 +821,6 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 7200
-        },
-        "gates": {
-          "description": "Who passes each work-order decision.",
-          "default": {},
-          "type": "object",
-          "properties": {
-            "accept": {
-              "description": "Who accepts a draft work order: agent, person or ci. Default agent.",
-              "type": "string",
-              "enum": [
-                "agent",
-                "person",
-                "ci"
-              ]
-            },
-            "amend": {
-              "description": "Who accepts a changed contract. Default agent. Removing an accepted criterion or gate always needs a person or ci; an agent's rewrite of a criterion, scope, non-goal or objective is judged at the next grade, and needs a person under checks grading; under off nothing judges it.",
-              "type": "string",
-              "enum": [
-                "agent",
-                "person",
-                "ci"
-              ]
-            },
-            "answer": {
-              "description": "Who answers an open question on an order. Default agent.",
-              "type": "string",
-              "enum": [
-                "agent",
-                "person",
-                "ci"
-              ]
-            },
-            "signoff": {
-              "description": "Who closes a graded order. Default agent.",
-              "type": "string",
-              "enum": [
-                "agent",
-                "person",
-                "ci"
-              ]
-            },
-            "acknowledge": {
-              "description": "Who acknowledges that an order weakened tests, which checks grading otherwise fails; under checks a person or CI acknowledges even where this says agent, because the acknowledgement alone passes the check there; under independent, subagent and self grading the acknowledgement is context for the verdict, and under off it is only recorded. Default agent.",
-              "type": "string",
-              "enum": [
-                "agent",
-                "person",
-                "ci"
-              ]
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-    "autonomy": {
-      "description": "Which decisions an agent may take without a person.",
-      "default": {},
-      "type": "object",
-      "properties": {
-        "sync": {
-          "description": "Who may run a sync that writes: agent, person or ci. Default agent.",
-          "type": "string",
-          "enum": [
-            "agent",
-            "person",
-            "ci"
-          ]
-        },
-        "stale_delete": {
-          "description": "Who approves sync deleting files cockpit generated before and no longer generates. Default agent. An unchanged MCP-only file of a listed tool whose servers are no longer written goes without this approval, because removing it only narrows access.",
-          "type": "string",
-          "enum": [
-            "agent",
-            "person",
-            "ci"
-          ]
-        },
-        "reset": {
-          "description": "Who may apply a reset, which deletes stack data. Default person.",
-          "type": "string",
-          "enum": [
-            "agent",
-            "person",
-            "ci"
-          ]
-        },
-        "mcp_approve": {
-          "description": "Who approves a declared MCP server: person records each digest in [mcp.approved]; agent lets sync enable every declared server as declared, so an agent that writes a sibling MCP source starts that process outside the guard. Default person.",
-          "type": "string",
-          "enum": [
-            "agent",
-            "person"
-          ]
-        },
-        "confirm_answers": {
-          "description": "Who confirms an unconfirmed init answer that is neither a trust decision nor settled by an observation (cockpit.name, estate.runnable, environment.test_data): person, or agent, which lets cockpit confirm record it as the agent's decision. Trust decisions stay a person's. Default person.",
-          "type": "string",
-          "enum": [
-            "agent",
-            "person"
-          ]
-        },
-        "instruction_files": {
-          "description": "Who may run setup --write-instruction-files and --write-instruction-pointers, which write the sibling AGENTS.md, CLAUDE.md and guide links setup proposes: person, or agent, which the guard then admits. An agent can make the same edits with its own tools. Default person.",
-          "type": "string",
-          "enum": [
-            "agent",
-            "person"
-          ]
         }
       },
       "additionalProperties": false

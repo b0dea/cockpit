@@ -17,7 +17,6 @@ AGENTS.md  CLAUDE.md                 root instructions, one per tool family
 .codex/config.toml  .codex/hooks.json  Codex sandbox and guard hook
 .opencode/plugin/  opencode.jsonc    OpenCode guard plugin and permissions (when listed)
 .cockpit/guards/bash-guard.sh        the one guard all three tools call
-.cockpit/policy.json                 the policy `sync` last ran under
 ```
 
 The repository action at `.github/actions/cockpit-check/action.yml` runs only `cockpit check`.
@@ -28,8 +27,8 @@ cockpit.
 
 Cockpit owns each generated entry as a whole file or a marked region inside a shared file. The
 ownership manifest records the expected type, bytes and sources. Its digest catches accidental
-changes; it does not prove who wrote a file in the past. Removing a stale entry needs
-[separate approval](environment.md#check-and-sync). A team's existing `.claude/settings.json`,
+changes; it does not prove who wrote a file in the past. Sync removes a stale entry
+it generated before ([Check and sync](environment.md#check-and-sync)). A team's existing `.claude/settings.json`,
 `.codex/config.toml` or `.codex/hooks.json` is not overwritten:
 [adopt it](getting-started.md#adopt-existing-agent-settings).
 
@@ -81,8 +80,7 @@ verified either tool loads those files, and neither gets a guard hook.
 `claudecode`, `codexcli` and `opencode`, the tools whose guard is measured, and must name at least
 one of them. A tool left out gets no files, and doctor and check give no advice about it.
 `./node_modules/@b00dea/cockpit/bin/cockpit.mjs tool add <tool> --config <your cockpit.toml>` and `tool remove` edit only that
-line (`--dry-run` previews). A removed tool's files are deleted only after a person approves the
-stale-file removals with `yes` in `sync --interactive`.
+line (`--dry-run` previews). A removed tool's files are deleted by the next `sync`.
 
 ### Trust the Codex hook
 
@@ -224,13 +222,18 @@ restriction.
 
 ## MCP servers and restrictions
 
-`[mcp.approved]` maps each approved server name to the sha256 of the declaration a human reviewed:
+A harness starts an MCP server outside the guard, so a server stays disabled until a person approves
+it. `[mcp.approved]` maps each approved server name to the sha256 of the declaration the person
+reviewed:
 its command, arguments, working directory relative to the cockpit, and environment names. The
 declaration lives in a sibling's file, which an agent can edit, so a server whose declaration
 changed is no longer approved. A declared server absent from the list, or whose digest differs, is
 rendered disabled for every harness (for Claude Code through `disabledMcpjsonServers`, because it
 ignores `disabled` in `.mcp.json`), and `sync` and `check` report `MCP_NOT_APPROVED` with the digest
-to approve. A name without a declaration reports `MCP_APPROVAL_UNKNOWN`. Cockpit rejects conflicting
+to approve. A person approves with the one yes at `sync --interactive`, which shows each server's
+name, what it runs, the environment variable names it is given or the headers it sends (their
+references, never values), and where it is declared, and writes the entry; nobody types or copies a hash.
+An approval whose name no source declares refuses every sync (`MCP_APPROVAL_UNKNOWN`) until the entry is deleted, so a yes never covers a server it did not show. Cockpit rejects conflicting
 commands for one server, credential-like arguments, environment values that are not same-name
 references, and working directories outside the declared sibling.
 
@@ -271,12 +274,11 @@ Each name is exact. Every other tool from that server, including a newly added o
 empty list denies all tools; an absent server has no restriction. The server must be declared, and
 overlapping native server namespaces are refused.
 
-Widening the list needs the same approval as other increases in agent authority, and removing a
-server's list needs a person. Adding a restriction or removing tools narrows access, so an agent can
-sync it when `[autonomy] sync = "agent"`, whatever `stale_delete` says: when the restriction leaves
-a listed tool with no servers, `sync` removes that tool's MCP-only file (`.mcp.json` or
-`.cursor/mcp.json`) as long as its bytes are still what cockpit generated. A hand-edited file is a
-conflict, and any other stale path in the same sync still needs the stale-removal approval.
+Widening the list needs a person's yes at `sync --interactive`, as other increases in agent
+authority do, and so does removing a server's list. Adding a restriction or removing tools narrows
+access, so an agent can sync it: when the restriction leaves a listed tool with no servers, `sync`
+removes that tool's MCP-only file (`.mcp.json` or `.cursor/mcp.json`) as long as its bytes are
+still what cockpit generated. A hand-edited file is a conflict.
 
 | Tool | Mechanism |
 |---|---|
@@ -293,10 +295,8 @@ proxy server requests. Claude's guard reads only tool metadata from a bounded na
 (at most 1 MiB); larger envelopes are refused.
 
 This policy covers MCP **tool calls**, not resources, resource templates or prompts. It restricts
-one declared server namespace, not every route to the service. With
-`[autonomy] mcp_approve = "agent"`, an agent can register a new server or alias without that list,
-so this is not a read-only sandbox against delegated approval. Use `mcp_approve = "person"` when new
-connections must require human review, and review every approved process and route independently.
+one declared server namespace, not every route to the service. Review every approved process and
+route independently.
 
 ### Remote servers
 
@@ -434,9 +434,8 @@ An upgrade replaces the generated files that guard and instruct every agent, so 
 `upgrade` resolves the target, refuses one that is not newer than the installed version unless you
 name it, detects the package manager from the one lockfile at the cockpit root, installs the exact
 version as a dev dependency, then runs `npx --no cockpit sync --config <path>` in a new process so
-the new version renders. Sync's output and exit code pass through: it removes stale generated files
-under `[autonomy] stale_delete = "agent"`, and otherwise asks a person to confirm the displayed removals with
-`sync --interactive`. It ends by printing the `Upgrade:` lines from the installed `CHANGELOG.md`
+the new version renders. Sync's output and exit code pass through: it removes stale generated files, and an upgrade
+that widens what agents may do waits for a person's `sync --interactive` yes. It ends by printing the `Upgrade:` lines from the installed `CHANGELOG.md`
 between the two versions (each names a step `sync` does not do), or the npm page when there is no
 changelog.
 
@@ -445,8 +444,8 @@ latest lookup with an older version. `upgrade` then refuses with `UPGRADE_LATEST
 instead of calling the install current, names the registry's real latest when it can read it, and
 asks you to name that version.
 
-An agent may run `upgrade` exactly where it may run a writing `sync`. Under `person` or `ci` the
-guard asks, and the sync child refuses outside CI under `ci`. `--dry-run` is never gated. Until
+An agent may run `upgrade` exactly where it may run a writing `sync`, so it is refused
+(`GUARD_CONFIG_WIDENED`) while an unsynced widening waits. `--dry-run` is never gated. Until
 `sync` finishes, the guard holds every guarded agent tool call, because it trusts only the cockpit
 and `cockpit.toml` it was generated for. A Node upgrade or a second Node install does not hold
 calls: the hook runs Node by the path sync found on the search path. A built-in that one of your overlays replaces and the

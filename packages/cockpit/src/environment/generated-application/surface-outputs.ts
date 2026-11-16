@@ -224,13 +224,13 @@ function openCodeExternalDirectories(grants: readonly Readonly<{ slug: string; t
 // The cockpit commands the shipped skills tell an agent to run and the guard admits without a
 // prompt. Claude Code allows nothing in its default mode without a rule, so a headless session was
 // denied even `test-run` from its own skill. A rule only lets Claude run the command without asking:
-// the guard hook still runs first, and its ask or deny wins over the rule, so a command whose
-// decider the [work.gates] or [autonomy] policy makes a person still asks. Commands that are always
+// the guard hook still runs first, and its ask or deny wins over the rule, so a command that needs a
+// person still asks. Commands that are always
 // a person's (`init`, `sibling add`) are left out so they keep asking; `down` keeps the data volumes. Measured with Claude Code 2.1.316 on 2026-11-02 beside an unruled control: `Bash(<prefix> *)`
 // ran a matching command headless, the control and a chain with an unmatched part were denied, a hook
 // `ask` denied a matching command, and Claude ignores these rules until a person trusts the workspace.
 const AGENT_COCKPIT_COMMANDS = [
-    'check *', 'confirm *', 'doctor *', 'preflight *', 'logs *', 'ps *', 'restart *', 'rebuild *', 'exec *', 'sync *', 'reset * --apply', 'up *', 'sleep *', 'down *',
+    'check *', 'doctor *', 'preflight *', 'logs *', 'ps *', 'restart *', 'rebuild *', 'exec *', 'sync *', 'reset * --apply', 'up *', 'sleep *', 'down *',
     'test-run *',
     'work status *', 'work accept *', 'work check *', 'work note *', 'work decide *', 'work answer *', 'work acknowledge *', 'work grade *', 'work signoff *', 'work retry *', 'work recover *',
     'work verify *', 'grade *', 'upgrade *', 'docs check *', 'env keys *', 'env schema *', 'use *', 'pull *', 'stacks *',

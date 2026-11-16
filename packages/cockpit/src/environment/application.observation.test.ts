@@ -9,6 +9,7 @@ import { ENVIRONMENT_CODES, RefusalError, type EnvironmentObservation, type Stac
 import { ObservationProducerRefusal } from './application/health.js'
 import { cockpitPackageVersion } from '../test-support/package-version.js'
 import { observeMcpStartup } from './mcp-observation.js'
+import { encodeGuardLocalIdentity, GUARD_LOCAL_PATHS } from '../guards/local-identity.js'
 const applicationOwners = vi.hoisted(() => ({
     logs: {} as Partial<Pick<typeof import('./logs.js'), 'collectLogs' | 'planLogs'>>,
     observations: {} as Partial<Pick<typeof import('./observations.js'), 'aggregateObservations' | 'projectDoctor'>>,
@@ -231,6 +232,28 @@ describe('observation application runners', () => {
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 
+    it('warns, as check fails, about an edit that widens what agents may do until a person syncs it', async () => {
+        const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-doctor-widened-')))
+        try {
+            const configPath = join(directory, 'cockpit.toml')
+            const synced = ['[cockpit]', 'name = "synthetic"', 'siblings_root = "."', '', '[[sibling]]', 'slug = "app"', 'dir = "."', 'mount = "none"',
+                'acquire = "none"', 'var = "APP_DIR"', 'purpose = "Synthetic app"', '', '[ports]', 'bases = {}', ''].join('\n')
+            // The guards on this machine were generated from `synced`, which sync recorded beside their identity.
+            mkdirSync(join(directory, GUARD_LOCAL_PATHS.directory), { recursive: true })
+            writeFileSync(join(directory, GUARD_LOCAL_PATHS.generatedConfig), synced)
+            const identity = Object.fromEntries(['root', 'rootInode', 'configPath', 'configInode', 'node', 'nodeSha256', 'nodeFingerprint', 'module', 'moduleSha256']
+                .map(key => [key, 'synthetic']))
+            writeFileSync(join(directory, GUARD_LOCAL_PATHS.identity), encodeGuardLocalIdentity({ ...identity, configSha256: createHash('sha256').update(synced).digest('hex') } as never))
+            const widened = async () => (await runDoctor({ configPath }, { load: async () => undefined, execute: vi.fn() })).diagnostics
+                .filter(row => row.code === 'GUARD_CONFIG_WIDENED')
+            writeFileSync(configPath, synced)
+            expect(await widened()).toEqual([])
+            writeFileSync(configPath, `${synced}\n[[guards.allow]]\nargv = ["cat", "notes.md"]\ncwd = "."\nreason = "Read the notes."\n`)
+            expect(await widened()).toEqual([expect.objectContaining({ severity: 'warning', target: 'guard', message: expect.stringContaining('(guards.allow)'),
+                fix: expect.stringContaining('--interactive') })])
+        } finally { rmSync(directory, { recursive: true, force: true }) }
+    })
+
     it('names docs check among its declarations only when [docs] is declared, without running it', async () => {
         const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-doctor-docs-')))
         try {
@@ -245,40 +268,6 @@ describe('observation application runners', () => {
             expect(await doctorFor('[docs]\nliving = ["README.md"]')).toEqual([{ subject: 'docs', state: 'declared', source: 'docs',
                 reason: `docs check reads the declared living documents and decision records; doctor does not run it: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs docs check --config ${join(directory, 'cockpit.toml')}` }])
             expect(await doctorFor('')).toEqual([])
-        } finally { rmSync(directory, { recursive: true, force: true }) }
-    })
-
-    it('warns about declarations no person has confirmed until they are removed from unconfirmed', async () => {
-        const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-doctor-unconfirmed-')))
-        try {
-            const doctorFor = async (head: string) => {
-                const configPath = join(directory, 'cockpit.toml')
-                writeFileSync(configPath, [head, '[cockpit]', 'name = "synthetic"', 'siblings_root = "."', '',
-                    '[[sibling]]', 'slug = "app"', 'dir = "."', 'mount = "none"', 'acquire = "none"', 'var = "APP_DIR"',
-                    'purpose = "Synthetic app"', '', '[ports]', 'bases = {}', ''].join('\n'))
-                const result = await runDoctor({ configPath }, { load: async () => undefined, execute: vi.fn() })
-                return result.diagnostics.filter(row => row.code === 'DECLARATION_UNCONFIRMED')
-            }
-            expect(await doctorFor('unconfirmed = ["environment.machine", "guards"]\n')).toEqual([{ severity: 'warning',
-                code: 'DECLARATION_UNCONFIRMED', target: 'unconfirmed',
-                message: 'environment.machine, guards in cockpit.toml were chosen by the setup agent or by no one named, not stated by a person, so they may not describe this product',
-                // The agent confirms what an observation verifies; a trust decision stays a person's.
-                fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs confirm environment.machine --config <your cockpit.toml>, which confirms environment.machine only if the container runtime measured on this machine meets the declared memory, CPU and free-disk floor; '
-                    + 'a person confirms guards with whoever owns the product, corrects cockpit.toml if a value is wrong, deletes its entry from unconfirmed and its # Unconfirmed comment, then runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal outside the agent' }])
-            // A trust answer that waits for a person is held at the stronger default meanwhile, and doctor says so.
-            expect(await doctorFor('unconfirmed = ["work.grading"]\n[work]\ngrading = "off"\n')).toEqual([expect.objectContaining({
-                message: expect.stringMatching(/; awaiting confirmation, work\.grading is held at independent rather than the declared off$/),
-                fix: expect.stringContaining('a person confirms work.grading with whoever owns the product') })])
-            expect(await doctorFor('')).toEqual([])
-            // A policy the last sync recorded stronger than cockpit.toml now declares is reported, not silently weaker.
-            mkdirSync(join(directory, '.cockpit'))
-            const person = { accept: 'person', amend: 'person', answer: 'person', signoff: 'person', acknowledge: 'person' }
-            writeFileSync(join(directory, '.cockpit/policy.json'), JSON.stringify({ format: 'cockpit-policy/v1', policy: {
-                grading: 'independent', gates: person, autonomy: { sync: 'person', stale_delete: 'person', reset: 'person', mcp_approve: 'person' } } }))
-            const weakened = (await runDoctor({ configPath: join(directory, 'cockpit.toml') }, { load: async () => undefined, execute: vi.fn() }))
-                .diagnostics.filter(row => row.code === 'POLICY_WEAKENING_UNCONFIRMED')
-            expect(weakened).toEqual([expect.objectContaining({ severity: 'warning', target: 'autonomy',
-                message: expect.stringContaining('work.gates.accept: person -> agent') })])
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 

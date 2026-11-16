@@ -71,6 +71,19 @@ describe('public surface publication transaction', () => {
                 permissionDecisionReason: expect.stringContaining('has an unapproved edit that widens what agents may do') })
         })
 
+        it('refuses an MCP approval no source declares in every sync, so a yes never covers a server it did not show', async () => {
+            const fixture = await surfaceConsumer('undeclared-approval', { mcp: { command: '/usr/bin/true' } })
+            await writeFile(join(fixture.siblingDirectory, '.mcp.json'), JSON.stringify({ mcpServers: { 'approved-server': { command: '/usr/bin/true' } } }))
+            const config = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
+            config.mcp.approved = { ...config.mcp.approved, 'later-server': digest('later') }
+            await writeFile(fixture.configPath, stringifyToml(config))
+            for (const mode of [{}, { dryRun: true }, { dryRun: true, approveDeclaredMcp: true }]) {
+                expect(await syncGeneratedEnvironment({ configPath: fixture.configPath, ...mode }), JSON.stringify(mode)).toMatchObject({ kind: 'refusal',
+                    diagnostics: [expect.objectContaining({ code: 'MCP_APPROVAL_UNKNOWN', target: 'later-server',
+                        message: expect.stringMatching(/\[mcp\.approved\] later-server .*no MCP source declares.*delete/) })] })
+            }
+        })
+
         it('admits each agent tool\'s own files through the installed hook from the session the payload names', async () => {
             const fixture = await surfaceConsumer('agent-workspaces')
             expect(spawnSync('git', ['init', '--quiet', fixture.root]).status).toBe(0)
@@ -239,12 +252,11 @@ describe('public surface publication transaction', () => {
             }
         })
 
-        it('applies a tool restriction under stale_delete = person, removing only the unchanged MCP file of a tool still listed', async () => {
+        it('applies a tool restriction, removing only the unchanged MCP file of a tool still listed', async () => {
             const fixture = await surfaceConsumer('stale-mcp', { mcp: { command: '/usr/bin/true' } })
             expect(spawnSync('git', ['init', '--quiet', fixture.root]).status).toBe(0)
             const config = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
             config.surfaces.tools = ['claudecode', 'codexcli', 'cursor', 'grokcli']
-            config.autonomy.stale_delete = 'person'
             await writeFile(fixture.configPath, stringifyToml(config))
             await writeFile(join(fixture.siblingDirectory, 'package-lock.json'), '{}')
             await writeFile(join(fixture.siblingDirectory, '.mcp.json'), JSON.stringify({ mcpServers: { 'approved-server': { command: '/usr/bin/true' } } }))
@@ -341,8 +353,7 @@ describe('public surface publication transaction', () => {
             declaration.sibling.find(sibling => sibling.slug === 'app')!.dir = relative(estate, join(fixture.root, 'app'))
             // Every shipped tool is listed so each tool's grant spelling is checked.
             declaration.surfaces.tools = [...SURFACE_TARGETS]
-            // A person approves each server here, so only the one whose digest is recorded is enabled.
-            declaration.autonomy.mcp_approve = 'person'
+            // Only the servers whose digest is recorded are enabled.
             declaration.guards.secret_paths = ['var/sessions', 'app:tmp/sessions']
             const remoteHeaders = { Authorization: 'Bearer ${SYNTHETIC_TOKEN}', 'X-Workspace': '${SYNTHETIC_WORKSPACE}' }
             declaration.mcp.approved['remote-headers'] = mcpApprovalDigest({ transport: 'http', url: 'https://mcp.example.test/mcp', headers: remoteHeaders, helper: null }, fixture.root)
@@ -430,10 +441,10 @@ describe('public surface publication transaction', () => {
                 'Read(//**/app/tmp/sessions)', 'Read(//**/app/tmp/sessions/**)', 'Read(//**/external/.env)', 'Read(/var/sessions)', 'Read(/var/sessions/**)'])
             expect(settings.permissions.deny).toEqual(expect.arrayContaining(['Edit(//**/app/tmp/sessions)', 'Edit(//**/app/tmp/sessions/**)', 'Edit(/var/sessions)', 'Edit(/var/sessions/**)']))
             // The guard judges command text, so the files it depends on are also denied to the tool's own
-            // writes: its script, identity and accepted policy, every hook registration, and each
+            // writes: its script and identity, every hook registration, and each
             // repository's Git hooks and configuration, submodules and worktree configuration included,
             // siblings too. cockpit.toml stays writable, since the guard judges whether an edit to it widens.
-            const guardFiles = ['Edit(/.cockpit/guards/bash-guard.sh)', 'Edit(/.cockpit/local/**)', 'Edit(/.cockpit/policy.json)',
+            const guardFiles = ['Edit(/.cockpit/guards/bash-guard.sh)', 'Edit(/.cockpit/local/**)',
                 'Edit(/.claude/settings.json)', 'Edit(/.claude/settings.local.json)', 'Edit(/.codex/hooks.json)', 'Edit(/.codex/config.toml)',
                 'Edit(/opencode.jsonc)', 'Edit(/.opencode/plugin/**)', 'Edit(//**/.git/hooks/**)', 'Edit(//**/.git/config)',
                 'Edit(//**/.git/config.worktree)', 'Edit(//**/.git/**/config.worktree)', 'Edit(//**/.git/modules/**/hooks/**)', 'Edit(//**/.git/modules/**/config)']

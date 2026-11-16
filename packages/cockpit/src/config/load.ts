@@ -12,8 +12,7 @@ import {
     type SourceProvenance,
     snapshotJson,
 } from '../environment/contract.js'
-import { effectivePolicy, readRecordedPolicy, trustInForce, type EffectivePolicy, type HeldAnswer } from '../autonomy.js'
-import { browserDataQualifies, CockpitConfig, EVALUATOR_COMMANDS, runtimeDeclarationSha256, type EvaluatorTool } from '../schema.js'
+import { browserDataQualifies, CockpitConfig, EVALUATOR_COMMANDS, runtimeDeclarationSha256, type EvaluatorTool, type WorkGrading } from '../schema.js'
 
 /** An explicit request_preapproval wins; otherwise preapproval follows the declared data posture. */
 export const browserPreapprovalRequested = (browser: Readonly<{ request_preapproval?: boolean | undefined; data: Parameters<typeof browserDataQualifies>[0] }>): boolean =>
@@ -74,9 +73,7 @@ export interface ConsumedWorkEnvironmentConfig {
     readonly siblingsRoot: string
     readonly source: SourceProvenance
     readonly siblings: readonly Readonly<{ slug: string; dir: string; environmentFiles: readonly Readonly<{ template: string; instance: string }>[] }>[]
-    readonly policy: EffectivePolicy
-    /** The trust answers held at a stronger value until a person confirms them. */
-    readonly held: readonly HeldAnswer[]
+    readonly grading: WorkGrading
     readonly wipCap: number
     readonly attemptCap: number
     readonly verificationTimeoutSeconds: number
@@ -165,8 +162,7 @@ export function projectWorkEnvironmentConfig(
         siblings: Object.freeze(loaded.config.sibling.map(({ slug, dir, environment_files }) => ({ slug, dir,
             environmentFiles: (environment_files ?? []).map(row => ({ template: row.template, instance: row.instance })),
         }))),
-        policy: effectivePolicy(loaded.config),
-        held: Object.freeze([...trustInForce(loaded.config).held]),
+        grading: loaded.config.work.grading,
         wipCap: loaded.config.work.wip_cap,
         attemptCap: loaded.config.work.attempt_cap,
         verificationTimeoutSeconds: loaded.config.work.verification_timeout_seconds,
@@ -296,13 +292,37 @@ function tomlErrorSummary(error: unknown): string {
 
 const SCHEMA_ISSUES_SHOWN = 3
 
+// Keys a release removed, by where they sit, with what replaced them; a file that still holds one is
+// refused like any unknown key, but named. `*` stands for any one path segment.
+const REMOVED_KEYS: Readonly<Record<string, string>> = {
+    autonomy: 'an agent may do everything except apply a change that widens what agents may do, which a person applies with sync --interactive; declare [environment] seed to let an agent reset',
+    'work.gates': 'work-order steps are the agent\'s, except the few fixed ones that would let it lower the bar its own work is held to',
+    unconfirmed: 'a person reviews the answers init wrote in the cockpit.toml diff',
+    'sibling.*.derives.mcp_sources.*.provenance.confirmed': 'a person reviews inferred values in the cockpit.toml diff',
+}
+
+function removedKey(path: readonly PropertyKey[], key: string): string | undefined {
+    const segments = [...path.map(String), key]
+    const pattern = Object.keys(REMOVED_KEYS).find(candidate => {
+        const parts = candidate.split('.')
+        return parts.length === segments.length && parts.every((part, index) => part === '*' || part === segments[index])
+    })
+    return pattern && `${segments.join('.')} was removed; delete it: ${REMOVED_KEYS[pattern]}`
+}
+
 export function schemaIssueSummary(
-    issues: readonly { path: readonly PropertyKey[]; message: string }[],
+    issues: readonly { path: readonly PropertyKey[]; message: string; code?: string; keys?: readonly string[] }[],
     limit = SCHEMA_ISSUES_SHOWN,
 ): string {
-    const shown = issues.slice(0, limit)
+    // An unknown key the schema used to have is named with what replaced it, one key per entry.
+    const named = issues.flatMap(issue => {
+        if (issue.code !== 'unrecognized_keys' || !issue.keys) return [issue]
+        const removed = issue.keys.flatMap(key => { const message = removedKey(issue.path, key); return message ? [{ path: issue.path, message }] : [] })
+        return removed.length === issue.keys.length ? removed : removed.length ? [...removed, issue] : [issue]
+    })
+    const shown = named.slice(0, limit)
         .map(issue => `${issue.path.length === 0 ? '(root)' : issue.path.map(String).join('.')}: ${issue.message}`)
-    const more = issues.length - shown.length
+    const more = named.length - shown.length
     return `${shown.join('; ')}${more > 0 ? `; and ${more} more` : ''}`
 }
 
@@ -334,17 +354,6 @@ async function syncedConfigName(directory: string): Promise<string | undefined> 
     return typeof name === 'string' && name !== '' && basename(name) === name ? name : undefined
 }
 
-/** The policy cockpit.toml declares now and the one the last sync recorded, for a command that gates a decision. */
-export async function loadAutonomyPolicy(configPath: string): Promise<Readonly<{ root: string; current: EffectivePolicy; recorded?: EffectivePolicy
-    source: Readonly<{ sha256: string; config: CockpitConfig }> }> | Readonly<{ refusal: EnvironmentDiagnostic }>> {
-    const loaded = await loadCockpitConfig(configPath)
-    if (loaded.kind !== 'complete') return { refusal: loaded.diagnostics[0]! }
-    const root = dirname(loaded.result.source.path)
-    const recorded = await readRecordedPolicy(root)
-    return { root, current: effectivePolicy(loaded.result.config), ...recorded ? { recorded } : {},
-        source: { sha256: loaded.result.source.sha256, config: loaded.result.config } }
-}
-
 function parseConfigBytes(bytes: Uint8Array): Readonly<{ parsed: unknown; config: CockpitConfig }> | undefined {
     let parsed: unknown
     try { parsed = parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) }
@@ -360,19 +369,6 @@ function parseConfigBytes(bytes: Uint8Array): Readonly<{ parsed: unknown; config
 /** The configuration `bytes` declare, or undefined when they are not UTF-8 TOML the schema accepts. */
 export function parseCockpitConfigBytes(bytes: Uint8Array): CockpitConfig | undefined {
     return parseConfigBytes(bytes)?.config
-}
-
-/**
- * `current`'s file, declaring what `recorded` declares: the configuration the last sync recorded,
- * which the caller has authenticated. The guard judges calls under it while an edit a person has not
- * approved waits, and every check that the file on disk has not changed again still binds to
- * `current.source`. Consumes `current`; undefined when it was not issued here or `recorded` does not
- * parse.
- */
-export function withRecordedDeclarations(current: LoadedConfigProjection, recorded: Uint8Array): LoadedConfigProjection | undefined {
-    const loaded = consumeLoadedConfigProjection(current)
-    const declared = loaded && parseConfigBytes(recorded)
-    return loaded && declared ? issueLoadedConfig(declared.parsed, declared.config, loaded.source) : undefined
 }
 
 function issueLoadedConfig(parsed: unknown, config: CockpitConfig, provenance: SourceProvenance): LoadedCockpitConfig | undefined {

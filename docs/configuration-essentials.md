@@ -148,12 +148,6 @@ hosted_db_hosts = ["db.prod.example.com"]
 vendor_endpoint_hosts = ["api.payments.example.com"]
 ```
 
-## `unconfirmed`
-
-`init` lists each answer no person stated in `unconfirmed`, at the top of the file, and `doctor`
-warns until a person confirms each value and deletes its entry. Full entry:
-[Top-level keys](configuration-reference.md#top-level-keys).
-
 ## Everything else
 
 The reference also lists the [defaults](configuration-reference.md#defaults) and the
@@ -164,7 +158,7 @@ The reference also lists the [defaults](configuration-reference.md#defaults) and
 | Vendor stubs, TLS, restores | your Compose files | [Compose patterns](compose-patterns.md) |
 | Browser checks | [`[browser]`](configuration-reference.md#browser) | [Browser evidence](work-and-browser.md#browser-evidence) |
 | Work orders | [`[work]`](configuration-reference.md#work) | [Work and browser workflows](work-and-browser.md) |
-| Who decides | [`[autonomy]`](configuration-reference.md#autonomy) | [Who decides](safety-and-autonomy.md#who-decides) |
+| Who decides | no table: one fixed rule | [Who decides](safety-and-autonomy.md#who-decides) |
 | Guard rules | [`[[guards.allow]]`](configuration-reference.md#guardsallow), the `deny` row of [`[guards]`](configuration-reference.md#guards) | [Safety and autonomy](safety-and-autonomy.md) |
 | MCP approvals and tool restrictions | [`[mcp]`](configuration-reference.md#mcp) | [MCP servers and restrictions](harness-surfaces.md#mcp-servers-and-restrictions) |
 | Surface overlays | [`[[surfaces.overlays]]`](configuration-reference.md#surfacesoverlays) | [Ownership and extension](harness-surfaces.md#ownership-and-extension) |

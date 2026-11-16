@@ -666,14 +666,9 @@ it('keeps a verified local-archive pin through installed init, check and npm ci'
     }
     const first = run()
     expect(first.status, first.stdout + first.stderr).toBe(0)
-    const preview = JSON.parse(first.stdout).result
-    const second = run('--accept-preview', preview.previewSha256, '--answers', answers)
+    const second = run('--answers', answers)
     expect(second.status, second.stdout + second.stderr).toBe(0)
-    const defaults = JSON.parse(second.stdout).result.question
-    expect(defaults).toMatchObject({ field: 'configuration.defaults' })
-    const third = run('--accept-preview', preview.previewSha256, '--answers', answers, '--accept-defaults', defaults.expectedSha256)
-    expect(third.status, third.stdout + third.stderr).toBe(0)
-    expect(JSON.parse(third.stdout).result).toMatchObject({ stage: 'surfaces-verified' })
+    expect(JSON.parse(second.stdout).result).toMatchObject({ stage: 'surfaces-verified' })
 
     expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))).toMatchObject({
         name: 'synthetic-cockpit-root', private: true,
@@ -739,7 +734,6 @@ it.each(initEstates)('runs installed init on $target for a $classification estat
     const questions: Array<{ field: string; expectedSha256?: string }> = []
     const status = await installedCli(['init', root, '--target', target, '--interactive'], {
         stdout: { write: (value: string) => ((stdout += value), true) }, stderr: { write: (value: string) => ((stderr += value), true) },
-        confirmInit: async (shown: { previewSha256: string }) => shown.previewSha256,
         answerInitQuestion: async (question: { field: string; expectedSha256?: string }) => {
             questions.push(question)
             if (question.field === 'cockpit.name') return '"synthetic"'
@@ -752,9 +746,8 @@ it.each(initEstates)('runs installed init on $target for a $classification estat
             if (question.field === 'work.grading') return JSON.stringify('independent')
             if (question.field === 'environment.test_data') return JSON.stringify({ seeded_data: false, signed_in_users: false })
             // The interview now continues past the local test-data decision, so the fifth question is
-            // reached; declining it leaves the target unwritten and the answers resumable. A
-            // surfaces-only interview has no environment questions and reaches the defaults instead.
-            if (question.field === 'environment.compose_files' || question.field === 'configuration.defaults') return undefined
+            // reached; declining it leaves the target unwritten and the answers resumable.
+            if (question.field === 'environment.compose_files') return undefined
             throw new Error(`unexpected installed init question: ${question.field}`)
         },
     }, {}, { env })
@@ -762,34 +755,13 @@ it.each(initEstates)('runs installed init on $target for a $classification estat
     for (const other of ['.claude', '.agents', '.opencode'].filter(value => !prefix.startsWith(value))) {
         expect(existsSync(join(root, other))).toBe(false)
     }
-    expect(existsSync(join(root, 'cockpit.toml'))).toBe(false)
     if (classification === 'no-runnable-product') {
-        expect(status, stderr).toBe(2)
-        expect(stderr).toContain('GREENFIELD_ANSWER_REQUIRED')
-        expect(questions.map(question => question.field)).toEqual(['cockpit.name', 'sibling', 'ports.bases', 'guards', 'work.grading', 'configuration.defaults'])
-        // The interactive answers are persisted, so a caller with no terminal finishes the same
-        // init from the printed digests alone: it must not need a second interview.
-        const pendingRun = spawnSync(process.execPath, [launcher, 'init', root, '--target', target, '--json'], { cwd: root, env, encoding: 'utf8' })
-        expect(pendingRun.status, pendingRun.stderr).toBe(0)
-        const printed = JSON.parse(pendingRun.stdout).result
-        expect(printed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual(['configuration.defaults'])
-        const answersFile = join(root, '..', `${classification}-answers.toml`)
-        writeFileSync(answersFile, '[ports]\nbases = {}\n')
-        const finish = (...extra: string[]) => spawnSync(process.execPath, [launcher, 'init', root, '--target', target,
-            '--accept-preview', printed.previewSha256, '--answers', answersFile, ...extra, '--json'], { cwd: root, env, encoding: 'utf8' })
-        const awaiting = finish()
-        expect(awaiting.status, awaiting.stderr).toBe(0)
-        expect(JSON.parse(awaiting.stdout).result.question).toMatchObject({ field: 'configuration.defaults' })
-        expect(existsSync(join(root, 'cockpit.toml'))).toBe(false)
-        const wrong = finish('--accept-defaults', 'f'.repeat(64))
-        expect(wrong.status).toBe(2)
-        expect(JSON.parse(wrong.stdout).diagnostics[0].code).toBe('INIT_DEFAULTS_NOT_ACCEPTED')
-        const done = finish('--accept-defaults', JSON.parse(awaiting.stdout).result.question.expectedSha256)
-        expect(done.status, done.stdout + done.stderr).toBe(0)
-        expect(JSON.parse(done.stdout).result).toMatchObject({ stage: 'surfaces-verified' })
-        expect(JSON.parse(done.stdout).result).not.toHaveProperty('nextCommand')
+        // A surfaces-only interview has no environment questions, so the answers complete it and init writes cockpit.toml.
+        expect(status, stderr).toBe(0)
+        expect(questions.map(question => question.field)).toEqual(['cockpit.name', 'sibling', 'ports.bases', 'guards', 'work.grading'])
         expect(readFileSync(join(root, 'cockpit.toml'), 'utf8')).toContain('[[sibling]]')
     } else {
+        expect(existsSync(join(root, 'cockpit.toml'))).toBe(false)
         expect(status, stderr).toBe(2)
         expect(stderr).toContain('GREENFIELD_ANSWER_REQUIRED')
         // The siblings declare no toolchain, which is what an install policy names, so none is asked.
@@ -829,8 +801,7 @@ it('discards answers inferred for an estate that changes from no runnable produc
         { cwd: changingRoot, env, encoding: 'utf8' })
     const changingFirst = changingRun()
     expect(changingFirst.status, changingFirst.stdout + changingFirst.stderr).toBe(0)
-    const changingPreview = JSON.parse(changingFirst.stdout).result
-    const changingPending = changingRun('--accept-preview', changingPreview.previewSha256, '--answers', changingAnswers)
+    const changingPending = changingRun('--answers', changingAnswers)
     expect(changingPending.status, changingPending.stdout + changingPending.stderr).toBe(0)
     expect(JSON.parse(changingPending.stdout).result).toMatchObject({
         // The name is the file's to state; sibling is a trust answer, which an answers file cannot show a person gave.
@@ -849,7 +820,7 @@ it('discards answers inferred for an estate that changes from no runnable produc
         estate: { classification: 'one-sibling', answers: [] }, interview: { answered: [] },
     })
     expect(changedPreview).not.toHaveProperty('question')
-    const changedAccepted = changingRun('--accept-preview', changedPreview.previewSha256, '--answers', changingAnswers)
+    const changedAccepted = changingRun('--answers', changingAnswers)
     expect(changedAccepted.status, changedAccepted.stdout + changedAccepted.stderr).toBe(0)
     const refreshed = JSON.parse(changedAccepted.stdout).result
     expect(refreshed).toMatchObject({
@@ -873,8 +844,9 @@ it('lists every outstanding headless init question with the values it proposes',
     const listed = JSON.parse(first.stdout).result
     expect(listed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual([
         'cockpit.name', 'sibling', 'ports.bases', 'environment.install_policies', 'environment.test_data',
-        'environment.compose_files', 'environment.machine', 'environment.posture', 'testing', 'guards', 'work.grading', 'configuration.defaults',
+        'environment.compose_files', 'environment.machine', 'environment.posture', 'testing', 'guards', 'work.grading',
     ])
+    // The defaults are written as drafted for the person to review in the diff, so nobody is asked for them.
     expect(listed.interview.outstanding.find((row: { field: string }) => row.field === 'ports.bases').proposals).toEqual([
         expect.objectContaining({ target: 'library.container_ports', value: [4100], provenance: expect.objectContaining({ kind: 'inferred', source: 'library/Dockerfile' }) }),
     ])
@@ -891,7 +863,7 @@ it('finishes init across three runs without a terminal and lets a teammate clone
         '[[sibling]]', 'slug = "library"', 'dir = "library"', 'mount = "always"', 'acquire = "none"',
         'var = "LIBRARY_DIR"', 'purpose = "Synthetic library"', '', '[ports]', 'bases = {}', '',
         '[guards]', 'hosted_db_hosts = []', 'vendor_endpoint_hosts = []', '', '[work]', 'grading = "independent"', ''].join('\n'))
-    // An agent has no terminal at any point: three runs, each given only what the previous one printed.
+    // An agent has no terminal at any point: a preview lists the interview, and the answers file finishes it.
     const portableRequested = join(packScratch, 'init-portable')
     mkdirSync(portableRequested)
     const portable = realpathSync(portableRequested)
@@ -903,15 +875,11 @@ it('finishes init across three runs without a terminal and lets a teammate clone
     expect(portableFirst.status, portableFirst.stderr).toBe(0)
     const portableListed = JSON.parse(portableFirst.stdout).result
     expect(portableListed.interview.outstanding.map((row: { field: string }) => row.field)).toEqual([
-        'cockpit.name', 'sibling', 'ports.bases', 'guards', 'work.grading', 'configuration.defaults',
+        'cockpit.name', 'sibling', 'ports.bases', 'guards', 'work.grading',
     ])
-    const second = portableRun('--accept-preview', portableListed.previewSha256, '--answers', answersFile)
-    expect(second.status, second.stderr).toBe(0)
-    const defaults = JSON.parse(second.stdout).result.question
-    expect(defaults).toMatchObject({ field: 'configuration.defaults' })
-    const third = portableRun('--accept-preview', portableListed.previewSha256, '--answers', answersFile, '--accept-defaults', defaults.expectedSha256)
-    expect(third.status, third.stdout + third.stderr).toBe(0)
-    expect(JSON.parse(third.stdout).result).toMatchObject({ stage: 'surfaces-verified' })
+    const second = portableRun('--answers', answersFile)
+    expect(second.status, second.stdout + second.stderr).toBe(0)
+    expect(JSON.parse(second.stdout).result).toMatchObject({ stage: 'surfaces-verified' })
     expect(existsSync(join(portable, 'cockpit.toml'))).toBe(true)
 
     // A teammate's clone has a different checkout path and HOME. The local tarball stands in for
@@ -934,9 +902,9 @@ it('finishes init across three runs without a terminal and lets a teammate clone
     let prepared = ''
     const preparedTeam = await installedCli(['sync', '--config', join(portable, 'cockpit.toml'), '--interactive'], {
         stdout: { write: (text: string) => { prepared += text; return true } }, stderr: { write: (text: string) => { prepared += text; return true } },
-        confirmPolicyWeakening: async (request: { widened: readonly string[]; digest: string }) => {
-            expect(request.widened).toEqual(['sibling.library.dir'])
-            return request.digest
+        confirmWidening: async (preview: { widens: readonly string[] }) => {
+            expect(preview.widens).toEqual(['sibling.library.dir'])
+            return true
         },
     }, {}, { env: maintainerEnv })
     expect(preparedTeam, prepared).toBe(0)
@@ -1008,12 +976,7 @@ it.each(['dedicated', 'in-repo'] as const)('finishes installed init for a produc
         ...extra, '--json'], { cwd: product, env, encoding: 'utf8' })
     const preview = run()
     expect(preview.status, preview.stdout + preview.stderr).toBe(0)
-    const shown = JSON.parse(preview.stdout).result
-    const pending = run('--accept-preview', shown.previewSha256, '--answers', answers)
-    expect(pending.status, pending.stdout + pending.stderr).toBe(0)
-    const defaults = JSON.parse(pending.stdout).result.question
-    expect(defaults).toMatchObject({ field: 'configuration.defaults' })
-    const completed = run('--accept-preview', shown.previewSha256, '--answers', answers, '--accept-defaults', defaults.expectedSha256)
+    const completed = run('--answers', answers)
     expect(completed.status, completed.stdout + completed.stderr).toBe(0)
     expect(JSON.parse(completed.stdout).result).toMatchObject({ root, stage: 'surfaces-verified' })
     expect(statSync(join(root, '.git')).isDirectory()).toBe(true)

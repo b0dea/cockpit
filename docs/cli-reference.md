@@ -8,7 +8,7 @@ Each diagnostic message names what failed and how to fix it. Codes whose remedy 
 
 ## cockpit init
 
-Preview, then accept, a first cockpit setup for one or more agent tools.
+Preview a first cockpit setup for one or more agent tools, then write it from answers.
 
 Does not read `cockpit.toml`.
 
@@ -18,8 +18,6 @@ Does not read `cockpit.toml`.
 | `--interactive` | boolean | `false` |
 | `--json` | boolean | `false` |
 | `--answers` | string | unset |
-| `--accept-preview` | string | unset |
-| `--accept-defaults` | string | unset |
 | `--reset-answer` | string | unset |
 | `--accept-reset` | string | unset |
 | `--scaffold-compose` | string | unset |
@@ -122,23 +120,6 @@ Reads `cockpit.toml` from `--config`.
 | --- | --- | --- |
 | `--config` | string | unset |
 | `--dry-run` | boolean | `false` |
-| `--json` | boolean | `false` |
-
-| Exit | Meaning |
-| --- | --- |
-| 0 | success |
-| 2 | failure |
-| 130 | cancelled |
-
-## cockpit confirm
-
-Confirm an init answer no person stated by running the observation that verifies it.
-
-Reads `cockpit.toml` from `--config`.
-
-| Flag | Type | Default |
-| --- | --- | --- |
-| `--config` | string | unset |
 | `--json` | boolean | `false` |
 
 | Exit | Meaning |
@@ -380,7 +361,7 @@ Reads `cockpit.toml` from `--config`.
 
 ## cockpit reset
 
-Preview a reset, then approve it interactively or apply it as [autonomy] reset allows (on the active local Docker context).
+Preview a reset, then approve it interactively, or apply it where a seed is declared (on the active local Docker context).
 
 Reads `cockpit.toml` from `--config`.
 
@@ -509,7 +490,7 @@ Reads `cockpit.toml` from `--config`.
 
 ## cockpit work accept
 
-Accept a work order, or a change to an accepted one, as [work.gates] allows.
+Accept a work order, or a change to an accepted one.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -591,7 +572,7 @@ Reads `cockpit.toml` from `--config`.
 
 ## cockpit work answer
 
-Answer an open question on an order, as [work.gates] allows.
+Answer an open question on an order.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -602,7 +583,6 @@ Reads `cockpit.toml` from `--config`.
 | `--work-order` | string | unset |
 | `--question` | string | unset |
 | `--text` | string | unset |
-| `--interactive` | boolean | `false` |
 
 | Exit | Meaning |
 | --- | --- |
@@ -612,7 +592,7 @@ Reads `cockpit.toml` from `--config`.
 
 ## cockpit work acknowledge
 
-Acknowledge that an order weakened tests, as [work.gates] allows.
+Acknowledge that an order weakened tests.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -715,7 +695,7 @@ Reads `cockpit.toml` from `--config`.
 
 ## cockpit work verify
 
-Check every record against its order; in CI, pass the steps gated on ci.
+Check every record against its order.
 
 Reads `cockpit.toml` from `--config`.
 

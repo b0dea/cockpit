@@ -315,8 +315,8 @@ describe('printed cockpit commands', () => {
         // The file a reader has written by the time they run the command: the init answers it reads.
         await writeFile(join(root, 'answers.toml'), '')
         const env = { PATH: process.env.PATH ?? '', HOME: root }
-        const io = { confirmInit: async () => undefined, answerInitQuestion: async () => undefined, confirmReset: async () => false,
-            confirmWorkOrder: async () => undefined, confirmStaleRemoval: async () => undefined }
+        const io = { answerInitQuestion: async () => undefined, confirmReset: async () => false,
+            confirmWorkOrder: async () => undefined, confirmWidening: async () => false }
 
         let reached = false
         const stop = () => { reached = true; throw new Error('stopped before work') }

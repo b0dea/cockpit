@@ -435,12 +435,6 @@ describe('document source classification', () => {
         expect(outcome.artifact).not.toContain(input.root)
         expect(JSON.stringify(outcome.diagnostics)).not.toContain(input.root)
         expect(outcome.artifact).toContain('the positional cockpit root basename')
-        // Every decision shows its default as a comment. A person keeps reset, which deletes stack data,
-        // and MCP approval, whose agent setting the block warns starts processes outside the guard.
-        expect(outcome.artifact).toContain('# [work.gates]\n# accept = "agent"')
-        expect(outcome.artifact).toContain('# reset = "person"')
-        expect(outcome.artifact).toContain('# mcp_approve = "person"')
-        expect(outcome.artifact).toContain('# mcp_approve = "agent" lets an agent start processes outside the guard')
     })
 })
 
@@ -575,7 +569,7 @@ describe('operator-confirmed document completion', () => {
         expect(config.environment.machine).toBeUndefined()
         expect(config.environment.addressing).toBeUndefined()
         expect(config.guards).toMatchObject(guardHosts)
-        expect(config.unconfirmed).toEqual(provenance === 'agent-default' ? ['environment.compose_files'] : undefined)
+        expect(complete.artifact!.includes('# Not stated by a person: environment.compose_files')).toBe(provenance === 'agent-default')
         expect(complete.artifact).toContain(provenance === 'agent-default'
             ? 'the setup agent assumed, as a default, that runtime adoption is deferred'
             : 'the operator stated that runtime adoption is deferred')

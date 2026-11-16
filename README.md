@@ -58,13 +58,13 @@ npm install --save-dev --save-exact @b00dea/cockpit
 
 ```sh
 npx --no cockpit init                          # previews what it would write; writes nothing yet
-npx --no cockpit init --interactive            # confirm the preview with yes, answer each question
+npx --no cockpit init --interactive            # ask each question, then write
 npx --no cockpit sync --config cockpit.toml    # rerun after every edit of cockpit.toml
 npx --no cockpit check --config cockpit.toml   # fail on drift; run it in CI too
 ```
 
 `init` proposes values from files it can read (a `package.json` script, a Dockerfile `EXPOSE`, the
-variable names in `.env.example`) and marks where each came from; you confirm every one. Commit what it
+variable names in `.env.example`) and marks where each came from; review the diff, then commit what it
 wrote. An agent started in the repository now gets the same instructions and skills in each tool you
 listed, with the guard live (in Codex once a person trusts its hook). The same push is refused in all
 three tools, each through its own transport:
@@ -133,8 +133,8 @@ switches on when you declare Compose files (Docker), and agent-run grading when 
 | **[Judged, not just gated](docs/work-and-browser.md#how-an-order-earns-done)** | Optional work orders hold a change to an objective, a scope and criteria. The grader is optional: another agent tool (the default), the same tool in a separate run, a subagent of the working agent, the checks alone, the agent's own report, or none ([how grading can run](docs/work-and-browser.md#how-grading-can-run)). The record always says which. |
 | **[Proof in a real browser](docs/work-and-browser.md#browser-evidence)** | `browser drive` and `browser screenshot` visit every declared route through your own [Playwright](https://playwright.dev) project, signed in as a declared role if you ask, and record each screenshot's digest and each route's console errors. |
 | **[Skills for driving it](docs/harness-surfaces.md#skills)** | Each listed tool gets cockpit's skills for fixing a bug with proof, running a work order, explaining a refusal and, once a browser is declared, checking the app in it. They call cockpit's own commands, so the stack, tests and grading work the same way in every tool. |
-| **[Agents that unblock themselves](docs/safety-and-autonomy.md#who-decides)** | An agent runs what only reads, fast-forwards or repairs cockpit's own state without asking. Widening access, lowering the grading bar and, by default, deleting data stay a person's. |
-| **[MCP servers you approve](docs/harness-surfaces.md#mcp-servers-and-restrictions)** | A server reaches an agent only after a person approves its exact SHA-256; a changed declaration needs approval again. `[mcp.allowed_tools]` limits it to exact tools in Claude Code and Codex; a tool that cannot enforce that does not get the server. |
+| **[Agents that unblock themselves](docs/safety-and-autonomy.md#who-decides)** | An agent runs what only reads, fast-forwards or repairs cockpit's own state without asking. Widening what agents may do, lowering the grading bar and deleting data without a declared seed stay a person's, each with one yes. |
+| **[MCP servers you approve](docs/harness-surfaces.md#mcp-servers-and-restrictions)** | A server reaches an agent only after a person approves it with one yes at `sync --interactive`; a changed declaration needs approval again. `[mcp.allowed_tools]` limits it to exact tools in Claude Code and Codex; a tool that cannot enforce that does not get the server. |
 | **[Decisions and docs kept true](docs/docs-check.md)** | A work order cannot sign off while a recorded decision is unresolved, and `docs check` reports documents citing removed paths. |
 | **[Checked, not assumed](docs/capability-matrix.md)** | `check` fails in CI ([a ready-made action](docs/harness-surfaces.md#publish-and-verify) included) and reports drift to the agent as a Claude Code or Codex session starts. The capability matrix records what each tool actually enforced, from dated runs of the real tool. |
 
@@ -202,8 +202,7 @@ criteria:
 `work signoff` closes it. By default the grader is a fresh, read-only run of an agent tool that starts
 outside the repository and never sees the session that did the work; run from inside Claude Code or
 Codex, another listed tool grades first. It also judges what a fixed rule cannot: whether a change outside `scope` was
-needed and whether a test change was justified. Switching to a weaker mode is refused until a person
-confirms it. [How an order earns done](docs/work-and-browser.md#how-an-order-earns-done) has the
+needed and whether a test change was justified. Switching to a weaker mode waits for a person's `sync --interactive` yes. [How an order earns done](docs/work-and-browser.md#how-an-order-earns-done) has the
 modes.
 
 ## The guard
@@ -216,8 +215,8 @@ modes.
   branches (`main` and `master` by default) and rewriting them, commands that reach a declared host,
   Git verbs that would overwrite guard files, global tool configuration and installs, `gh` commands
   that bypass or change branch protection, changes to the guard itself, and privilege escalation or
-  downloaded code piped to an interpreter. An agent may run `sync` where `[autonomy] sync = "agent"`,
-  except for an edit that widens what agents may do, which a person confirms at `sync --interactive`.
+  downloaded code piped to an interpreter. An agent may run `sync`, except for an edit that
+  widens what agents may do, which a person confirms at `sync --interactive`.
   For a stricter boundary, run the agent tool in its own OS sandbox.
 - **Sees** shell commands in all three tools. In Claude Code also its Edit and Write tools, and its
   Read tool through generated deny rules. Those rules also refuse documentation names such as
@@ -261,9 +260,9 @@ settings, and the FAQ says [when not to use cockpit](docs/faq.md#when-should-i-n
   warns until then.
 - **Measured, per tool.** The [capability matrix](docs/capability-matrix.md) says what each tool
   enforces, measured on which date and version. Cursor and Grok Build get files but no guard.
-- Enabling an MCP server and `reset` (it wipes data) need a person by default. Process gates can be
-  handed to the agent; guardrails cannot
-  ([Fully agentic setup](docs/safety-and-autonomy.md#fully-agentic-setup)).
+- Enabling an MCP server and widening what agents may do need a person's one yes at
+  `sync --interactive`; so does `reset` where no seed is declared
+  ([Who decides](docs/safety-and-autonomy.md#who-decides)).
 
 ## Built with
 

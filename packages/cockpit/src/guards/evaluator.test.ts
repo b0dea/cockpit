@@ -25,7 +25,7 @@ const inspect = ({ path, cwd, operation, revision, from, history }: { path: stri
 // Identity facts for every protected path; synthetic tests name only the ones they exercise.
 type IdentityFacts = Record<string, { identity: string | null; ancestors: string[] }>
 function protectedIdentities(instances: readonly { path: string }[], known: IdentityFacts = {}) {
-    return [...instances.map((item) => item.path), `${root}/cockpit.toml`, ...GUARD_ROOT_PROTECTIONS.map((item) => `${root}/${item.path}`)]
+    return [...instances.map((item) => item.path), ...GUARD_ROOT_PROTECTIONS.map((item) => `${root}/${item.path}`)]
         .map((path) => ({ path, ...(known[path] ?? { identity: null, ancestors: [] }) }))
 }
 const candidate = (executable: string, argv: string[], cwd = root) => ({ executable, argv, cwd })
@@ -375,11 +375,8 @@ describe('resolved guard evaluation', () => {
             '.opencode/plugin/cockpit-guards.js', '.opencode/plugin/extra.js', '.opencode/plugins/rulesync-hooks.js',
             '.cockpit/bundles/claudecode-plugin/.mcp.json', '.cockpit/bundles/claudecode-plugin/hooks/hooks.json', '.Claude/Settings.json',
             '.cockpit/mcp/server.sh', '.cockpit/mcp/added.sh',
-            // An unkeyed work-order record written by an agent would read as a person's, and a rewritten
-            // policy record would present the agent's weakening as one a person accepted.
-            '.cockpit/work-orders/WO-1.json', '.cockpit/work-orders/WO-1.lock', '.cockpit/policy.json',
-            // A confirmation an agent wrote would let its own sync remove an unconfirmed answer nothing observed.
-            '.cockpit/local/answer-confirmations',
+            // An unkeyed work-order record written by an agent would read as a person's.
+            '.cockpit/work-orders/WO-1.json', '.cockpit/work-orders/WO-1.lock',
             'cockpit/adopted/.claude/settings.json', 'cockpit/adopted/.codex/hooks.json', 'cockpit/adopted/.codex/config.toml']) {
             for (const input of [
                 payload('Write', { file_path: `${root}/${path}`, content: '{}' }), payload('Edit', { file_path: path, old_string: 'a', new_string: 'b' }),
@@ -2377,7 +2374,7 @@ describe('allow by default', () => {
 })
 
 describe('cockpit structure protection', () => {
-    const removal ='Refusing to delete, rename, truncate, relink or make unreadable cockpit.toml or .cockpit/generated-environment-ownership.json: every later guarded call reads them, so losing either holds the agent until a human restores it. Edit cockpit.toml in place instead.'
+    const removal = 'Refusing to delete, rename, truncate, relink or make unreadable .cockpit/generated-environment-ownership.json: every later guarded call reads it, so losing it holds the agent until a human restores it.'
     const controlRemoval = 'Refusing mutation of the guard, its hook registration or its ownership manifest.'
     const protectedRead = 'Refusing to read a declared environment instance or secrets directory into the agent context.'
     const instanceMutation = 'Refusing mutation or staging of a declared environment instance.'
@@ -2385,61 +2382,36 @@ describe('cockpit structure protection', () => {
     const patch = (body: string) => evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'apply_patch', cwd: root,
         tool_input: { command: `*** Begin Patch\n${body}\n*** End Patch` } }), policy(), inspect)
 
-    it('denies deleting, renaming or truncating the configuration or the ownership manifest', () => {
-        for (const command of ['rm cockpit.toml', 'rm -f ./cockpit.toml', 'unlink COCKPIT.TOML', 'mv cockpit.toml old.toml', 'mv -t archive cockpit.toml',
-            'git rm cockpit.toml', 'git rm --cached cockpit.toml', 'git mv cockpit.toml old.toml', 'rm .cockpit/generated-environment-ownership.json',
-            'rm -rf .cockpit', 'rm -rf .', 'rm -rf ../project', 'find . -delete', 'printf x > cockpit.toml', 'npm test; rm cockpit.toml']) {
-            expect(decide(command), command).toEqual({ decision: 'deny', reason: removal })
-        }
-        expect(patch('*** Delete File: cockpit.toml')).toEqual({ decision: 'deny', reason: removal })
-        expect(patch('*** Update File: cockpit.toml\n*** Move to: old.toml\n@@\n-a\n+b')).toEqual({ decision: 'deny', reason: removal })
-        const empty = (path: string) => evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: path, content: '' } }), policy(), inspect)
-        for (const path of ['cockpit.toml', `${root}/COCKPIT.TOML`]) expect(empty(path), path).toEqual({ decision: 'deny', reason: removal })
-        expect(empty('.cockpit/generated-environment-ownership.json').decision).toBe('deny')
-        for (const command of [
-            'truncate -s 0 cockpit.toml', 'truncate --size 0 ./COCKPIT.TOML', 'truncate --size=0 subdir/../cockpit.toml',
-            `truncate -s0 ${root}/cockpit.toml`, 'truncate -s=0 cockpit.toml', 'truncate -c -s 0 -- cockpit.toml', 'truncate -cs0 cockpit.toml',
-            'truncate --no-create --size=0 cockpit.toml', 'truncate -o -s 0 cockpit.toml', 'truncate --io-blocks --size=0 cockpit.toml',
-            'truncate -r reference cockpit.toml', 'truncate -rreference cockpit.toml', 'truncate --reference reference cockpit.toml', 'truncate --reference=reference cockpit.toml',
-            '/usr/bin/truncate -s 0 cockpit.toml', 'truncate -s 0 .cockpit/generated-environment-ownership.json',
-            'dd count=0 of=cockpit.toml', 'dd if=source.txt of=cockpit.toml', 'dd of=./COCKPIT.TOML conv=sync',
-            'dd of=notes.txt of=cockpit.toml', 'dd of=cockpit.toml of=notes.txt', 'dd seek=1 of=cockpit.toml',
-            'dd oflag=append of=cockpit.toml', 'dd conv=notruncate of=cockpit.toml',
-            '/bin/dd of=subdir/../cockpit.toml', 'dd count=0 of=.cockpit/generated-environment-ownership.json',
-            'tee cockpit.toml', 'tee -i ./COCKPIT.TOML', 'tee -- cockpit.toml -a',
-            'tee --output-error=warn cockpit.toml', 'tee cockpit.toml -a', '/usr/bin/tee subdir/../cockpit.toml',
-            'tee .cockpit/generated-environment-ownership.json',
-            // A link or an unreadable mode loses the configuration as surely as deleting it.
-            'ln -sf notes.txt cockpit.toml', 'ln -f notes.txt ./COCKPIT.TOML', 'ln -s -f -- notes.txt cockpit.toml', 'ln -sft . notes/cockpit.toml',
-            'chmod 000 cockpit.toml', 'chmod 0200 cockpit.toml', 'chmod u-r cockpit.toml', 'chmod a= cockpit.toml', 'chmod go+r,u-rw cockpit.toml',
-            'chmod --reference=notes.txt cockpit.toml', 'chmod 000 .cockpit/generated-environment-ownership.json',
-        ]) {
+    it('denies deleting, renaming or truncating the ownership manifest, and leaves cockpit.toml to the agent', () => {
+        const manifest = '.cockpit/generated-environment-ownership.json'
+        for (const command of [`rm ${manifest}`, 'rm -rf .cockpit', 'rm -rf .', 'rm -rf ../project', 'find . -delete', `truncate -s 0 ${manifest}`,
+            `dd count=0 of=${manifest}`, `tee ${manifest}`, `chmod 000 ${manifest}`]) {
             const configured = policy()
             const [executable, ...argv] = command.split(' ')
             configured.projectCommands.push({ checkoutRoot: root, kind: 'test', executable, argv })
             expect.soft(decide(command, configured), command).toEqual({ decision: 'deny', reason: removal })
         }
-        for (const command of ['dd of=../cockpit.toml', 'tee ../cockpit.toml']) {
-            const nested = policy()
-            nested.declaredAllows.push({ argv: command.split(' '), cwd: `${root}/subdir`, reason: 'Repository writes are declared safe.' })
-            expect(decide(command, nested, `${root}/subdir`), command).toEqual({ decision: 'deny', reason: removal })
+        const empty = (path: string) => evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: path, content: '' } }), policy(), inspect)
+        expect(empty(manifest).decision).toBe('deny')
+        // Whatever state cockpit.toml is left in, calls are judged under the configuration last synced, so
+        // the agent may delete, empty, link or lock it, and repair it with the same tools.
+        for (const command of ['rm cockpit.toml', 'mv cockpit.toml old.toml', 'printf x > cockpit.toml', 'truncate -s 0 cockpit.toml',
+            'ln -sf notes.txt cockpit.toml', 'chmod 000 cockpit.toml', 'cp -P link.toml cockpit.toml']) {
+            const configured = policy()
+            const [executable, ...argv] = command.split(' ')
+            configured.projectCommands.push({ checkoutRoot: root, kind: 'test', executable, argv })
+            expect.soft(decide(command, configured).decision, command).toBe('allow')
         }
-        const nested = policy()
-        nested.declaredAllows.push({ argv: ['truncate', '-s', '0', '../cockpit.toml'], cwd: `${root}/subdir`, reason: 'Repository file resizing is declared safe.' })
-        expect(decide('truncate -s 0 ../cockpit.toml', nested, `${root}/subdir`)).toEqual({ decision: 'deny', reason: removal })
+        expect(patch('*** Delete File: cockpit.toml').decision).toBe('allow')
+        expect(empty('cockpit.toml').decision).toBe('allow')
         // The same identity under another spelling, such as a hard link, is the same file.
         const linked = policy()
-        linked.protectedIdentities = protectedIdentities([{ path: instance }], { [`${root}/cockpit.toml`]: { identity: '7:5', ancestors: ['7:1'] } })
+        linked.protectedIdentities = protectedIdentities([{ path: instance }], { [`${root}/${manifest}`]: { identity: '7:5', ancestors: ['7:1'] } })
         const facts = ({ path, cwd }: { path: string; cwd: string }) => {
             const resolved = posix.resolve(cwd, path)
-            return { status: 'resolved', path: resolved, symlink: false,
-                identity: resolved.endsWith('/alias.toml') ? '7:5' : resolved.endsWith('/archive') ? '7:1' : null, ancestors: [] }
+            return { status: 'resolved', path: resolved, symlink: false, identity: resolved.endsWith('/alias.json') ? '7:5' : null, ancestors: [] }
         }
-        expect(evaluateGuard(parseGuardInput(shellPayload('rm alias.toml')), linked, facts)).toEqual({ decision: 'deny', reason: removal })
-        for (const command of ['truncate -s 0 alias.toml', 'truncate -s 0 archive', 'dd of=alias.toml', 'tee alias.toml']) {
-            linked.declaredAllows.push({ argv: command.split(' '), reason: 'Repository file resizing is declared safe.' })
-            expect(evaluateGuard(parseGuardInput(shellPayload(command)), linked, facts), command).toEqual({ decision: 'deny', reason: removal })
-        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('rm alias.json')), linked, facts)).toEqual({ decision: 'deny', reason: removal })
     })
 
     it('denies removal of every guard control file and directory despite declared command grants', () => {
@@ -2514,7 +2486,6 @@ describe('cockpit structure protection', () => {
             `-vo${destination}`,
         ]
         for (const [destination, reason] of [
-            ['../cockpit.toml', removal],
             ['../.codex/config.toml', controlRemoval],
             ['../config/active.instance', instanceMutation],
             ['../env/.secrets/token', secretMutation],

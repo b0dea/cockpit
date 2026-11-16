@@ -53,10 +53,8 @@ The values cockpit uses for a key the configuration leaves out.
     "attempt_cap": 2,
     "wip_cap": 3,
     "verification_timeout_seconds": 1800,
-    "evaluator_timeout_seconds": 900,
-    "gates": {}
+    "evaluator_timeout_seconds": 900
   },
-  "autonomy": {},
   "environment": {
     "resettable_volumes": [],
     "generated_host_paths": [],
@@ -84,14 +82,12 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
-| `unconfirmed` | Answers no person has stated yet; init writes them and doctor reports them. | array of string |  | 1–12 items; each item: one of `"cockpit.name"`, `"sibling"`, `"estate.runnable"`, `"ports.bases"`, `"environment.install_policies"`, `"environment.test_data"`, `"environment.compose_files"`, `"environment.machine"`, `"environment.posture"`, `"testing"`, `"guards"`, `"work.grading"` |
 | `cockpit` | Identity and layout of this cockpit. | table: [`[cockpit]`](#cockpit) |  | required |
 | `sibling` | Product repositories the cockpit works across. | array of table: [`[[sibling]]`](#sibling) |  | required; at least 1 item |
 | `ports` | Port leasing for running stacks side by side. | table: [`[ports]`](#ports) |  | required |
 | `guards` | Rules that restrict what agents may run. | table: [`[guards]`](#guards) | `{}` |  |
 | `mcp` | Approval of MCP servers and exact per-server tool restrictions. | table: [`[mcp]`](#mcp) | `{}` |  |
 | `work` | How work orders are accepted, graded and closed. | table: [`[work]`](#work) | `{}` |  |
-| `autonomy` | Which decisions an agent may take without a person. | table: [`[autonomy]`](#autonomy) | `{}` |  |
 | `browser` | Browser automation for the stack. | table: [`[browser]`](#browser) |  |  |
 | `testing` | Test stages and gates. | table: [`[testing]`](#testing) |  |  |
 | `environment` | How the stack is reached, signed in to, built and kept. | table: [`[environment]`](#environment) | `{}` |  |
@@ -149,7 +145,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
 | `path` | JSON file in the sibling with a top-level mcpServers object, as agent tools read from .mcp.json. | string |  | required; pattern [P1](#patterns); at most 4096 characters |
-| `provenance` | Where this MCP source declaration came from. | table: [`[sibling.derives.mcp_sources.provenance]`](#siblingderivesmcp_sourcesprovenance) |  | required |
+| `provenance` | Where this MCP source declaration came from. | table: [`[sibling.derives.mcp_sources.provenance]`](#siblingderivesmcp_sourcesprovenance) |  |  |
 
 ### `[sibling.derives.mcp_sources.provenance]`
 
@@ -159,9 +155,6 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `observed_on` | Date the source was looked at, for the reviewer. | string |  | format `date`; pattern `^(?:(?:\d\d[2468][048]\|\d\d[13579][26]\|\d\d0[48]\|[02468][048]00\|[13579][26]00)-02-29\|\d{4}-(?:(?:0[13578]\|1[02])-(?:0[1-9]\|[12]\d\|3[01])\|(?:0[469]\|11)-(?:0[1-9]\|[12]\d\|30)\|(?:02)-(?:0[1-9]\|1\d\|2[0-8])))$` |
 | `kind` | How the value was established: declared by this file, measured, or inferred. | string |  | one of `"declared"`, `"measured"`, `"inferred"` |
 | `reason` | Why the value is what it is. | string |  | required; pattern `\S`; 1–4096 characters |
-| `confirmed` | Set to true once a person has confirmed an inferred value; inferred values require it. | boolean |  |  |
-
-- Must match at least one of `[{"not":{"required":["kind"]}},{"properties":{"kind":{"enum":["declared","measured"]}}},{"properties":{"kind":{"enum":["inferred"]},"confirmed":{"enum":[true]}},"required":["confirmed"]}]`.
 
 ### `[ports]`
 
@@ -230,7 +223,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
 | `allowed_tools` | Exact tool names permitted per declared MCP server. An empty list denies every tool; an absent server has no tool restriction. Review the tool implementation: names and read-only annotations do not establish read-only behavior. Unsupported harnesses receive no restricted server. | table of array of string | `{}` | at most 256 entrys; each key: pattern `^(?=[\s\S]{0,128}$)(?:^[a-zA-Z0-9][a-zA-Z0-9_-]*$)`; each value: at most 256 items, unique items, each item: pattern `^[a-zA-Z0-9_.-]+$`, at most 128 characters |
-| `approved` | Approved MCP servers, each mapped to the sha256 of the declaration a person reviewed; others stay disabled. | table of string | `{}` | each key: pattern `^(?=[\s\S]{0,128}$)(?:^[a-zA-Z0-9][a-zA-Z0-9_-]*$)`; each value: pattern `^[a-f0-9]{64}$` |
+| `approved` | Approved MCP servers, each mapped to the sha256 of the declaration a person approved; sync --interactive writes them. Others stay disabled. | table of string | `{}` | each key: pattern `^(?=[\s\S]{0,128}$)(?:^[a-zA-Z0-9][a-zA-Z0-9_-]*$)`; each value: pattern `^[a-f0-9]{64}$` |
 
 ### `[work]`
 
@@ -242,28 +235,6 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `wip_cap` | Accepted orders that may be unfinished at once; may be lowered but not raised. | integer | `3` | 1–3 |
 | `verification_timeout_seconds` | Seconds one criterion's check command may run before it is stopped and reported as not run. | integer | `1800` | 1–7200 |
 | `evaluator_timeout_seconds` | Seconds one independent grading run may take before it is stopped. | integer | `900` | 1–7200 |
-| `gates` | Who passes each work-order decision. | table: [`[work.gates]`](#workgates) | `{}` |  |
-
-### `[work.gates]`
-
-| Key | Meaning | Type | Default | Constraints |
-| --- | --- | --- | --- | --- |
-| `accept` | Who accepts a draft work order: agent, person or ci. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
-| `amend` | Who accepts a changed contract. Default agent. Removing an accepted criterion or gate always needs a person or ci; an agent's rewrite of a criterion, scope, non-goal or objective is judged at the next grade, and needs a person under checks grading; under off nothing judges it. | string |  | one of `"agent"`, `"person"`, `"ci"` |
-| `answer` | Who answers an open question on an order. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
-| `signoff` | Who closes a graded order. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
-| `acknowledge` | Who acknowledges that an order weakened tests, which checks grading otherwise fails; under checks a person or CI acknowledges even where this says agent, because the acknowledgement alone passes the check there; under independent, subagent and self grading the acknowledgement is context for the verdict, and under off it is only recorded. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
-
-### `[autonomy]`
-
-| Key | Meaning | Type | Default | Constraints |
-| --- | --- | --- | --- | --- |
-| `sync` | Who may run a sync that writes: agent, person or ci. Default agent. | string |  | one of `"agent"`, `"person"`, `"ci"` |
-| `stale_delete` | Who approves sync deleting files cockpit generated before and no longer generates. Default agent. An unchanged MCP-only file of a listed tool whose servers are no longer written goes without this approval, because removing it only narrows access. | string |  | one of `"agent"`, `"person"`, `"ci"` |
-| `reset` | Who may apply a reset, which deletes stack data. Default person. | string |  | one of `"agent"`, `"person"`, `"ci"` |
-| `mcp_approve` | Who approves a declared MCP server: person records each digest in [mcp.approved]; agent lets sync enable every declared server as declared, so an agent that writes a sibling MCP source starts that process outside the guard. Default person. | string |  | one of `"agent"`, `"person"` |
-| `confirm_answers` | Who confirms an unconfirmed init answer that is neither a trust decision nor settled by an observation (cockpit.name, estate.runnable, environment.test_data): person, or agent, which lets cockpit confirm record it as the agent's decision. Trust decisions stay a person's. Default person. | string |  | one of `"agent"`, `"person"` |
-| `instruction_files` | Who may run setup --write-instruction-files and --write-instruction-pointers, which write the sibling AGENTS.md, CLAUDE.md and guide links setup proposes: person, or agent, which the guard then admits. An agent can make the same edits with its own tools. Default person. | string |  | one of `"agent"`, `"person"` |
 
 ### `[browser]`
 
@@ -562,6 +533,6 @@ Agent tools load every skill's frontmatter into each session, so cockpit caps it
 | cursor | frontmatter_bytes | 8192 | each skill's procedure |
 | grokcli | frontmatter_bytes | 8192 | each skill's procedure |
 
-Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `e50daf6b240b7bc36a0abc3f9250bc373b962589a91f831ccfea2703fe2a3217`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `b773dcb3fa3ec3b9edcb079edaf2ac004fd4ecea7fdec9dbed6d86d4495c33a9`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `a15c6426f3e95c6c01a8fe5257cbb5ddb50810cbfc228faeb8eec7a690e4775c`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `f7ae0ab5ff4dc4f50f9afad9c78650285dedd6d66f7c0af681fff431e187d6c7`).
+Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `79457bf072b4ba90977091034ac39e86e1616a9b33bc1c8b9187948193f6121d`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `87698f4b88fffe83ff1f3b73a0ed990c60d0df34135b485eee37aec6cc33c83b`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `2440a1450af7dd23c7076a80afdaaebf02b3f1b22239c28aeb9d4293af821e25`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `2d87135f6a4d667866531100896d625454ce4080256215b3467995061138b7ac`).
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.

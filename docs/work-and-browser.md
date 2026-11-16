@@ -74,15 +74,14 @@ question waits or the attempt cap is reached, and **draft** before acceptance. `
 `abandoned` are closures. The work-in-progress cap, `work.wip_cap`, counts accepted orders that are
 not closed, and `work accept` refuses a new one past it. A grade whose verdict is `unmet` counts an
 attempt; a failed check does not, since its cause may be cockpit's. Under `checks` and `off` nothing
-judges, so there is no cap. At `work.attempt_cap` the order is blocked until it is closed, by whoever
-[`[work.gates]`](#who-passes-each-gate) names for `signoff`, or given fresh attempts; the refusal
-names who. An amendment a person or CI accepts resets the count. One the agent accepts keeps it, or
+judges, so there is no cap. At `work.attempt_cap` the order is blocked until it is closed or given
+fresh attempts. An amendment a person accepts resets the count. One the agent accepts keeps it, or
 reordering a list in its own contract would undo the cap. When the contract is right and the
 attempts failed for a cause now fixed, a person runs
 `work retry --work-order <id> --note <the root cause> --interactive`: it shows what failed last and
 the cause, and once the person types its digest it grants a fresh set of attempts at the same
 contract and base. The record keeps the failed count, the cause and, in brief, what failed.
-`work retry` is always a person's step, whatever `[work.gates]` says.
+`work retry` is always a person's step.
 
 - **accept** records the contract. Run it again after editing an accepted order to accept the change
   (an [amendment](#amendments)). The check base stays the commits recorded at first acceptance.
@@ -132,41 +131,34 @@ uncommitted change is graded.
 The other order's grade judges what it was left. So an order whose grade left changes to an order
 that then closed partial or abandoned does not close as done until it is graded again, and once an
 order has closed done on such a grade, the order holding the changes closes partial or abandoned
-only through a person, or CI where `[work.gates] signoff = "ci"`.
+only through a person.
 
 ## Who passes each gate
 
-<!-- cockpit:ref schema=work.gates.accept --> `[work.gates]` in `cockpit.toml` says who passes each
-step: `accept`, `amend` (accepting a changed contract), `answer`, `signoff` and `acknowledge`
-(accepting that an order weakened tests). Every default is `agent`.
+The agent accepts, amends, answers and signs off its own work orders; the grade still judges the
+work. A few steps lower the bar the agent's own work is held to, so they are a person's. The command
+shows what is being decided and its digest, and records the step only after a person types that
+digest in a terminal with `--interactive`. Without a terminal it refuses with `WORK_PERSON_REQUIRED`.
 
-| Value | What happens |
-| --- | --- |
-| `agent` | The command passes the step. |
-| `person` | The command shows what is being decided and its digest, and records the step only after a person types that digest in a terminal with `--interactive`. Without a terminal it refuses with `WORK_PERSON_REQUIRED`. |
-| `ci` | The command records the step as awaiting CI, and it counts once the required `work verify` job passes. |
+- an amendment that removes a criterion or gate, or that no model can judge under `checks` grading,
+  or that follows a grade finding the agent's amendments lowered the bar ([Amendments](#amendments));
+- a signoff after such a finding, or one that would leave another order's changes ungraded;
+- acknowledging a test weakening under `checks` grading ([Test protection](#test-protection));
+- `work retry`.
 
-Removing an accepted criterion or gate is never the agent's to certify: under `amend = "agent"` such
-an amendment still needs a person. [Amendments](#amendments) says what happens to the rest. Under
-`checks` grading, acknowledging a test weakening is likewise a person's or CI's under
-`acknowledge = "agent"`, as [Test protection](#test-protection) says.
-
-These local gates are best-effort. The guard keeps an agent's tool call from passing
-`--interactive`, and the command needs a terminal on both standard input and output, but cockpit
-cannot tell a person from a program driving a terminal. The only enforced human gate is `ci`: a
-required `work verify` job behind a protected environment whose reviewers must approve it before it
-runs.
+These steps are best-effort. The guard keeps an agent's tool call from passing `--interactive`, and
+the command needs a terminal on both standard input and output, but cockpit cannot tell a person
+from a program driving a terminal. The enforced check is a required `work verify` job on the
+protected branch.
 
 <!-- cockpit:ref command=work verify --> `work verify` checks every record against its order: an
 open order whose contract changed since acceptance fails, and so does a done order without a passing
 grade of its accepted contract, and so does a [decision record](#decisions) an order cites that is
-gone or no longer names the order. Run in CI (where `CI` is set), it reports the steps gated on `ci`
-as confirmed; run locally it lists them as awaiting CI. A workflow job for it:
+gone or no longer names the order. A workflow job for it:
 
 ```yaml
 work-verify:
   runs-on: ubuntu-latest
-  environment: work-orders   # add required reviewers to this environment
   steps:
     - uses: actions/checkout@v4
     - uses: actions/setup-node@v4
@@ -175,8 +167,8 @@ work-verify:
     - run: npx --no cockpit work verify --config cockpit.toml
 ```
 
-Make the job a required status check on the protected branch, so an order's `ci` steps reach the
-branch only through it.
+Make the job a required status check on the protected branch, so a closed order reaches the branch
+only if its records verify.
 
 ## How an order earns done
 
@@ -196,11 +188,6 @@ as strong as the one now in force: after `[work] grading` moves to a stronger mo
 refuses to close an order as done on an older, weaker grade until it is graded again, and `work verify`
 reports a done order whose grade is weaker than the current mode. `partial` and `abandoned` stay open.
 
-While `work.grading` is listed under `unconfirmed` (the setup agent chose it, or an answers file
-supplied it), the default `independent` is in force whatever it declares, and `work status` names it
-under `awaitingConfirmation`; a person makes the declared mode effective by deleting the entry and
-running `sync`, which asks them to accept the weakening.
-
 ### How grading can run
 
 The grader is optional. Moving to a weaker choice takes a person; an automatic fallback only ever
@@ -210,7 +197,7 @@ moves to one at least as strong.
 | --- | --- | --- | --- | --- |
 | Another CLI | `evaluators = ["codexcli"]` from a Claude Code session, or both tools listed | cockpit reads that process directly | a separate process of another tool judged the change, read-only by its tool's mechanism | the next listed tool, when one is missing, signed out, rate-limited, timed out or refused by its environment; when none answers, a refusal names each cause |
 | Same CLI, separate run | one tool listed, or `--evaluator <tool>` | cockpit reads that process directly, with a warning | the same, but one tool is judging its own kind of work | as above for a list; `--evaluator` runs only that tool. The warning (`EVALUATOR_IS_RUNNING_TOOL`) appears only where the running tool is detected: Claude Code and Codex |
-| Native subagent in the session | `grading = "subagent"` | the working agent relays it | only that the working agent says a subagent answered: cockpit cannot verify one ran; read-only is enforced by the generated tool list in Claude Code and instructed elsewhere | a separate process as above, stronger, when the agent runs `work grade` with nothing submitted because it cannot spawn one; refused when no process answers either. Once that process finds the work unmet, a relayed verdict cannot replace it, not even after an amendment the agent accepts; only one a person or CI accepts clears it |
+| Native subagent in the session | `grading = "subagent"` | the working agent relays it | only that the working agent says a subagent answered: cockpit cannot verify one ran; read-only is enforced by the generated tool list in Claude Code and instructed elsewhere | a separate process as above, stronger, when the agent runs `work grade` with nothing submitted because it cannot spawn one; refused when no process answers either. Once that process finds the work unmet, a relayed verdict cannot replace it, not even after an amendment the agent accepts; only one a person accepts clears it |
 | Checks only | `grading = "checks"` | nothing judged by a model | cockpit ran every criterion's check, all passed, and nothing changed outside `scope`; it cannot judge whether a test proves its criterion, or a change's quality, documentation or decisions | needs no agent tool, so it always runs; a criterion with no check makes `work grade` refuse, so it cannot pass |
 | The agent itself | `grading = "self"` | the working agent | only the agent's own claim; a failed check still fails it | needs no agent tool, so it always runs |
 | No grader | `grading = "off"` | nothing | nothing is judged; the order is a tracked record, and a failed or unrun check stays on it | needs nothing, so it always runs |
@@ -236,7 +223,7 @@ Under `off`, nothing inside a work order judges standing criteria, test protecti
 documentation: `test-run` still reports weakened tests but does not fail on them, and a
 test-protection check you run in CI is a separate guard and unchanged. Orders still accept, note,
 answer and close as `done`, with an optional `--note`, or as `partial` or `abandoned`, which need
-one as ever; `[work.gates]` still applies, and a decision recorded on an order must still be
+one as ever; a decision recorded on an order must still be
 resolved before it closes. The attempt cap does not apply. `cockpit grade --criteria` stays an
 explicit independent grade in every mode.
 
@@ -255,7 +242,7 @@ Editing an accepted order and running `work accept` again records an amendment i
 `amendments`, with who passed it, what it removed and, under `review`, each part that changed in a
 way that may lower the bar, before and after:
 
-| Change | Under `amend = "agent"` |
+| Change | Who passes it |
 | --- | --- |
 | A criterion or gate removed | needs a person, in every grading mode |
 | A criterion rewritten (its text, check or source), `scope` widened | under `independent` and `self`, passes and is judged at the next grade; under `subagent`, passes and is judged by the verdict the agent relays, so by the agent whose rewrite it is, unless a separate evaluator already found the work unmet (see below); under `checks`, needs a person |
@@ -263,15 +250,15 @@ way that may lower the bar, before and after:
 | A criterion or gate added, `scope` narrowed, a non-goal added | passes |
 
 The next grade carries `amendments-hold-bar`, with the before and after of every amendment the agent
-made since a person or CI last accepted the contract; under `independent` the evaluator also sees
+made since a person last accepted the contract; under `independent` the evaluator also sees
 them as the change to `workorders/<id>.md`, or, where the order's scope names that file, its diff
 since the base. When it is not met the grade fails, and the next
 amendment and any closure are a person's: revert or rewrite the order, then a person runs
 `work accept --interactive`. The order records the finding, so a later `work check` or grade does
-not clear it; only an amendment a person or CI accepts does.
+not clear it; only an amendment a person accepts does.
 
 Under `subagent` the same holds for a separate evaluator's `unmet`: an agent cannot reword the
-criterion, accept that itself and relay a pass. Until a person or CI accepts an amendment, the order
+criterion, accept that itself and relay a pass. Until a person accepts an amendment, the order
 is graded only by running `work grade` with nothing submitted.
 
 <!-- cockpit:ref command=grade --> For a change that needs no order,
@@ -324,10 +311,9 @@ gate passed. With no open order it says it had nothing to compare with.
 
 `work acknowledge --work-order <id> --note <why it is not a weakening>` records an acknowledgement
 with who passed it. It covers exactly the findings it showed, so a test deleted or skipped later
-fails a `checks` grade again. Where `[work.gates] acknowledge` is `person`, and under `checks`
-grading wherever it is not `ci`, a person runs it with `--interactive` and types the digest; an
-agent's run without a terminal is refused with `WORK_PERSON_REQUIRED`. Under `checks` no model reads
-the change, so an acknowledgement the agent recorded does not pass the check.
+fails a `checks` grade again. Under `checks` grading a person runs it with `--interactive` and
+types the digest; an agent's run without a terminal is refused with `WORK_PERSON_REQUIRED`, and an
+acknowledgement the agent recorded under another mode does not pass the check.
 
 ## Decisions
 
@@ -529,7 +515,7 @@ with 2xx.
 cockpit does not run a browser service or a browser debugger. To let an agent drive a browser
 through its own Playwright MCP tools, run a browser service in your own Compose file and name its
 loopback address in `browser.endpoint`. cockpit then publishes the Playwright MCP declaration, which
-you approve by setting `playwright` under `[mcp.approved]` to the sha256 `sync` reports (its server
+a person approves with the `sync --interactive` yes, like any MCP server (its server
 must be declared in a JSON file with an `mcpServers` object, listed in a sibling's
 `derives.mcp_sources`), and the `cockpit-browser` skill. Without an endpoint, the Playwright MCP
 server and the skill are reported unavailable and not rendered; `browser drive` and

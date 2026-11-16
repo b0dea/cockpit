@@ -7,6 +7,11 @@ import { parseDocument } from 'yaml'
 import { z } from 'zod'
 import { REPOSITORY_PATH } from '../repository-path.js'
 
+// Who passed a work-order step: the agent, or a person who typed the digest cockpit showed in a
+// terminal. A local person step is best-effort: cockpit cannot tell a person from a program driving one.
+export const DECIDERS = ['agent', 'person'] as const
+export type Decider = typeof DECIDERS[number]
+
 // One inert word, never a path or an option: the CLI, the guard and the store each admit it before it names a file.
 export const WORK_ORDER_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const WORK_ORDER_LIMITS = Object.freeze({ bytes: 65_536, criteria: 12, scope: 64, textBytes: 2_048, arguments: 32, argumentBytes: 2_048 })

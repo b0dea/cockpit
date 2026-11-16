@@ -10,7 +10,7 @@ import { parse } from 'yaml'
 
 import { agentInstructionFile, foldGuardSpelling, type GuardDecision } from './evaluator.js'
 import type { GuardFileContent } from './invocation-parser.js'
-import { proposedText } from './policy-pin.js'
+import { proposedText } from './proposed-text.js'
 
 /**
  * Why an instruction file's `text` may run something outside the guard, or undefined when it cannot: a

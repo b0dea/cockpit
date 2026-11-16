@@ -561,8 +561,6 @@ describe('the published cockpit schema', () => {
         ['guards', (config: JsonObject) => object(config.guards)],
         ['mcp', (config: JsonObject) => object(config.mcp)],
         ['work', (config: JsonObject) => object(config.work)],
-        ['work.gates', (config: JsonObject) => object(object(config.work).gates)],
-        ['autonomy', (config: JsonObject) => object(config.autonomy)],
         ['browser', (config: JsonObject) => object(config.browser)],
         ['testing', (config: JsonObject) => object(config.testing)],
         ['environment', (config: JsonObject) => object(config.environment)],
@@ -571,8 +569,7 @@ describe('the published cockpit schema', () => {
             ...validConfig,
             guards: {},
             mcp: {},
-            work: { gates: {} },
-            autonomy: {},
+            work: {},
             browser: {
                 harnesses: [{ target: 'codexcli', version: '0.149.0' }],
                 images: { mcp: { reference: `synthetic.invalid/mcp@sha256:${'b'.repeat(64)}`, driver_version: '1.2.3' } },
@@ -605,7 +602,6 @@ describe('the published cockpit schema', () => {
             object(properties.guards),
             object(properties.mcp),
             object(properties.work),
-            object(properties.autonomy),
             object(properties.browser),
             object(properties.testing),
             environment,
@@ -644,7 +640,6 @@ describe('the published cockpit schema', () => {
         const browserProperties = object(object(properties.browser).properties)
 
         expect(work.wip_cap).toMatchObject({ type: 'integer', minimum: 1, maximum: 3, default: 3 })
-        expect(object(object(work.gates).properties).accept).toMatchObject({ enum: ['agent', 'person', 'ci'] })
         expect(object(browserProperties.artifacts).additionalProperties).toBe(false)
         expect(schema['x-cockpit-runtime-checks']).toContainEqual({ path: 'browser.artifacts', rule: 'exact_environment.generated_host_paths_coverage' })
         expect(schema['x-cockpit-editor-limitations']).toContainEqual({ path: 'testing.gates[].stages[]', rule: 'references_declared_testing_stage' })
@@ -776,25 +771,6 @@ describe('the published cockpit schema', () => {
             expect(CockpitConfig.safeParse(config).success).toBe(false)
             expect(validate(config), JSON.stringify(validate.errors)).toBe(false)
         }
-    })
-
-    it('requires provenance evidence on every provenance table the editor schema publishes', () => {
-        const withoutRule: string[] = []
-        const seen: string[] = []
-        const walk = (node: unknown, path: string): void => {
-            if (node === null || typeof node !== 'object') return
-            const table = node as Record<string, unknown>
-            const fields = table.properties as Record<string, unknown> | undefined
-            if (fields?.observed_on && fields.kind && fields.source) {
-                seen.push(path)
-                if (!Array.isArray(table.anyOf)) withoutRule.push(path)
-            }
-            for (const [key, value] of Object.entries(table)) walk(value, `${path}.${key}`)
-        }
-        walk(JSON.parse(renderCockpitSchema()), '#')
-
-        expect(seen.some((path) => path.includes('mcp_sources'))).toBe(true)
-        expect(withoutRule).toEqual([])
     })
 
     it('describes every field so editors and the reference can say what it does', () => {

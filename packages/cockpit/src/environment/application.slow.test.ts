@@ -847,7 +847,6 @@ describe('guard policy construction', () => {
                 { action: 'read-file', segments: ['.cockpit', 'guards'], name: 'bash-guard.sh', maxBytes: 65_536 },
                 { action: 'read-file', segments: ['.claude'], name: 'settings.json', maxBytes: 65_536 },
                 { action: 'read-file', segments: ['.cockpit', 'local'], name: 'guard-identity', maxBytes: 65_536 },
-                { action: 'read-file', segments: [], name: 'cockpit.toml', maxBytes: 1_048_576 },
             ] })
         }
         // The first module read starts together with the configuration load, so both count as checkpoint 1.
@@ -886,12 +885,7 @@ describe('guard policy construction', () => {
             expect(await read(`echo '${long}'`)).toBe('allow')
             expect(await read(`cat app/${long} app/${long}/../config/notes.md`)).toBe('allow')
             expect(await read(`rg needle app/${long}`)).toBe(await read('rg needle app/missing'))
-            // A word the guard cannot inspect holds the call by naming that word, not the guard's own authority.
-            mkdirSync(join(root, 'app/locked'), { mode: 0o000 })
-            const locked = await runGuardEvaluationApplication({ ...request, payload: shellPayload('echo app/locked/entry', root) }, adapters)
-            expect(locked.decision).toEqual({ decision: 'unavailable', reason: expect.stringMatching(/^Guard could not inspect \S+\/app\/locked\/entry, which this call names/) })
         } finally {
-            if (existsSync(join(root, 'app/locked'))) { chmodSync(join(root, 'app/locked'), 0o700); rmSync(join(root, 'app/locked'), { recursive: true }) }
             for (const path of created) rmSync(path, { recursive: true, force: true })
         }
     }, 120_000)
@@ -928,7 +922,6 @@ describe('guard policy construction', () => {
     }, 120_000)
 
     it.each([
-        ['cockpit.toml', 'guard policy comes from it'],
         ['.cockpit/generated-environment-ownership.json', 'it authenticates the guard and the hook that launches it'],
         ['.claude/settings.json', 'it authenticates the guard and the hook that launches it'],
         ['.cockpit/local/guard-identity', 'it records the Node executable and cockpit handler on this machine, which committed files cannot carry'],
@@ -939,10 +932,8 @@ describe('guard policy construction', () => {
         try {
             const { decision } = await runGuardEvaluationApplication(request, adapters)
             expect(decision.decision).toBe('unavailable')
-            expect(decision.reason).toContain(`${file === 'cockpit.toml' ? configPath : file} is missing; ${why}, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are held`)
-            expect(decision.reason).toContain(file === 'cockpit.toml'
-                ? 'Fix: a human must return to the intended configured checkout/worktree and branch'
-                : `Fix: a human must run \`${root}/node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${configPath}\` in a terminal, outside the agent`)
+            expect(decision.reason).toContain(`${file} is missing; ${why}, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are held`)
+            expect(decision.reason).toContain(`Fix: a human must run \`${root}/node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${configPath}\` in a terminal, outside the agent`)
             expect(decision.reason).not.toContain('git ')
             expect(decision.reason).not.toContain('npx ')
         } finally { renameSync(join(root, `${file}.away`), join(root, file)) }
@@ -1160,96 +1151,85 @@ describe('guard policy construction', () => {
         expect((await runGuardEvaluationApplication({ ...sync, searchPath: homebrew, payload: shellPayload(`/opt/homebrew/bin/node ${script} sync --config cockpit.toml --dry-run`, root) }, adapters))
             .decision.reason).toMatch(/^Refusing to run cockpit sync/)
         expect(await runGuardEvaluationApplication(sync, adapters)).toMatchObject({ decision: { decision: 'deny',
-            reason: `Refusing to run cockpit sync while ${canonicalConfig} has an unapproved edit that widens what agents may do: a person reviews it and syncs.${notice}` } })
+            reason: `Refusing to run cockpit sync while calls are judged under the configuration last synced: a person reviews ${canonicalConfig} and syncs.${notice}` } })
     }, 120_000)
 
-    it('admits only the exact restoration of the recorded configuration out of an edit sync cannot apply', async () => {
+    it('admits an agent\'s cockpit command only on the guard\'s own configuration, however it is named', async () => {
         const { root, configPath, request, adapters } = await installedGuardRequest()
-        const recorded = readFileSync(configPath, 'utf8')
-        const call = (tool_name: string, tool_input: unknown): GuardEvaluationApplicationInput => ({ ...request, payload: { hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input } })
-        const write = (content: string, file_path = configPath) => call('Write', { file_path, content })
-        const decision = async (input: GuardEvaluationApplicationInput, using = adapters) => (await runGuardEvaluationApplication(input, using)).decision
-        const table = '[mcp.allowed_tools]\n'
-        const addition = 'nosuchserver = []\n'
-        const edited = recorded.replace(table, `${table}${addition}`)
-
-        // The edit reduces, so the guard admits it, and only then does sync find it cannot publish it.
-        expect(await decision(write(edited))).toMatchObject({ decision: 'allow' })
-        writeFileSync(configPath, edited)
-        expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'MCP_DECLARATION_INVALID' }] })
-
-        const patch = (path: string) => `*** Begin Patch\n*** Update File: ${path}\n@@\n [mcp.allowed_tools]\n-nosuchserver = []\n*** End Patch\n`
-        // Each hands the file back byte for byte, whichever tool spells it, though removing a restriction is otherwise pinned.
-        for (const restore of [write(recorded), write(recorded, 'cockpit.toml'), call('Edit', { file_path: configPath, old_string: addition, new_string: '' }),
-            call('apply_patch', { command: patch('cockpit.toml') })]) {
-            expect(await decision(restore)).toMatchObject({ decision: 'allow' })
-        }
-        // Calls are judged under the edit, so the pin keeps the restriction it added against every other
-        // change of cockpit.toml, nearly identical or not provably exact.
-        for (const other of [
-            write(`${recorded}\n`), write(''),
-            call('Edit', { file_path: configPath, old_string: 'nosuchserver = []', new_string: '' }),
-            call('Edit', { file_path: configPath, old_string: addition, new_string: addition.replace('[]', '["read"]') }),
-            // Applied more than once, or not at all, the result is not proven.
-            call('Edit', { file_path: configPath, old_string: '\n', new_string: '' }),
-            call('Edit', { file_path: configPath, old_string: 'not in the file', new_string: '' }),
-            // Another spelling of the file restores nothing, and a call doing more than this is more than a restoration.
-            write(recorded, 'app/../cockpit.toml'),
-            call('apply_patch', { command: `${patch('cockpit.toml').replace('*** End Patch\n', '')}*** Add File: app/notes.txt\n+added\n*** End Patch\n` }),
-            { ...request, payload: shellPayload(`git -C ${root} restore -- cockpit.toml`, root) },
-        ]) expect(await decision(other)).toMatchObject({ decision: 'deny' })
-        // The same bytes anywhere else are an ordinary write, which the edit leaves as it was.
-        expect(await decision(write(recorded, join(root, 'app/cockpit.toml')))).toMatchObject({ decision: 'allow' })
-
-        // A hold whose policy cannot be built has the same way out, because restoring needs no policy.
-        const unobserved = { ...adapters, observeCheckout: (async () => ({ state: 'unavailable', reason: 'synthetic' })) as unknown as typeof adapters.observeCheckout }
-        expect(await decision(write(`${recorded}\n`), unobserved)).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('cannot build its policy') })
-        expect(await decision(write(recorded), unobserved)).toMatchObject({ decision: 'allow' })
-
-        // A configuration that does not load has the same way out, however it fails to, and the agent may
-        // also correct it and read what check reports, while every other call waits for a file that loads.
-        const declared = '[ports.bases]'
-        const undeclared = '[ports.not_bases]'
-        const invalid = recorded.replace(declared, undeclared)
-        const launcher = './node_modules/@b00dea/cockpit/bin/cockpit.mjs'
-        const shell = (command: string) => decision({ ...request, payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' })
-        for (const broken of [invalid, `${recorded}\n[[[ not toml\n`, `${recorded}\n${'#'.repeat(1_100_000)}\n`]) {
-            writeFileSync(configPath, broken)
-            const unloaded = await shell('ls')
-            expect(unloaded).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('does not load') })
-            expect(unloaded.reason).toContain('.cockpit/local/guard-config')
-            expect(unloaded.reason).toContain('sync --dry-run --config cockpit.toml')
-            for (const command of ['git commit --allow-empty -m held', `${launcher} sync --config cockpit.toml`, `${launcher} check --config cockpit.toml && git commit --allow-empty -m held`,
-                `${launcher} check --config cockpit.toml > report.txt`, `cd app && ../${launcher.slice(2)} check --config ../cockpit.toml`]) {
-                expect(await shell(command), command).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('does not load') })
+        const launcher = `${root}/node_modules/@b00dea/cockpit/bin/cockpit.mjs`
+        const decide = async (command: string) => (await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin', payload: shellPayload(command, root) }, adapters)).decision
+        mkdirSync(join(root, 'sub'), { recursive: true })
+        writeFileSync(join(root, 'sub/cockpit.toml'), readFileSync(configPath))
+        symlinkSync(configPath, join(root, 'alias.toml'))
+        try {
+            for (const command of [`${launcher} check --config cockpit.toml`, `${launcher} sync --config=./cockpit.toml`, `${launcher} sync --config ${configPath}`,
+                `${launcher} check --config alias.toml`, `${launcher} init . --target codexcli`]) {
+                expect((await decide(command)).decision, command).toBe('allow')
             }
-            for (const command of [`${launcher} check --config cockpit.toml`, `${launcher} sync --dry-run --config cockpit.toml`, `${launcher} sync --config cockpit.toml --dry-run`]) {
-                expect(await shell(command), command).toMatchObject({ decision: 'allow' })
+            // Another configuration has no guard of this one's, and sync would publish guards and settings from it.
+            for (const command of [`${launcher} sync --config sub/cockpit.toml`, `${launcher} check --config=sub/cockpit.toml`,
+                `${launcher} reset --apply --config sub/other.toml`, `${launcher} init sub --target codexcli`,
+                `${launcher} check --config cockpit.toml --config sub/cockpit.toml`]) {
+                const decision = await decide(command)
+                expect(decision.decision, command).toBe('ask')
+                expect(decision.reason, command).toContain(`not ${configPath}, the configuration this guard was generated from`)
             }
-            expect(await decision(write(recorded))).toMatchObject({ decision: 'allow' })
-            expect(await decision(write(`${recorded}\n`))).toMatchObject({ decision: 'allow' })
-        }
-        writeFileSync(configPath, invalid)
-        expect(await decision(call('Edit', { file_path: configPath, old_string: undeclared, new_string: declared }))).toMatchObject({ decision: 'allow' })
-        expect(await decision(call('Edit', { file_path: configPath, old_string: undeclared, new_string: `${declared}\n` }))).toMatchObject({ decision: 'allow' })
-        // The pin still holds the agent's own gates, the correction must name the file itself, and emptying it is no correction.
-        const pinned = recorded.includes('[autonomy]') ? '[autonomy]' : '[cockpit]'
-        for (const other of [call('Edit', { file_path: configPath, old_string: pinned, new_string: `[work.gates]\naccept = "agent"\n\n${pinned}` }),
-            write(recorded, 'app/../cockpit.toml'), write('')]) {
-            expect((await decision(other)).decision).not.toBe('allow')
-        }
-        // Admitting it still rests on the publication sync wrote for this machine.
-        const localIdentity = join(root, GUARD_LOCAL_PATHS.identity)
-        const localBytes = readFileSync(localIdentity)
-        writeFileSync(localIdentity, encodeGuardLocalIdentity({ ...parseGuardLocalIdentity(localBytes.toString('utf8'))!, moduleSha256: 'f'.repeat(64) }))
-        expect(await decision(write(recorded))).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('machine-local record') })
-        writeFileSync(localIdentity, localBytes)
+        } finally { rmSync(join(root, 'sub'), { recursive: true, force: true }); rmSync(join(root, 'alias.toml'), { force: true }) }
+    }, 120_000)
 
-        // Out of a widening edit, calls are judged under the recorded configuration, so restoring it is admitted too.
-        const widened = parse(recorded) as { guards: { allow: unknown[] } }
-        widened.guards.allow.push({ argv: ['make', 'release'], reason: 'Releases are routine.' })
-        writeFileSync(configPath, stringify(widened))
-        expect(await decision(write(recorded))).toMatchObject({ decision: 'allow' })
+    it('judges every call under the configuration last synced whatever state cockpit.toml is in, until it loads again', async () => {
+        const { root, configPath, request, adapters } = await installedGuardRequest()
+        const recorded = readFileSync(configPath)
+        const decide = async (payload: GuardEvaluationApplicationInput['payload']) => (await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin', payload }, adapters)).decision
+        const write = (file_path: string) => ({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path } })
+        const sync = shellPayload(`${root}/node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${configPath}`, root)
+        const repair = () => { rmSync(configPath, { force: true }); writeFileSync(configPath, recorded) }
+        expect(await decide(sync)).toMatchObject({ decision: 'allow' })
+        const states: Record<string, () => void> = {
+            missing: () => rmSync(configPath),
+            'a link': () => { writeFileSync(join(root, 'app/linked.toml'), recorded); rmSync(configPath); symlinkSync(join(root, 'app/linked.toml'), configPath) },
+            unreadable: () => chmodSync(configPath, 0o000),
+            unparseable: () => writeFileSync(configPath, `${recorded}\n[[[ not toml\n`),
+        }
+        for (const [state, arrange] of Object.entries(states)) {
+            arrange()
+            try {
+                // Nothing is held: an ordinary call runs, a denied one stays denied, and the agent cannot sync.
+                expect(await decide(write('app/.env.example')), state).toMatchObject({ decision: 'allow' })
+                const denied = await decide(write('app/config/runtime.env'))
+                expect(denied.decision, state).toBe('deny')
+                expect(denied.reason, state).toContain('calls are judged under the configuration last synced until the file loads again, which the agent may repair with any tool.')
+                expect((await decide(sync)).reason, state).toMatch(/^Refusing to run cockpit sync while calls are judged under the configuration last synced/)
+            } finally { repair() }
+            expect(await decide(sync), state).toMatchObject({ decision: 'allow' })
+        }
+        // Without a record of the configuration last synced there is nothing to judge by, so the guard holds.
+        const record = join(root, GUARD_LOCAL_PATHS.generatedConfig)
+        renameSync(record, `${record}.away`)
+        writeFileSync(configPath, `${recorded}\n`)
+        try {
+            const held = await decide(write('app/.env.example'))
+            expect(held).toMatchObject({ decision: 'unavailable',
+                reason: expect.stringContaining(`the configuration last synced is missing from ${GUARD_LOCAL_PATHS.generatedConfig} or does not load there`) })
+            // Plain sync refuses in this state, so the hold names the sync a person runs.
+            expect(held.reason).toContain(`sync --config ${configPath} --interactive\` in a terminal, outside the agent`)
+        } finally { renameSync(`${record}.away`, record); repair() }
+
+        // An edit that widens nothing but whose policy cannot be built is judged under the record instead.
+        const failing = (when: (path: string) => boolean) => ({ ...adapters, observeCheckout: (async (input: Parameters<typeof adapters.observeCheckout>[0]) =>
+            when((input as { source: { path: string } }).source.path) ? { state: 'unavailable', reason: 'synthetic checkout failure' } : adapters.observeCheckout(input)) as typeof adapters.observeCheckout })
+        const deny = async (using: typeof adapters) => (await runGuardEvaluationApplication({ ...request, payload: write('app/config/runtime.env') }, using)).decision
+        writeFileSync(configPath, `${recorded}\n`)
+        try {
+            const fallback = await deny(failing(path => path === configPath))
+            expect(fallback).toMatchObject({ decision: 'deny', reason: expect.stringContaining('changed since the guards were generated, but the guard cannot build its policy from it (') })
+            expect(fallback.reason).toContain('synthetic checkout failure')
+            // A failure the record shares has nothing to do with the edit, so it is reported as it is.
+            const shared = await deny(failing(() => true))
+            expect(shared).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('synthetic checkout failure') })
+            expect(shared.reason).not.toContain('cannot build its policy from it')
+            expect(shared.reason).not.toContain('judged under the configuration last synced')
+        } finally { repair() }
     }, 120_000)
 
     it.each([
@@ -1308,7 +1288,7 @@ describe('guard policy construction', () => {
             ],
         })
         expect(policy.protectedIdentities.map(item => item.path)).toEqual([...policy.instances.map(item => item.path),
-            ...GUARD_ROOT_PROTECTIONS.map(item => join(root, item.path)), join(root, 'cockpit.toml')])
+            ...GUARD_ROOT_PROTECTIONS.map(item => join(root, item.path))])
         expect(policy.protectedIdentities[1]).toEqual({ path: join(root, 'app/config/runtime.env'), identity: null,
             ancestors: ['app', 'app/config'].map(path => guardIdentity(lstatSync(join(root, path)))) })
         expect((await prepareGuardEvaluationPolicy(input)).kind).toBe('refusal')
@@ -1364,11 +1344,9 @@ describe('guard policy construction', () => {
         expect(policy.canonicalRoot).toBe(cockpitRoot)
         expect(policy.configPath).toBe(nestedConfig)
         expect(policy.allowedRoots).toEqual([cockpitRoot, join(root, 'app')])
-        expect(policy.protectedIdentities.map(row => row.path)).toEqual(expect.arrayContaining([
-            nestedConfig, ...GUARD_ROOT_PROTECTIONS.map(row => join(cockpitRoot, row.path)),
-        ]))
+        expect(policy.protectedIdentities.map(row => row.path)).toEqual(expect.arrayContaining(GUARD_ROOT_PROTECTIONS.map(row => join(cockpitRoot, row.path))))
         const inspect = ({ path, cwd }: { path: string; cwd: string }) => ({ status: 'resolved', path: resolve(cwd, path), symlink: false, identity: null, ancestors: [] })
-        expect(evaluateGuard(parseGuardInput(shellPayload(`rm ${nestedConfig}`, root)), policy, inspect).decision).toBe('deny')
+        expect(evaluateGuard(parseGuardInput(shellPayload(`rm ${join(cockpitRoot, '.cockpit/generated-environment-ownership.json')}`, root)), policy, inspect).decision).toBe('deny')
         expect(evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'NotebookEdit', cwd: cockpitRoot,
             tool_input: { notebook_path: join(cockpitRoot, '.cockpit/local/analysis.ipynb'), new_source: 'print(1)' } }), policy, inspect).decision).toBe('deny')
     })

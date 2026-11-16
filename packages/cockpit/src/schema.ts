@@ -168,19 +168,13 @@ const PostureRequirement = z.object({
 
 const DeclarationReason = z.string().min(1).max(4096).regex(/\S/)
 const EnvironmentName = z.string().regex(/^[A-Z][A-Z0-9_]*$/).max(128)
-// Where a declared value came from. A date records when its source was looked at, so it is
-// required wherever the source lies outside this configuration. The one exception is a value
-// declared by the configuration file itself, which the loader checks by path because the
-// schema cannot see the file name.
+// Where a declared value came from, for the person reviewing the diff. Nothing reads it.
 export const Provenance = z.object({
     source: SafeRelativePath.max(4096).describe('File or place the value came from, relative to the repository.'),
     observed_on: z.string().date().optional().describe('Date the source was looked at, for the reviewer.'),
     kind: z.enum(['declared', 'measured', 'inferred']).optional().describe('How the value was established: declared by this file, measured, or inferred.'),
     reason: DeclarationReason.describe('Why the value is what it is.'),
-    confirmed: z.boolean().optional().describe('Set to true once a person has confirmed an inferred value; inferred values require it.'),
-}).strict().refine((value) => value.kind !== 'inferred' || value.confirmed === true, {
-    path: ['confirmed'], message: 'inferred declarations require explicit confirmation',
-})
+}).strict()
 
 
 export const Environment = z
@@ -239,7 +233,7 @@ export const Environment = z
 const McpSourceReference = z.object({
     // A JSON file with a top-level `mcpServers` object, the shape agent tools read from `.mcp.json`.
     path: SafeRelativePath.max(4096).describe('JSON file in the sibling with a top-level mcpServers object, as agent tools read from .mcp.json.'),
-    provenance: Provenance.describe('Where this MCP source declaration came from.'),
+    provenance: Provenance.optional().describe('Where this MCP source declaration came from.'),
 }).strict()
 
 const SiblingDerives = z.object({
@@ -455,16 +449,16 @@ export const McpAllowedTools = z.record(
         .refine(names => new Set(names).size === names.length, 'list each exact tool name once'),
 ).refine(servers => Object.keys(servers).length <= 256, 'at most 256 MCP servers can have tool restrictions')
 
-// THE approval list: each approved server name maps to the digest of the declaration a human
-// reviewed, which `sync` reports for every server it keeps disabled. Approving a name alone let an
-// agent rewrite the command of an approved server in a sibling's declaration file and the next
-// human sync start it. A server absent from it, or changed since, is generated disabled on every
-// harness, so the three cannot disagree about what may start.
+// THE approval list: each approved server name maps to the digest of the declaration a person
+// approved, which `sync --interactive` writes here when the person answers yes. Approving a name
+// alone let an agent rewrite the command of an approved server in a sibling's declaration file and
+// the next human sync start it. A server absent from it, or changed since, is generated disabled on
+// every harness, so the three cannot disagree about what may start.
 const Mcp = z
     .object({
         allowed_tools: McpAllowedTools.default({}).describe('Exact tool names permitted per declared MCP server. An empty list denies every tool; an absent server has no tool restriction. Review the tool implementation: names and read-only annotations do not establish read-only behavior. Unsupported harnesses receive no restricted server.'),
-        approved: z.record(z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/).max(128), z.string().regex(/^[a-f0-9]{64}$/, 'an approval is the sha256 sync reports for the server'))
-            .refine((approved) => Object.keys(approved).length <= 256, 'at most 256 MCP servers can be approved').default({}).describe('Approved MCP servers, each mapped to the sha256 of the declaration a person reviewed; others stay disabled.'),
+        approved: z.record(z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/).max(128), z.string().regex(/^[a-f0-9]{64}$/, 'an approval is the sha256 sync --interactive records for the server'))
+            .refine((approved) => Object.keys(approved).length <= 256, 'at most 256 MCP servers can be approved').default({}).describe('Approved MCP servers, each mapped to the sha256 of the declaration a person approved; sync --interactive writes them. Others stay disabled.'),
     })
     .strict()
 
@@ -484,13 +478,6 @@ export function runningEvaluatorTool(env: Readonly<Record<string, string | undef
     return claude === codex ? undefined : claude ? 'claudecode' : 'codexcli'
 }
 
-// Who may pass a decision point: the agent itself, a person typing the digest cockpit shows in a
-// terminal, or cockpit running in CI, where the required `work verify` job behind a protected
-// environment's reviewers is the gate. A local person gate is best-effort: cockpit cannot tell a
-// person from a program driving a terminal.
-export const DECIDERS = ['agent', 'person', 'ci'] as const
-export type Decider = typeof DECIDERS[number]
-const Decider = z.enum(DECIDERS)
 /** The modes a grade is recorded under; off never grades. */
 export const GRADE_MODES = ['independent', 'subagent', 'checks', 'self'] as const
 export type GradeMode = typeof GRADE_MODES[number]
@@ -524,16 +511,6 @@ export const GRADING: Readonly<Record<WorkGrading, GradingProperties>> = Object.
     off: { rank: 0, closure: 'ungraded', judged: false, evaluator: false, submission: 'none' },
 })
 
-const WorkGates = z
-    .object({
-        accept: Decider.optional().describe('Who accepts a draft work order: agent, person or ci. Default agent.'),
-        amend: Decider.optional().describe('Who accepts a changed contract. Default agent. Removing an accepted criterion or gate always needs a person or ci; an agent\'s rewrite of a criterion, scope, non-goal or objective is judged at the next grade, and needs a person under checks grading; under off nothing judges it.'),
-        answer: Decider.optional().describe('Who answers an open question on an order. Default agent.'),
-        signoff: Decider.optional().describe('Who closes a graded order. Default agent.'),
-        acknowledge: Decider.optional().describe('Who acknowledges that an order weakened tests, which checks grading otherwise fails; under checks a person or CI acknowledges even where this says agent, because the acknowledgement alone passes the check there; under independent, subagent and self grading the acknowledgement is context for the verdict, and under off it is only recorded. Default agent.'),
-    })
-    .strict()
-
 export const Work = z
     .object({
         grading: z.enum(WORK_GRADING).default('independent')
@@ -550,21 +527,6 @@ export const Work = z
             .describe("Seconds one criterion's check command may run before it is stopped and reported as not run."),
         evaluator_timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(EVALUATOR_TIMEOUT_DEFAULT_SECONDS)
             .describe('Seconds one independent grading run may take before it is stopped.'),
-        gates: WorkGates.prefault({}).describe('Who passes each work-order decision.'),
-    })
-    .strict()
-
-export const Autonomy = z
-    .object({
-        sync: Decider.optional().describe('Who may run a sync that writes: agent, person or ci. Default agent.'),
-        stale_delete: Decider.optional().describe('Who approves sync deleting files cockpit generated before and no longer generates. Default agent. An unchanged MCP-only file of a listed tool whose servers are no longer written goes without this approval, because removing it only narrows access.'),
-        reset: Decider.optional().describe('Who may apply a reset, which deletes stack data. Default person.'),
-        // CI adds nothing here: an approval is a digest in [mcp.approved], which only a person edits.
-        mcp_approve: z.enum(['agent', 'person']).optional().describe('Who approves a declared MCP server: person records each digest in [mcp.approved]; agent lets sync enable every declared server as declared, so an agent that writes a sibling MCP source starts that process outside the guard. Default person.'),
-        // Process gates: a person adds a step here, not protection, since what each grants an agent
-        // reaches nothing it could not already do or claim. CI adds nothing to either.
-        confirm_answers: z.enum(['agent', 'person']).optional().describe('Who confirms an unconfirmed init answer that is neither a trust decision nor settled by an observation (cockpit.name, estate.runnable, environment.test_data): person, or agent, which lets cockpit confirm record it as the agent\'s decision. Trust decisions stay a person\'s. Default person.'),
-        instruction_files: z.enum(['agent', 'person']).optional().describe('Who may run setup --write-instruction-files and --write-instruction-pointers, which write the sibling AGENTS.md, CLAUDE.md and guide links setup proposes: person, or agent, which the guard then admits. An agent can make the same edits with its own tools. Default person.'),
     })
     .strict()
 
@@ -840,21 +802,11 @@ export function configurationDefaults() {
         guards: Guards.parse({}),
         mcp: Mcp.parse({}),
         work: Work.parse({}),
-        autonomy: Autonomy.parse({}),
         environment: Environment.parse({}),
         surfaces: Surfaces.parse({}),
     }
 }
 
-/**
- * The init interview answers a cockpit.toml records. `unconfirmed` lists those no person stated: the
- * setup agent chose them as defaults, or the answers file did not say who chose them. doctor warns
- * until a person confirms each one and deletes its entry, because a configuration whose values look
- * stated but were guessed is the failure cockpit exists to prevent.
- */
-export const UNCONFIRMABLE_ANSWERS = ['cockpit.name', 'sibling', 'estate.runnable', 'ports.bases', 'environment.install_policies',
-    'environment.test_data', 'environment.compose_files', 'environment.machine', 'environment.posture',
-    'testing', 'guards', 'work.grading'] as const
 
 // `path` in the cockpit's own repository, or `<sibling slug>:path` in a sibling, spelt as a work
 // order's scope is. Living documents may be globs; the decision paths name one file or directory.
@@ -879,15 +831,12 @@ export const Docs = z.object({
 
 export const CockpitConfig = z
     .object({
-        unconfirmed: z.array(z.enum(UNCONFIRMABLE_ANSWERS)).min(1).max(UNCONFIRMABLE_ANSWERS.length)
-            .refine(rows => new Set(rows).size === rows.length, { message: 'unconfirmed lists an answer more than once' }).optional().describe('Answers no person has stated yet; init writes them and doctor reports them.'),
         cockpit: CockpitMeta.describe('Identity and layout of this cockpit.'),
         sibling: z.array(Sibling).min(1).describe('Product repositories the cockpit works across.'),
         ports: Ports.describe('Port leasing for running stacks side by side.'),
         guards: Guards.prefault({}).describe('Rules that restrict what agents may run.'),
         mcp: Mcp.prefault({}).describe('Approval of MCP servers and exact per-server tool restrictions.'),
         work: Work.prefault({}).describe('How work orders are accepted, graded and closed.'),
-        autonomy: Autonomy.prefault({}).describe('Which decisions an agent may take without a person.'),
         browser: Browser.optional().describe('Browser automation for the stack.'),
         testing: Testing.optional().describe('Test stages and gates.'),
         environment: Environment.prefault({}).describe('How the stack is reached, signed in to, built and kept.'),

@@ -1,14 +1,12 @@
 import {
     CockpitConfig,
     type CockpitConfig as CockpitConfigValue,
-    type Provenance,
 } from './schema.js'
 
 export interface RegistryMcpSource {
     readonly slug: string
     readonly siblingDir: string
     readonly path: string
-    readonly provenance: Provenance
 }
 
 export interface RegistrySecretPath {
@@ -63,7 +61,6 @@ export function deriveRegistry(input: unknown): RegistryDerivationResult {
         slug: sibling.slug,
         siblingDir: sibling.dir,
         path: source.path,
-        provenance: source.provenance,
     })))
     const secretPaths = parsed.data.sibling.flatMap((sibling) => (sibling.environment_files ?? []).map((file) => ({
         slug: sibling.slug,

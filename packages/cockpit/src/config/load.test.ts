@@ -52,12 +52,6 @@ attempt_cap = 1
 wip_cap = 2
 grading = "checks"
 
-[work.gates]
-accept = "agent"
-
-[autonomy]
-reset = "ci"
-
 [environment]
 addressing = "port"
 authentication = "bypassed"
@@ -300,9 +294,7 @@ cold_start_seconds = 30
             source: loaded.result.source,
             siblings: [{ slug: 'api', dir: 'api-service', environmentFiles: [{ template: '.env.example', instance: '.env' }] }],
             wipCap: 2, attemptCap: 1,
-            // Unset fields take the owner's defaults; each set one is the file's.
-            policy: { grading: 'checks', gates: { accept: 'agent', amend: 'agent', answer: 'agent', signoff: 'agent' },
-                autonomy: { sync: 'agent', stale_delete: 'agent', reset: 'ci', mcp_approve: 'person' } },
+            grading: 'checks',
             generatedHostPaths: browserArtifactPaths,
             browser: {
                 harnesses: [{ target: 'codexcli', version: '0.149.0' }],
@@ -411,6 +403,14 @@ install_policies = [{ toolchain = "node", lockfile = "package-lock.json", build 
         expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', result: null, status: 2 }))
         expect(outcome.diagnostics).toEqual([expect.objectContaining({ severity: 'error', code, fix: expect.stringContaining(fix) })])
         expect(JSON.stringify(outcome)).not.toContain('ssh://example.invalid/api.git')
+    })
+
+    it('names a key a release removed, says to delete it and what replaced it', async () => {
+        const outcome = await loadCockpitConfig(fixture(`unconfirmed = ["guards"]\n${validConfig}\n[autonomy]\nreset = "agent"\n\n[work.gates]\naccept = "person"\n`))
+        expect(outcome).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'CONFIG_SCHEMA_INVALID' }] })
+        const message = outcome.diagnostics[0]!.message
+        for (const key of ['unconfirmed', 'autonomy', 'work.gates']) expect(message, key).toContain(`${key} was removed; delete it: `)
+        expect(message).toContain('declare [environment] seed to let an agent reset')
     })
 
     it('names port families whose bases overlap across stacks and the step that separates them', async () => {

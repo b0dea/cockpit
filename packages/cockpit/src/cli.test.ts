@@ -14,8 +14,7 @@ import { renderHumanDiagnostics } from './diagnostics.js'
 import { RefusalError, type EnvironmentCommandOutcome, type ExecutionStep } from './environment/contract.js'
 import type { SetupResult } from './environment/setup.js'
 import { agentMayRun, commands, describePublicOption, internalCommands } from './command-table.js'
-import { effectivePolicy } from './autonomy.js'
-import { Autonomy, Work } from './schema.js'
+import type { OperatorPolicy, WideningPreview } from './environment/operator-application.js'
 import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS, SURFACE_TARGETS } from './surfaces/harness-registry.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { cockpitPackageVersion } from './test-support/package-version.js'
@@ -125,7 +124,7 @@ describe('invocation publication', () => {
 })
 
 describe('agent admission', () => {
-    const authority = { grants: ['browser-preapproval', 'autonomy-sync', 'autonomy-reset', 'autonomy-instruction-files'] as const, profiles: ['jobs'],
+    const authority = { grants: ['browser-preapproval', 'seeded-reset'] as const, profiles: ['jobs'],
         roots: ['/workspace/product', '/workspace/app'], cwd: '/workspace/product' }
 
     it('keeps the guard-only command out of the public table', () => {
@@ -138,7 +137,7 @@ describe('agent admission', () => {
     // person; every other spelling, malformed ones included, is an ordinary program the CLI judges itself.
     it('holds exactly the commands that change what agents may do or wait for a person', () => {
         for (const args of [['check'], ['up', '--profile', 'jobs'], ['session', '--profile=jobs', '--', 'npm', 'test'], ['logs', '--service', 'undeclared'],
-            ['stacks', 'prune', '--apply'], ['tool', 'add', 'opencode'], ['tool', '--dry-run', 'add', 'opencode'], ['confirm', 'ports.bases'],
+            ['stacks', 'prune', '--apply'], ['tool', 'add', 'opencode'], ['tool', '--dry-run', 'add', 'opencode'],
             ['use', 'app', '/workspace/app/.worktrees/feature'], ['use', 'app', 'app/feature'], ['use', 'app', '--clear'], ['exec', '--service', 'api', '--', 'psql'],
             ['init', '.', '--target', 'codexcli'], ['work', 'signoff', '--work-order', 'WO-1'], ['work'], ['unknown'], ['sync'], ['upgrade', '1.2.3'], ['reset', '--apply'],
             ['browser', 'drive'], ['setup', '--write-instruction-files']]) {
@@ -146,8 +145,8 @@ describe('agent admission', () => {
         }
         for (const args of [['sibling', 'add', 'api'], ['sibling', 'remove', 'api'], ['tool', 'remove', 'codexcli'], ['guard-evaluate', '--harness', 'claudecode'],
             ['sync', '--interactive'], ['sync', '--interactive=false'], ['reset', '--interactive'], ['stacks', 'prune', '--interactive'],
-            ...['accept', 'answer', 'acknowledge', 'signoff', 'retry'].map(sub => ['work', sub, '--work-order', 'WO-1', '--interactive']),
-            ...['--interactive', '--answers=a.toml', '--accept-preview=f', '--accept-defaults=f', '--scaffold-compose=app', '--command=x', '--port=1', '--with=redis']
+            ...['accept', 'acknowledge', 'signoff', 'retry'].map(sub => ['work', sub, '--work-order', 'WO-1', '--interactive']),
+            ...['--interactive', '--answers=a.toml', '--scaffold-compose=app', '--command=x', '--port=1', '--with=redis']
                 .map(flag => ['init', '.', '--target', 'codexcli', flag]),
             // A profile that mounts an operator-gated sibling never starts without a person.
             ['up', '--profile', 'ops'], ['session', '--profile', 'jobs', '--profile', 'ops', '--', 'npm', 'test'],
@@ -158,15 +157,16 @@ describe('agent admission', () => {
             ['use', 'app', '/elsewhere/app'], ['use', 'app', '../app/feature'], ['use', 'app', '../../elsewhere'], ['use', 'app', '/workspace/app/../../elsewhere']]) {
             expect(agentMayRun(args, authority), args.join(' ')).toBe(false)
         }
-        // Browser commands run unprompted only where cockpit.toml preapproves them, and a writing sync, an
-        // upgrade, an applied reset or setup's writes into sibling repositories only where [autonomy] gives
-        // the decision to the agent. A dry run writes nothing, so no grant gates it.
-        for (const [args, grant] of [[['browser', 'drive'], 'browser-preapproval'], [['sync'], 'autonomy-sync'], [['upgrade', '1.2.3'], 'autonomy-sync'],
-            [['reset', '--apply'], 'autonomy-reset'], [['setup', '--write-instruction-pointers'], 'autonomy-instruction-files']] as const) {
+        // Browser commands run unprompted only where cockpit.toml preapproves them, and an applied reset only
+        // where a declared seed refills the data it deletes. A writing sync, an upgrade (whose sync child
+        // writes) and setup's writes into sibling repositories need no grant: sync itself refuses a widening.
+        for (const [args, grant] of [[['browser', 'drive'], 'browser-preapproval'], [['reset', '--apply'], 'seeded-reset']] as const) {
             expect(agentMayRun(args, { ...authority, grants: authority.grants.filter(row => row !== grant) }), args.join(' ')).toBe(false)
         }
-        const noSync = { ...authority, grants: [] }
-        for (const args of [['sync', '--dry-run'], ['upgrade', '--dry-run'], ['setup']]) expect(agentMayRun(args, noSync), args.join(' ')).toBe(true)
+        const ungranted = { ...authority, grants: [] }
+        for (const args of [['sync'], ['upgrade', '1.2.3'], ['setup', '--write-instruction-files'], ['setup', '--write-instruction-pointers'], ['sync', '--dry-run'], ['reset']]) {
+            expect(agentMayRun(args, ungranted), args.join(' ')).toBe(true)
+        }
     })
 })
 
@@ -237,7 +237,6 @@ describe('CLI help', () => {
         ['session', 'Usage: cockpit session [options] -- <command> [args...]'],
         ['init', 'Usage: cockpit init [<root>] [options]'],
         ['sibling', 'Usage: cockpit sibling add|remove <slug> [options]'],
-        ['confirm', 'Usage: cockpit confirm <answer> [options]'],
     ])('prints the operands `%s` takes besides its options', async (verb, usage) => {
         const result = await runInProcess([verb, '--help'])
 
@@ -283,21 +282,6 @@ describe('CLI help', () => {
         const invalid = await runInProcess(['sibling', 'unknown', 'api'])
         expect(invalid.status).toBe(2)
         expect(invalid.stderr).toContain('[--instruction-pointer]')
-    })
-
-    it('routes confirm with its one answer to the handler and refuses an answer cockpit does not record', async () => {
-        const seen: unknown[] = []
-        const confirm = async (input: unknown) => { seen.push(input); return { status: 0, result: null, diagnostics: [] } }
-        expect((await runInProcess(['confirm', 'environment.machine', '--config', 'cockpit.toml'], { confirm } as never)).status).toBe(0)
-        expect(seen).toEqual([{ configPath: 'cockpit.toml', answer: 'environment.machine' }])
-
-        for (const args of [['confirm', 'environment', '--config', 'cockpit.toml'], ['confirm', '--config', 'cockpit.toml']]) {
-            const refused = await runInProcess(args, { confirm } as never)
-            expect(refused.status, args.join(' ')).toBe(2)
-            expect(refused.stderr).toContain('CLI_USAGE_INVALID')
-            expect(refused.stderr).toContain('ports.bases, environment.install_policies')
-        }
-        expect(seen).toHaveLength(1)
     })
 
     it('lists the commands for a bare invocation and points usage errors at --help', async () => {
@@ -362,13 +346,12 @@ describe('CLI help', () => {
         expect(result.stdout).toBe(
             'Usage: cockpit <command> [options]\n\n' +
             'Set up:\n' +
-            '  init       Preview, then accept, a first cockpit setup for one or more agent tools\n' +
+            '  init       Preview a first cockpit setup for one or more agent tools, then write it from answers\n' +
             '  setup      Clone or locate the declared sibling repositories and link them\n' +
             '  use        Serve a sibling from another of its checkouts, such as a worktree\n' +
             '  pull       Fast-forward the cockpit and its siblings to their upstreams\n' +
             '  sibling    Add or remove a repository in cockpit.toml (sibling add, sibling remove)\n' +
             '  tool       Add or remove an agent tool in cockpit.toml (tool add, tool remove)\n' +
-            '  confirm    Confirm an init answer no person stated by running the observation that verifies it\n' +
             '  upgrade    Move the exact cockpit pin to a newer version and re-run sync\n\n' +
             'Generate and verify:\n' +
             '  sync       Write the Compose ownership override and agent files from cockpit.toml\n' +
@@ -384,7 +367,7 @@ describe('CLI help', () => {
             '  exec       Run a command inside one service\'s container of this checkout\'s stack\n' +
             '  sleep      Release this checkout and stop the stack if no other holder remains\n' +
             '  down       Stop and remove the stack (on the active local Docker context)\n' +
-            '  reset      Preview a reset, then approve it interactively or apply it as [autonomy] reset allows (on the active local Docker context)\n' +
+            '  reset      Preview a reset, then approve it interactively, or apply it where a seed is declared (on the active local Docker context)\n' +
             '  stacks     List every stack on this machine, or preview and remove those whose checkout is gone (stacks prune)\n\n' +
             'Diagnose:\n' +
             '  doctor     Report environment problems without changing anything\n' +
@@ -407,17 +390,17 @@ describe('CLI help', () => {
             'Accept, check, grade and close work orders\n\n' +
             'Subcommands:\n' +
             '  status       Report each work order, its state and how it closed\n' +
-            '  accept       Accept a work order, or a change to an accepted one, as [work.gates] allows\n' +
+            '  accept       Accept a work order, or a change to an accepted one\n' +
             "  check        Run every criterion's check and the order's gates\n" +
             '  note         Record a note on an order, an open question with --ask, or a decision with --decision\n' +
             '  decide       Resolve a recorded decision: write or cite its decision record, or say it is not lasting\n' +
-            '  answer       Answer an open question on an order, as [work.gates] allows\n' +
-            '  acknowledge  Acknowledge that an order weakened tests, as [work.gates] allows\n' +
+            '  answer       Answer an open question on an order\n' +
+            '  acknowledge  Acknowledge that an order weakened tests\n' +
             '  grade        Grade an accepted order the way [work] grading says\n' +
             '  signoff      Close a graded order as done, or any open one as partial or abandoned\n' +
             '  retry        Grant an order at its attempt cap fresh attempts, as a person at a terminal\n' +
             "  recover      Inspect or remove a crashed command's work-order lock\n" +
-            '  verify       Check every record against its order; in CI, pass the steps gated on ci\n\n' +
+            '  verify       Check every record against its order\n\n' +
             "Run 'cockpit work <subcommand> --help' for its options.\n")
         const browser = await runInProcess(['browser', '--help'])
         expect(browser.status).toBe(0)
@@ -439,20 +422,20 @@ describe('CLI help', () => {
     })
 })
 
-// The interactive stale-removal path is a person's: these routing tests read the policy that keeps it so,
-// in place of a cockpit.toml on disk.
-const personStalePolicy = async () => ({ current: effectivePolicy({ work: Work.parse({}), autonomy: Autonomy.parse({ stale_delete: 'person' }) }), record: async () => {} })
+// What sync decides by, in place of a cockpit.toml on disk and this machine's guard record.
+const quietPolicy = async (): Promise<OperatorPolicy> => ({ configSha256: 'a'.repeat(64), widened: [], unrecorded: false, seeded: false, approveMcp: async () => 'a'.repeat(64) })
+const widenedPolicy = async (): Promise<OperatorPolicy> => ({ ...await quietPolicy(), widened: ['guards.allow'] })
 
 describe('generated environment process contract', () => {
     function captureIo(
-        confirmStaleRemoval?: (request: unknown) => Promise<string | undefined>,
+        confirmWidening?: (preview: WideningPreview) => Promise<boolean>,
     ) {
         let stdout = ''
         let stderr = ''
         const io = {
             stdout: { write: (text: string) => ((stdout += text), true) },
             stderr: { write: (text: string) => ((stderr += text), true) },
-            ...(confirmStaleRemoval ? { confirmStaleRemoval } : {}),
+            ...(confirmWidening ? { confirmWidening } : {}),
         } as unknown as CliIo
         return { io, output: () => ({ stdout, stderr }) }
     }
@@ -684,7 +667,7 @@ describe('generated environment process contract', () => {
             }
         }
         const json = captureIo()
-        expect(await runCli([command, '--config', 'cockpit.toml', '--json'], json.io, { [command]: handler, loadPolicy: personStalePolicy })).toBe(0)
+        expect(await runCli([command, '--config', 'cockpit.toml', '--json'], json.io, { [command]: handler, loadPolicy: quietPolicy })).toBe(0)
         expect(JSON.parse(json.output().stdout)).toEqual({
             invocation: jsonInvocation(json.output().stdout, 0, command, resolve('cockpit.toml')),
             result: { action: command, paths: ['compose.generated.yml'] },
@@ -693,10 +676,10 @@ describe('generated environment process contract', () => {
         expect(json.output().stderr).toBe('')
 
         const human = captureIo()
-        expect(await runCli([command, '--config=cockpit.toml'], human.io, { [command]: handler, loadPolicy: personStalePolicy })).toBe(0)
+        expect(await runCli([command, '--config=cockpit.toml'], human.io, { [command]: handler, loadPolicy: quietPolicy })).toBe(0)
         expect({ ...human.output(), stderr: humanStderr(human.output().stderr) })
             .toEqual({ stdout: '', stderr: 'INFO GENERATED_CURRENT: generated files are current\n' })
-        expect(calls).toEqual([{ configPath: 'cockpit.toml' }, { configPath: 'cockpit.toml' }])
+        expect(calls).toEqual([expect.objectContaining({ configPath: 'cockpit.toml' }), expect.objectContaining({ configPath: 'cockpit.toml' })])
     })
 
     it.each(['sync', 'check'] as const)('rejects malformed %s invocation before dispatch', async (command) => {
@@ -711,7 +694,7 @@ describe('generated environment process contract', () => {
             [command, '--config', 'one.toml', 'positional'],
         ]) {
             const capture = captureIo()
-            expect(await runCli(args, capture.io, { [command]: handler, loadPolicy: personStalePolicy })).toBe(2)
+            expect(await runCli(args, capture.io, { [command]: handler, loadPolicy: quietPolicy })).toBe(2)
             expect(capture.output().stderr).toContain('CLI_USAGE_INVALID')
         }
         expect(calls).toBe(0)
@@ -730,73 +713,20 @@ describe('generated environment process contract', () => {
         expect(JSON.parse(capture.output().stdout).result.changes).toEqual([{ operation: 'write', path: 'compose.generated.yml' }])
         expect(await runCli(['check', '--config', 'cockpit.toml', '--dry-run'], captureIo().io)).toBe(2)
 
-        // A stale removal is approved only by typing its digest, so the human preview must show it.
-        const human = captureIo()
-        const digest = 'c'.repeat(64)
-        expect(await runCli(['sync', '--config', 'cockpit.toml', '--dry-run'], human.io, {
-            sync: async () => ({ status: 0, diagnostics: [], result: { action: 'sync', dryRun: true,
-                changes: [{ operation: 'remove', path: 'compose.generated.yml' }], staleRemoval: { digest } } }),
-        })).toBe(0)
-        expect(human.output().stdout).toBe('remove "compose.generated.yml"\n'
-            + `Stale-removal digest ${digest}: to approve these removals, a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${resolve('cockpit.toml')} --interactive in a terminal and confirms the displayed removals.\n`)
     })
 
-    it('previews interactive sync and applies only after the exact stale-removal digest is approved', async () => {
-        const staleRemoval = {
-            format: 'cockpit-stale-removal-request/v1' as const,
-            cockpitId: 'synthetic',
-            generation: 'generation-1',
-            sourceSha256: 'a'.repeat(64),
-            entries: [{
-                path: '.agents/skills/old/SKILL.md',
-                operation: 'remove-file' as const,
-                current: { kind: 'file' as const, sha256: 'b'.repeat(64), dev: 1, ino: 2 },
-            }],
-            digest: 'c'.repeat(64),
-        }
+    it('refuses interactive sync without a terminal before previewing, and applies nothing on a no', async () => {
         const calls: unknown[] = []
-        const approvals: unknown[] = []
-        const capture = captureIo(async (request) => {
-            approvals.push(request)
-            return staleRemoval.digest
-        })
-
-        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], capture.io, {
-            loadPolicy: personStalePolicy,
-            sync: async (input) => {
-                calls.push(input)
-                if (input.dryRun) return { status: 0, diagnostics: [], result: { action: 'sync', dryRun: true, changes: [], staleRemoval } }
-                const authorize = (input as typeof input & { authorizeStaleRemoval?: (request: typeof staleRemoval) => Promise<unknown> }).authorizeStaleRemoval
-                expect(await authorize?.(staleRemoval)).toEqual({ format: 'cockpit-stale-removal-approval/v1', digest: staleRemoval.digest })
-                return { status: 0, diagnostics: [], result: { action: 'sync', dryRun: false, changes: [] } }
-            },
-        }, { env: {} })).toBe(0)
-        expect(approvals).toEqual([staleRemoval])
-        expect(calls).toHaveLength(2)
-    })
-
-    it('refuses interactive stale removal before apply for non-terminal and wrong-digest input', async () => {
-        const staleRemoval = {
-            format: 'cockpit-stale-removal-request/v1' as const,
-            cockpitId: 'synthetic', generation: 'generation-1', sourceSha256: 'a'.repeat(64),
-            entries: [{ path: 'old', operation: 'remove-file' as const, current: { kind: 'file' as const, sha256: 'b'.repeat(64), dev: 1, ino: 2 } }],
-            digest: 'c'.repeat(64),
-        }
-        let calls = 0
-        const sync = async () => {
-            calls += 1
-            return { status: 0, diagnostics: [], result: { action: 'sync', dryRun: true, changes: [], staleRemoval } }
+        const sync = async (input: { dryRun?: boolean }) => {
+            calls.push(input)
+            return { status: 0, diagnostics: [], result: { action: 'sync', dryRun: input.dryRun === true, sourceSha256: 'a'.repeat(64), changes: [] } }
         }
 
-        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], captureIo().io, { sync, loadPolicy: personStalePolicy }, { env: {} })).toBe(2)
-        expect(calls).toBe(0)
-        expect(await runCli(
-            ['sync', '--config', 'cockpit.toml', '--interactive'],
-            captureIo(async () => 'd'.repeat(64)).io,
-            { sync, loadPolicy: personStalePolicy },
-            { env: {} },
-        )).toBe(2)
-        expect(calls).toBe(1)
+        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], captureIo().io, { sync, loadPolicy: widenedPolicy }, { env: {} })).toBe(2)
+        expect(calls).toEqual([])
+        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], captureIo(async () => false).io,
+            { sync, loadPolicy: widenedPolicy }, { env: {} })).toBe(2)
+        expect(calls).toEqual([{ configPath: 'cockpit.toml', dryRun: true, approveDeclaredMcp: true }])
     })
 
     it('refuses interactive sync in JSON and CI modes before previewing', async () => {
@@ -805,77 +735,53 @@ describe('generated environment process contract', () => {
             calls += 1
             return { status: 0, diagnostics: [], result: { action: 'sync', dryRun: true, changes: [] } }
         }
-        const confirmed = captureIo(async () => 'a'.repeat(64))
+        const confirmed = captureIo(async () => true)
 
         expect(await runCli(
             ['sync', '--config', 'cockpit.toml', '--interactive', '--json'],
             confirmed.io,
-            { sync, loadPolicy: personStalePolicy },
+            { sync, loadPolicy: quietPolicy },
         )).toBe(2)
         expect(await runCli(
             ['sync', '--config', 'cockpit.toml', '--interactive'],
             confirmed.io,
-            { sync, loadPolicy: personStalePolicy },
+            { sync, loadPolicy: quietPolicy },
             { env: { CI: '1' } },
         )).toBe(2)
         expect(calls).toBe(0)
     })
 
-    it('applies interactive sync without prompting when its preview has no stale removal', async () => {
+    it('applies interactive sync without prompting when nothing widens', async () => {
         const calls: unknown[] = []
         let confirmations = 0
         const capture = captureIo(async () => {
             confirmations += 1
-            return undefined
+            return false
         })
 
         expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], capture.io, {
-            loadPolicy: personStalePolicy,
+            loadPolicy: quietPolicy,
             sync: async (input) => {
                 calls.push(input)
-                return { status: 0, diagnostics: [], result: { action: 'sync', dryRun: input.dryRun === true, changes: [] } }
+                return { status: 0, diagnostics: [], result: { action: 'sync', dryRun: input.dryRun === true, sourceSha256: 'a'.repeat(64), changes: [] } }
             },
         }, { env: {} })).toBe(0)
-        expect(calls).toEqual([{ configPath: 'cockpit.toml', dryRun: true }, { configPath: 'cockpit.toml' }])
+        expect(calls).toEqual([{ configPath: 'cockpit.toml', dryRun: true, approveDeclaredMcp: true },
+            expect.objectContaining({ configPath: 'cockpit.toml', guardWidening: { configSha256: 'a'.repeat(64) } })])
         expect(confirmations).toBe(0)
-        // A person confirming trust answers had nothing to approve, and sync printed nothing at all:
-        // they could not tell it ran, nor that it had recorded the policy as a new file to commit.
+        // A person at a terminal had nothing to approve, and sync printed nothing at all: they could
+        // not tell it ran, nor that it left files to commit.
         const applied = async (input: { dryRun?: boolean }) => ({ status: 0, diagnostics: [], result: input.dryRun === true
-            ? { action: 'sync', dryRun: true, changes: [] }
+            ? { action: 'sync', dryRun: true, sourceSha256: 'a'.repeat(64), changes: [] }
             : { action: 'sync', dryRun: false, paths: ['AGENTS.md', 'CLAUDE.md'], changes: [{ operation: 'write', path: 'AGENTS.md' }] } })
-        const first = captureIo(async () => undefined)
-        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], first.io, { loadPolicy: personStalePolicy, sync: applied }, { env: {} })).toBe(0)
-        expect(first.output().stdout).toBe('write "AGENTS.md"\nwrite ".cockpit/policy.json"\n'
-            + 'Sync wrote 2 files; 1 generated file was already current. Review them with git status --short and commit them so teammates get the same files.\n')
-        const recordedPolicy = async () => ({ ...await personStalePolicy(), recorded: (await personStalePolicy()).current })
-        const unchanged = captureIo(async () => undefined)
-        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], unchanged.io, { loadPolicy: recordedPolicy,
-            sync: async (input) => ({ status: 0, diagnostics: [], result: { action: 'sync', dryRun: input.dryRun === true, paths: ['AGENTS.md', 'CLAUDE.md'], changes: [] } }) }, { env: {} })).toBe(0)
+        const first = captureIo(async () => false)
+        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], first.io, { loadPolicy: quietPolicy, sync: applied }, { env: {} })).toBe(0)
+        expect(first.output().stdout).toBe('write "AGENTS.md"\n'
+            + 'Sync wrote 1 file; 1 generated file was already current. Review them with git status --short and commit them so teammates get the same files.\n')
+        const unchanged = captureIo(async () => false)
+        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], unchanged.io, { loadPolicy: quietPolicy,
+            sync: async (input) => ({ status: 0, diagnostics: [], result: { action: 'sync', dryRun: input.dryRun === true, sourceSha256: 'a'.repeat(64), paths: ['AGENTS.md', 'CLAUDE.md'], changes: [] } }) }, { env: {} })).toBe(0)
         expect(unchanged.output().stdout).toBe('Nothing to sync: all 2 generated files were already current.\n')
-    })
-
-    it('binds interactive approval to the previewed digest when apply re-prepares stale entries', async () => {
-        const preview = {
-            format: 'cockpit-stale-removal-request/v1' as const,
-            cockpitId: 'synthetic', generation: 'generation-1', sourceSha256: 'a'.repeat(64),
-            entries: [{ path: 'old', operation: 'remove-file' as const, current: { kind: 'file' as const, sha256: 'b'.repeat(64), dev: 1, ino: 2 } }],
-            digest: 'c'.repeat(64),
-        }
-        const changed = { ...preview, generation: 'generation-2', digest: 'd'.repeat(64) }
-        let calls = 0
-        const capture = captureIo(async () => preview.digest)
-
-        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], capture.io, {
-            loadPolicy: personStalePolicy,
-            sync: async (input) => {
-                calls += 1
-                if (input.dryRun) return { status: 0, diagnostics: [], result: { action: 'sync', dryRun: true, changes: [], staleRemoval: preview } }
-                const authorize = (input as typeof input & { authorizeStaleRemoval?: (request: typeof changed) => Promise<unknown> }).authorizeStaleRemoval
-                expect(await authorize?.(changed)).toBeUndefined()
-                return { status: 2, diagnostics: [{ severity: 'error', code: 'GENERATED_STALE_APPROVAL_REQUIRED', message: 'changed' }], result: null }
-            },
-        }, { env: {} })).toBe(2)
-        expect(calls).toBe(2)
     })
 
     // Agents are told to pass --json to every command but session.
@@ -1516,15 +1422,7 @@ afterEach(() => {
 })
 
 describe('generated sync operator admission', () => {
-    it('shows the interactive stale-removal preview as human-readable text', async () => {
-        const preview = {
-            format: 'cockpit-stale-removal-request/v1' as const,
-            cockpitId: 'synthetic', generation: 'generation-1', sourceSha256: 'a'.repeat(64),
-            entries: [{ path: 'old', operation: 'remove-file' as const, current: {
-                kind: 'file' as const, sha256: 'b'.repeat(64), dev: 1, ino: 2,
-            } }],
-            digest: 'c'.repeat(64),
-        }
+    it('shows the interactive widening preview as human-readable text', async () => {
         const stdin = Readable.from(['yes\n']) as NodeJS.ReadStream
         Object.defineProperty(stdin, 'isTTY', { value: true })
         const stderr = Object.assign(new PassThrough(), { isTTY: true })
@@ -1534,42 +1432,13 @@ describe('generated sync operator admission', () => {
         const outcome = await runSyncOperatorCommand({ configPath: 'cockpit.toml' }, {
             interactive: true, json: false, ci: undefined,
         }, { stderr, stdin, env: {} }, async (input) => input.dryRun
-            ? { status: 0, diagnostics: [], result: { dryRun: true, staleRemoval: preview } }
-            : { status: 0, diagnostics: [], result: { dryRun: false } }, personStalePolicy)
+            ? { status: 0, diagnostics: [], result: { dryRun: true, sourceSha256: 'a'.repeat(64) } }
+            : { status: 0, diagnostics: [], result: { dryRun: false } }, widenedPolicy)
 
         expect(outcome.status).toBe(0)
-        expect(shown).toContain('digest:')
-        expect(shown).toContain('path: old')
+        expect(shown).toContain('widens:')
+        expect(shown).toContain('guards.allow')
         expect(shown).not.toContain('{')
-    })
-
-    it('withholds stale-removal authority when entries change while the supplied digest remains equal', async () => {
-        const preview = {
-            format: 'cockpit-stale-removal-request/v1' as const,
-            cockpitId: 'synthetic', generation: 'generation-1', sourceSha256: 'a'.repeat(64),
-            entries: [{ path: 'old', operation: 'remove-file' as const, current: {
-                kind: 'file' as const, sha256: 'b'.repeat(64), dev: 1, ino: 2,
-            } }],
-            digest: 'c'.repeat(64),
-        }
-        const changed = { ...preview, entries: [{ ...preview.entries[0]!, path: 'other' }] }
-        let calls = 0
-        const outcome = await runSyncOperatorCommand({ configPath: 'cockpit.toml' }, {
-            interactive: true, json: false, ci: undefined,
-        }, {
-            stderr: { write: () => true }, env: {},
-            confirmStaleRemoval: async () => preview.digest,
-        }, async (input) => {
-            calls += 1
-            if (input.dryRun) return { status: 0, diagnostics: [], result: { dryRun: true, staleRemoval: preview } }
-            expect(await input.authorizeStaleRemoval?.(changed)).toBeUndefined()
-            expect(await input.authorizeStaleRemoval?.(preview)).toEqual({
-                format: 'cockpit-stale-removal-approval/v1', digest: preview.digest,
-            })
-            return { status: 2, diagnostics: [{ severity: 'error', code: 'GENERATED_STALE_APPROVAL_REQUIRED', message: 'changed' }], result: null }
-        }, personStalePolicy)
-        expect(outcome.status).toBe(2)
-        expect(calls).toBe(2)
     })
 })
 
@@ -1592,7 +1461,6 @@ describe('work command routing', () => {
         expect(stdout).toBe('accepted: true\n')
         expect(humanStderr(stderr)).toBe('')
         for (const [args, request] of [
-            [['work', 'answer', '--work-order', 'WO-1', '--question', '2', '--text', 'The first origin'], { operation: 'work-answer', workOrderId: 'WO-1', question: 2, text: 'The first origin' }],
             [['work', 'signoff', '--work-order', 'WO-1', '--partial', '--note', 'AC3 is left'], { operation: 'work-signoff', workOrderId: 'WO-1', close: 'partial', note: 'AC3 is left' }],
         ] as const) {
             begin.mockClear(); decide.mockClear(); confirm.mockClear()
@@ -1751,9 +1619,8 @@ describe('init command admission', () => {
         stderr.on('data', chunk => { shown += chunk.toString() })
         expect(await runCli(['init', process.cwd(), '--target', 'codexcli', '--interactive'], {
             stdin,
-            stdout: { write: () => true },
+            stdout: Object.assign(new PassThrough(), { isTTY: true }),
             stderr,
-            confirmInit: async () => previewSha256,
         }, { init: application })).toBe(0)
 
         expect(shown).toContain('field: cockpit.root')
@@ -1790,7 +1657,7 @@ describe('init command admission', () => {
         }))
         try {
             const status = await runCli(['init', product, '--target', 'codexcli', '--json',
-                '--accept-preview', previewSha256, '--answers', answers], {
+                '--answers', answers], {
                 stdout: { write: () => true }, stderr: { write: () => true },
             }, { init: application }, { env: { PATH: process.env.PATH } })
 
@@ -1816,12 +1683,12 @@ describe('init command admission', () => {
                 result: { stage: 'surface-previewed' as const, root: input.root, target: input.target,
                     previewSha256: 'a'.repeat(64), files: [] },
             }))
-            const confirmInit = vi.fn(async () => 'a'.repeat(64))
-            const io: CliIo = { stdout: { write: value => ((stdout += value), true) }, stderr: { write: () => true }, confirmInit }
+            const answerInitQuestion = vi.fn(async () => undefined)
+            const io: CliIo = { stdout: { write: value => ((stdout += value), true) }, stderr: { write: () => true }, answerInitQuestion }
             expect(await runCli(['init', process.cwd(), ...args, '--interactive', '--json'], io, { init: application })).toBe(0)
             expect(application).toHaveBeenCalledOnce()
             expect(application.mock.calls[0]![0]).toMatchObject({ root: process.cwd(), target, tools, accepted: false })
-            expect(confirmInit).not.toHaveBeenCalled()
+            expect(answerInitQuestion).not.toHaveBeenCalled()
             expect(JSON.parse(stdout).result).toMatchObject({ root: process.cwd(), target })
             expect(stdout.split('\n')).toHaveLength(2)
         }
@@ -1859,7 +1726,7 @@ describe('init command admission', () => {
             greenfieldAnswer: { questionId: id, bytes: '{}', provenance: 'operator-confirmed' } })
     })
 
-    it('reads the answers file and accepts only the printed digest when no terminal is attached', async () => {
+    it('reads the answers file and writes from it when no terminal is attached', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-init-answers-'))
         try {
             const answers = join(directory, 'answers.toml')
@@ -1874,21 +1741,14 @@ describe('init command admission', () => {
             const io: CliIo = { stdout: { write: value => ((stdout += value), true) }, stderr: { write: () => true } }
             const base = ['init', process.cwd(), '--target', 'codexcli', '--json']
 
-            expect(await runCli([...base, '--accept-preview', 'a'.repeat(64), '--answers', answers], io, { init: application })).toBe(0)
+            expect(await runCli([...base, '--answers', answers], io, { init: application })).toBe(0)
             expect(application.mock.calls.at(-1)![0]).toMatchObject({ accepted: true,
                 greenfieldAnswer: { questionId: question.id, bytes: '{"API_PORT":4100}' } })
             expect(JSON.parse(stdout).result.stage).toBe('surface-published')
 
-            application.mockClear()
-            expect(await runCli([...base, '--accept-preview', 'b'.repeat(64), '--answers', answers], io, { init: application })).toBe(2)
-            expect(application.mock.calls.every(([input]) => !input.accepted)).toBe(true)
-
             for (const refused of [
-                [...base, '--answers', answers],
-                [...base, '--accept-defaults', 'a'.repeat(64)],
-                [...base, '--accept-preview', 'not-a-digest'],
-                [...base, '--accept-preview', 'a'.repeat(64), '--interactive'],
-                [...base, '--accept-preview', 'a'.repeat(64), '--answers', join(directory, 'missing.toml')],
+                [...base, '--answers', answers, '--interactive'],
+                [...base, '--answers', join(directory, 'missing.toml')],
             ]) {
                 application.mockClear()
                 expect(await runCli(refused, io, { init: application })).toBe(2)
@@ -1897,7 +1757,7 @@ describe('init command admission', () => {
             // The parser's own message quotes the bytes it stopped at; the refusal names only the position.
             writeFileSync(answers, 'ports = [SECRET_CANARY')
             stdout = ''
-            expect(await runCli([...base, '--accept-preview', 'a'.repeat(64), '--answers', answers], io, { init: application })).toBe(2)
+            expect(await runCli([...base, '--answers', answers], io, { init: application })).toBe(2)
             expect(application).not.toHaveBeenCalled()
             expect(stdout).toMatch(/invalid TOML at line 1, column \d+/)
             expect(stdout).not.toContain('SECRET_CANARY')
@@ -1913,7 +1773,7 @@ describe('init command admission', () => {
 
         const result = spawnSync(process.execPath, ['--import', 'tsx', cli,
             'init', canonical, '--target', 'codexcli', '--json',
-            '--accept-preview', 'a'.repeat(64), '--answers', answers], {
+            '--answers', answers], {
             cwd: root,
             encoding: 'utf8',
             env: process.env,
@@ -1939,7 +1799,7 @@ describe('init command admission', () => {
 
         const result = spawnSync(process.execPath, ['--import', 'tsx', cli,
             'init', canonical, '--target', 'codexcli', '--json',
-            '--accept-preview', 'a'.repeat(64), '--answers', answers], {
+            '--answers', answers], {
             cwd: root,
             encoding: 'utf8',
             env: process.env,
@@ -1980,7 +1840,6 @@ describe('init command admission', () => {
             ...['environment..test_data', 'environment/_test', '_environment', 'environment.'].map(invalid =>
                 ['init', process.cwd(), '--target', 'codexcli', '--reset-answer', invalid, '--json']),
             [...base, '--accept-reset', 'not-a-digest'],
-            [...base, '--accept-reset', digest, '--accept-preview', 'a'.repeat(64)],
             [...base, '--accept-reset', digest, '--answers', 'answers.toml'],
             ['init', process.cwd(), '--target', 'codexcli', '--accept-reset', digest, '--json'],
         ]) {

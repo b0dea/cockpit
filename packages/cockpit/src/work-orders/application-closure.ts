@@ -1,17 +1,10 @@
 // How an order closes: `work signoff` closes it as done, partial or abandoned, and `work verify`, the CI
-// job, checks every closure and confirms the steps that awaited CI.
-import { runningInCi } from '../autonomy.js'
+// job, checks every closure.
 import { RefusalError } from '../environment/contract.js'
 import { GRADING, isGradeMode, type GradeMode, type WorkGrading } from '../schema.js'
 import type { WorkRecord } from './store.js'
 import { complete, now, refusal, TERMINAL, unsatisfied, type WorkApplicationOutcome, type WorkContext, type WorkRequest } from './application-context.js'
 import { decisions, recordProblem, unresolvedDecisions } from './application-decisions.js'
-
-export const pendingCi = (record: WorkRecord) => [
-    ...record.acknowledgements.filter(row => row.by === 'ci').map(() => 'acknowledge'),
-    ...record.accepted.by === 'ci' ? ['accept'] : [], ...record.amendments.filter(row => row.by === 'ci').map(() => 'amend'),
-    ...record.notes.filter(row => row.kind === 'answer' && row.by === 'ci').map(() => 'answer'), ...record.closure?.by === 'ci' ? ['signoff'] : [],
-]
 
 const weakerThanPolicy = (mode: GradeMode, grading: WorkGrading) => GRADING[mode].rank < GRADING[grading].rank
 
@@ -53,7 +46,7 @@ export async function signoff(request: Extract<WorkRequest, { operation: 'work-s
         const paths = row.state === 'done' ? row.grade?.otherOrders?.[request.workOrderId] : undefined
         return paths ? [`${row.id} closed done on a grade that left ${paths.join(', ')} to ${request.workOrderId}; closing it as ${request.close} leaves them ungraded`] : []
     })
-    const decider = (failedReview || leftHere.length) && policy.gates.signoff === 'agent' ? 'person' : policy.gates.signoff
+    const decider = failedReview || leftHere.length ? 'person' : 'agent'
     return gated('signoff', decider, [`Close ${request.workOrderId} as ${request.close} (${how})`, ...request.note ? [`Note: ${request.note}`] : [],
         ...failedReview ? [`A grade found the agent's amendments lower the bar: ${failedReview.note}`] : [], ...leftHere,
         ...record.grade ? record.grade.criteria.map(row => `${row.id}: ${row.verdict} — ${row.note}`) : [],
@@ -71,7 +64,6 @@ export async function signoff(request: Extract<WorkRequest, { operation: 'work-s
 export async function verify(context: WorkContext): Promise<WorkApplicationOutcome> {
     const { composition, operation, policy, store, observe } = context
     const problems: string[] = []
-    const awaiting: string[] = []
     for (const record of await store.list()) {
         const row = await observe(record.id)
         if (!TERMINAL.has(record.state) && row.digest !== record.accepted.digest) problems.push(`${record.id} changed since it was accepted; accept the change or revert it`)
@@ -85,9 +77,7 @@ export async function verify(context: WorkContext): Promise<WorkApplicationOutco
             const problem = cited && recordProblem(await composition.readDocsFile(cited), cited, record.id, false)
             if (problem) problems.push(`${record.id} decision ${row.decision}: ${problem}`)
         }
-        awaiting.push(...pendingCi(record).map(step => `${record.id} ${step}`))
     }
-    const ci = runningInCi(composition.env)
-    const value = { ci, problems, ...ci ? { confirmed: awaiting } : { awaitingCi: awaiting } }
+    const value = { problems }
     return problems.length ? unsatisfied(operation, value, problems.join('; ')) : complete(operation, value)
 }
