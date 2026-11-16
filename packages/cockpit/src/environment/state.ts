@@ -20,7 +20,6 @@ import {
     ENVIRONMENT_CODES,
     errorCause,
     RefusalError,
-    snapshotEnvironmentObservation,
     snapshotJson,
     isCanonicalTimestamp,
     type CheckoutId,
@@ -34,11 +33,10 @@ import {
 const OWNER = 'environment-state'
 
 export const observationDeclarations = Object.freeze([
-    { id: 'config-freshness', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.CONFIG_STALE, isIssued: isStateObservation, issuedAt: observationIssuedAt },
-    { id: 'config-schema-validity', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, isIssued: isStateObservation, issuedAt: observationIssuedAt },
+    { id: 'config-freshness', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.CONFIG_STALE },
+    { id: 'config-schema-validity', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID },
 ] as const)
 
-const issuedObservations = new WeakMap<object, number>()
 const issuedNamespaces = new WeakSet<object>()
 const issuedNamespacePaths = new WeakMap<object, StateNamespace>()
 const issuedBootstrapNamespaces = new WeakSet<object>()
@@ -47,21 +45,6 @@ const issuedBootstrapAnswerResets = new WeakSet<object>()
 const issuedBootstrapObservationRefreshes = new WeakSet<object>()
 const issuedBootstrapPublicationRefreshes = new WeakSet<object>()
 const issuedBootstrapRestarts = new WeakSet<object>()
-
-function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
-    const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== OWNER) throw new RefusalError('state observation is malformed')
-    issuedObservations.set(snapshot, Date.now())
-    return snapshot
-}
-
-export function isStateObservation(value: unknown): value is EnvironmentObservation {
-    return value !== null && typeof value === 'object' && issuedObservations.has(value)
-}
-
-function observationIssuedAt(value: unknown): number | undefined {
-    return value !== null && typeof value === 'object' ? issuedObservations.get(value) : undefined
-}
 
 export async function observeConfiguration(input: { readonly path: string; readonly stackId: StackId; readonly observedAt: string }): Promise<readonly EnvironmentObservation[]> {
     const snapshot = snapshotJson(input)
@@ -74,22 +57,22 @@ export async function observeConfiguration(input: { readonly path: string; reado
     const failure = loaded.kind === 'refusal' ? loaded.diagnostics[0] : undefined
     const source = loaded.kind === 'complete' ? loaded.result.source.path : failure?.target ?? owned.path
     return [
-        issueObservation({
+        {
             code: ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID, owner: OWNER, stackId: owned.stackId as StackId, source,
             observed: failure
                 ? { state: 'failed', reason: failure.message, observedAt: owned.observedAt }
                 : { state: 'available', value: true, observedAt: owned.observedAt },
             expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'environment' }, freshness: { state: 'current' },
             remedy: 'repair the configuration before evaluating the environment',
-        }),
-        issueObservation({
+        },
+        {
             code: ENVIRONMENT_CODES.CONFIG_STALE, owner: OWNER, stackId: owned.stackId as StackId, source,
             observed: loaded.kind === 'complete'
                 ? { state: 'available', value: loaded.result.source.sha256, observedAt: owned.observedAt }
                 : { state: 'unavailable', reason: 'configuration revision is unavailable', observedAt: owned.observedAt },
             expectation: loaded.kind === 'complete' ? { kind: 'equal', value: loaded.result.source.sha256 } : { kind: 'present' },
             applicability: { state: 'required', posture: 'environment' }, freshness: { state: 'current' }, remedy: 'regenerate from the current configuration revision',
-        }),
+        },
     ]
 }
 

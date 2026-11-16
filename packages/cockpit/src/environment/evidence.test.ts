@@ -7,7 +7,7 @@ import { executeProbe } from '../environment-exec/execute.js'
 import { type StackId } from './contract.js'
 import {
     authenticateStabilityCapture, captureRuntimeEvidence, compareEnvironmentSnapshot,
-    createEnvironmentSnapshot, createStabilityCapturePlan, isRuntimeEvidenceAuthentic, type AuthenticatedStabilityCapture,
+    createEnvironmentSnapshot, createStabilityCapturePlan, isRuntimeEvidenceAuthentic,
     type CapturedRuntimeEvidence,
 } from './evidence.js'
 
@@ -135,8 +135,6 @@ describe('environment evidence authority', () => {
         expect(captureRuntimeEvidence(null as never).state).toBe('unavailable')
         expect(() => captureRuntimeEvidence({ capture: evidence, ignoredDecision: 'accept' } as never)).not.toThrow()
         expect(captureRuntimeEvidence({ capture: evidence, ignoredDecision: 'accept' } as never).state).toBe('unavailable')
-        expect(() => captureRuntimeEvidence({ capture: proxy } as never)).not.toThrow()
-        expect(captureRuntimeEvidence({ capture: proxy } as never).state).toBe('unavailable')
         expect(() => createEnvironmentSnapshot(null as never)).toThrow('environment snapshot provenance is invalid')
         expect(() => createEnvironmentSnapshot({ ...snapshot, intendedState: undefined } as never)).toThrow('environment snapshot provenance is invalid')
     })
@@ -288,7 +286,7 @@ done
         expect(authenticateStabilityCapture({ plan: relabelled, results })).toEqual(expect.objectContaining({ state: 'unavailable' }))
     })
 
-    it('turns missing, refused, and host-constructed capture data into unavailable evidence', async () => {
+    it('turns missing and refused capture data into unavailable evidence', async () => {
         const batchId = sha('missing-control')
         const plan = stabilityPlan(batchId)
         expect(authenticateStabilityCapture({ plan, results: [] })).toEqual(expect.objectContaining({ state: 'unavailable' }))
@@ -299,15 +297,11 @@ done
         const authenticRefusals = await Promise.all(plan.plan.steps.map((step) => executeProbe(step, { signal: controller.signal })))
         expect(authenticateStabilityCapture({ plan, results: authenticRefusals })).toEqual(expect.objectContaining({ state: 'unavailable', code: 'EXECUTION_ABORTED' }))
         expect(authenticateStabilityCapture({ plan, results: authenticRefusals.map((result) => ({ ...result })) })).toEqual(expect.objectContaining({ state: 'unavailable', code: 'EVIDENCE_UNAVAILABLE' }))
-        const hostConstructed = JSON.parse(JSON.stringify(await capture())) as AuthenticatedStabilityCapture
-        expect(captureRuntimeEvidence({ capture: hostConstructed })).toEqual(expect.objectContaining({ state: 'unavailable' }))
         const authentic = await capture()
         if ('state' in authentic) throw new Error(authentic.reason)
         const first = captureRuntimeEvidence({ capture: authentic })
         expect(first).toEqual(expect.objectContaining({ state: 'available' }))
         expect(captureRuntimeEvidence({ capture: authentic })).toEqual(first)
-        const copied = { ...authentic }
-        expect(captureRuntimeEvidence({ capture: copied })).toEqual(expect.objectContaining({ state: 'unavailable' }))
     })
 
     it('refuses malformed capture authentication inputs before copying result entries', () => {

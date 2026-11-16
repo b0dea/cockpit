@@ -11,7 +11,7 @@ import { executeProbe, type ExecuteProbeOutcome } from '../environment-exec/exec
 import { CockpitConfig } from '../schema.js'
 import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import { cockpitId, checkoutId, stackId } from './identity.js'
-import { ENVIRONMENT_CODES } from './contract.js'
+import { ENVIRONMENT_CODES, OBSERVATION_REASON_BYTE_LIMIT, snapshotEnvironmentObservation } from './contract.js'
 import {
     classifyResolvedRuntimeLiterals,
     measureMachineFloor,
@@ -24,7 +24,6 @@ import {
     type RuntimeServiceOutcome,
     type RuntimeTopologyEvidence,
     isRuntimeServiceEvidence,
-    isRuntimeObservation,
     isRuntimeTopologyEvidence,
     issueMachineFloorAuthority,
     observeDockerRuntime,
@@ -32,6 +31,7 @@ import {
     observeRuntimeServiceColdStart,
     observeRuntimeMountMaterialization,
     observeRuntimePortFamily,
+    portMismatchRemedy,
     projectRuntimeLifecycle,
     projectRuntimeExecutionEnvironment,
     consumeRuntimeServiceFailureForLogs,
@@ -1167,7 +1167,6 @@ fi
             expect.objectContaining({ code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, observed: expect.objectContaining({ value: true }) }),
             expect.objectContaining({ code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, observed: expect.objectContaining({ value: true }) }),
         ])
-        expect(admitted.observations.every(isRuntimeObservation)).toBe(true)
         expect(JSON.stringify(admitted)).not.toContain('topology-value-canary')
         expect(JSON.stringify(admitted)).not.toContain(canary)
     })
@@ -1467,6 +1466,25 @@ fi
         const { stages, outcome } = await serviceRun(result.admitted.topology)
         expect(stages.at(-1)).toBe('health')
         expect(outcome).toMatchObject({ kind: 'failure' })
+    })
+
+    it('names as many mismatched listeners as fit the remedy, so eight foreign listeners still make a well-formed port row', () => {
+        const listeners = Array.from({ length: 8 }, (_, index) => {
+            const host = index % 2 === 0 ? '127.0.0.1' : '[::1]'
+            const port = 43_000 + Math.floor(index / 2)
+            return `${host}:${port} has a listener outside the stack (pid ${4_000 + index} node /srv/synthetic/other-app/node_modules/.bin/vite --port ${port})`
+        })
+        const remedy = portMismatchRemedy(listeners)
+
+        expect(Buffer.byteLength(remedy)).toBeLessThanOrEqual(OBSERVATION_REASON_BYTE_LIMIT)
+        expect(remedy).toMatch(/^127\.0\.0\.1:43000 has a listener outside the stack .*; and \d+ more: stop the process holding a leased port/)
+        expect(snapshotEnvironmentObservation({
+            code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, owner: 'runtime-planning', stackId: stack, source: 'synthetic:runtime-ports',
+            observed: { state: 'available', value: false, observedAt: new Date().toISOString() },
+            expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'running-stack' },
+            freshness: { state: 'current' }, remedy,
+        })).toMatchObject({ observed: { value: false }, remedy })
+        expect(portMismatchRemedy(listeners.slice(0, 2))).toBe(`${listeners[0]}; ${listeners[1]}: ${remedy.split(': ').slice(1).join(': ')}`)
     })
 
     // A runtime that publishes 0.0.0.0 and :: but forwards only IPv4 loopback leaves the IPv6

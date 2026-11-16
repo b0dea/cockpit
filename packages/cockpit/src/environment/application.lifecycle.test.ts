@@ -42,7 +42,6 @@ import { consumeLoadedConfigProjection, loadCockpitConfig, type LoadedCockpitCon
 import { runSleep, runSession, runUp } from './application/lifecycle.js'
 import {
     withLifecycleConfiguration,
-    type LifecycleRunContextInput,
     type LifecycleRunContext,
     type UpCommandAdapters,
 } from './application/lifecycle-context.js'
@@ -387,14 +386,9 @@ describe('lifecycle application contracts', () => {
         expect(consumeLoadedConfigProjection(retained!)).toBeUndefined()
     })
 
-    it('refuses copied lifecycle configuration handles and current source drift', async () => {
+    it('refuses a lifecycle configuration whose source changed since the run loaded it', async () => {
         const { configPath, context } = await lifecycleContextFixture()
         const use = vi.fn(async (configuration: LoadedCockpitConfig) => consumeLoadedConfigProjection(configuration))
-        const getter = vi.fn(() => configPath)
-        const copied = { ...context }
-        Object.defineProperty(copied, 'configPath', { get: getter })
-        expect(await withLifecycleConfiguration(copied, use)).toBeUndefined()
-        expect(getter).not.toHaveBeenCalled()
         writeFileSync(configPath, readFileSync(configPath, 'utf8') + '\n# changed source bytes\n')
         expect(await withLifecycleConfiguration(context, use)).toBeUndefined()
         expect(use).not.toHaveBeenCalled()
@@ -414,7 +408,7 @@ describe('lifecycle application contracts', () => {
         )).resolves.toBe(refusal)
     })
 
-    it('accepts an exact loaded configuration once and rejects replay', async () => {
+    it('refuses a run context loaded for another configuration', async () => {
         const value = await unissuedContextFixture()
         const fresh = await loadCockpitConfig(value.configPath)
         if (fresh.kind !== 'complete') throw new Error('fixture configuration did not reload')
@@ -425,24 +419,15 @@ describe('lifecycle application contracts', () => {
         const load = async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [], result: issued.result })
         const unavailableReadiness: UpCommandAdapters['withRuntimeReadiness'] = async () => undefined
 
-        const copied = await runUp(
-            { configPath: fresh.result.source.path },
-            { load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: { ...issued.result } }),
-                ...unavailableRuntimeUpAdapters(issued.result, unavailableReadiness) } as never,
-        )
         const swapped = await runSleep(
             { configPath: join(resolve(fresh.result.source.path, '..'), 'other.toml') },
             { load } as never,
         )
         const first = await runUp({ configPath: fresh.result.source.path }, { load,
             ...unavailableRuntimeUpAdapters(issued.result, unavailableReadiness) } as never)
-        const replay = await runUp({ configPath: fresh.result.source.path }, { load,
-            ...unavailableRuntimeUpAdapters(issued.result, unavailableReadiness) } as never)
 
-        expect(copied).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
         expect(swapped).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
         expect(first).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID', target: identity.stackId }] })
-        expect(replay).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID', target: fresh.result.source.path }] })
     })
 
     it('leaves other cockpits\' unreadable namespaces to doctor, and says nothing about them on up or sleep', async () => {
@@ -510,7 +495,7 @@ describe('lifecycle application contracts', () => {
         expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
     })
 
-    it('rejects checkout/configuration mismatch and accessor inputs', async () => {
+    it('rejects checkout/configuration mismatch', async () => {
         const first = await unissuedContextFixture()
         const second = await unissuedContextFixture()
         const firstLoaded = await loadCockpitConfig(first.configPath)
@@ -519,13 +504,6 @@ describe('lifecycle application contracts', () => {
         const identity = await runContextInput(first.candidate, firstLoaded.result)
 
         const mismatched = await issueLifecycleContext(first.candidate, secondLoaded.result, identity, secondLoaded.result.source.path)
-        const fresh = await loadCockpitConfig(first.configPath)
-        if (fresh.kind !== 'complete') throw new Error('fixture configuration did not reload')
-        const accessor = await issueLifecycleContext(first.candidate, fresh.result, identity, fresh.result.source.path, (input) => {
-            const hostile = { ...input } as Record<string, unknown>
-            Object.defineProperty(hostile, 'stackId', { enumerable: true, get: () => input.stackId })
-            return hostile as unknown as LifecycleRunContextInput
-        })
         const substitutedSource = await loadCockpitConfig(first.configPath)
         if (substitutedSource.kind !== 'complete') throw new Error('fixture configuration did not reload')
         const substituted = await issueLifecycleContext(
@@ -536,7 +514,6 @@ describe('lifecycle application contracts', () => {
         )
 
         expect(mismatched).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
-        expect(accessor).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
         expect(substituted).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
     })
 

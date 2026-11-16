@@ -20,7 +20,6 @@ import {
     consumePortLeaseProjection,
     inspectPortLeaseProjection,
     leasePortFamily as decidePortFamily,
-    observePortFamily,
     observePortListeners,
     observeRetainedPortFamily,
     projectRetainedPortFamilyResult,
@@ -388,7 +387,7 @@ describe('independent cockpits sharing a state root', () => {
         expect(await readFile(right.paths.coordination(stackA).path)).toEqual(before)
     })
 
-    it.each(['retained acquisition', 'retained observation', 'health observation'] as const)('refuses a persisted foreign collision during %s', async (boundary) => {
+    it.each(['retained acquisition', 'retained observation'] as const)('refuses a persisted foreign collision during %s', async (boundary) => {
         const { left, right } = await independentNamespaces()
         const first = await leasePortFamily({ namespace: left, stackId: stackA, holderId: holderA, checkoutId, config, now,
             listenerTimeoutMs: 100, observeListeners: noListeners })
@@ -408,13 +407,9 @@ describe('independent cockpits sharing a state root', () => {
                 listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({
                 kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.PORT_LEASE_EXHAUSTED }],
             })
-        } else if (boundary === 'retained observation') {
+        } else {
             expect(await observeRetainedPortFamily({ namespace: left, stackId: stackA, holderId: holderA, checkoutId, config })).toMatchObject({
                 kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION }],
-            })
-        } else {
-            expect(await observePortFamily({ namespace: left, stackId: stackA, observedAt: now, leaseEvidence: first })).toMatchObject({
-                observed: { state: 'available', value: false },
             })
         }
         expect(await readFile(left.paths.coordination(stackA).path)).toEqual(before)

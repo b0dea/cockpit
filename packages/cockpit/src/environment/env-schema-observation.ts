@@ -21,7 +21,6 @@ import {
     ENVIRONMENT_CODES,
     errorCause,
     isCanonicalTimestamp,
-    snapshotEnvironmentObservation,
     snapshotExecutionStep,
     type EnvironmentObservation,
     type ExecutionStep,
@@ -38,25 +37,8 @@ const ENV_SCHEMA_FILE = '.env.schema'
 export const VARLOCK_INSTALL_URL = 'https://varlock.dev'
 
 export const observationDeclarations = Object.freeze([
-    { id: 'env-schema', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.ENV_SCHEMA_UNHEALTHY, isIssued: isEnvSchemaObservation, issuedAt: observationIssuedAt },
+    { id: 'env-schema', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.ENV_SCHEMA_UNHEALTHY },
 ] as const)
-
-const issuedObservations = new WeakMap<object, number>()
-
-function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
-    const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== OWNER) throw new RefusalError('env-schema observation is malformed')
-    issuedObservations.set(snapshot, Date.now())
-    return snapshot
-}
-
-function isEnvSchemaObservation(value: unknown): value is EnvironmentObservation {
-    return value !== null && typeof value === 'object' && issuedObservations.has(value)
-}
-
-function observationIssuedAt(value: unknown): number | undefined {
-    return value !== null && typeof value === 'object' ? issuedObservations.get(value) : undefined
-}
 
 export interface EnvSchemaSibling {
     readonly slug: string
@@ -435,12 +417,12 @@ export async function observeEnvSchemas(
         .sort((a, b) => a.sibling < b.sibling ? -1 : 1)
     const measured: JsonSnapshot = unhealthy === undefined ? entries
         : [...entries, { state: 'unhealthy', reason: bounded(unhealthy), remedy }]
-    return [issueObservation({
+    return [{
         ...common,
         observed: { state: 'available', value: measured, observedAt },
         expectation: { kind: 'equal', value: measured },
         remedy: `install Varlock (${VARLOCK_INSTALL_URL}) to validate the env schema`,
-    })]
+    }]
 }
 
 /** Why the schemas could not be validated, and what fixes it, from a passing row. */

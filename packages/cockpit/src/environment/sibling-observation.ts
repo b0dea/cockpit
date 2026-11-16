@@ -16,18 +16,8 @@ import { loadServedSiblings, SIBLING_CHECKOUTS_PATH, vanishedCheckoutFix, vanish
 const OWNER = 'sibling-observation'
 
 export const observationDeclarations = Object.freeze([
-    { id: 'served-checkouts', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.SIBLING_CHECKOUT_UNAVAILABLE, isIssued: isSiblingObservation, issuedAt: observationIssuedAt },
+    { id: 'served-checkouts', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'required' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.SIBLING_CHECKOUT_UNAVAILABLE },
 ] as const)
-
-const issuedObservations = new WeakMap<object, number>()
-
-function isSiblingObservation(value: unknown): value is EnvironmentObservation {
-    return value !== null && typeof value === 'object' && issuedObservations.has(value)
-}
-
-function observationIssuedAt(value: unknown): number | undefined {
-    return value !== null && typeof value === 'object' ? issuedObservations.get(value) : undefined
-}
 
 /** One row: the directories that should serve a sibling and do not exist. Passing means none. */
 export async function observeServedCheckouts(input: Readonly<{
@@ -56,6 +46,5 @@ export async function observeServedCheckouts(input: Readonly<{
         freshness: { state: 'current' }, remedy,
     })
     if (!snapshot) throw new RefusalError('served-checkouts observation is malformed')
-    issuedObservations.set(snapshot, Date.now())
     return [snapshot]
 }

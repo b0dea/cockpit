@@ -109,8 +109,6 @@ export function validateObservationDeclarations(
         if (typeof declaration.id !== 'string' || typeof declaration.owner !== 'string'
             || !/^[a-z][a-z0-9-]*$/.test(declaration.id) || !/^[a-z][a-z0-9-]*$/.test(declaration.owner)
             || !Object.values(ENVIRONMENT_CODES).includes(declaration.code)
-            || typeof declaration.isIssued !== 'function'
-            || (declaration.issuedAt !== undefined && typeof declaration.issuedAt !== 'function')
             || declaration.postures.length === 0
             || declaration.postures.some((posture) => typeof posture !== 'string' || !/^[a-z][a-z0-9-]*$/.test(posture))
             || new Set(declaration.postures).size !== declaration.postures.length
@@ -140,11 +138,7 @@ export function validateObservationDeclarations(
 
 const productionDeclarations = validateObservationDeclarations(allObservationDeclarations)
 if (productionDeclarations.kind !== 'valid') throw new RefusalError(productionDeclarations.reason)
-if (productionDeclarations.declarations.some(({ issuedAt }) => typeof issuedAt !== 'function')) {
-    throw new RefusalError('production observation declaration lacks issuance authority')
-}
 const validatedProductionDeclarations = productionDeclarations.declarations
-const issuedPreflights = new WeakSet<object>()
 
 // Rows whose evidence exists only while the stack's services run. Before the first `up`, and while
 // the stack sleeps, doctor and preflight still evaluate every other row; these are reported as not
@@ -304,9 +298,6 @@ function evaluatePreflight(
         if (snapshot === undefined) throw new RefusalError('environment observation is malformed')
         const declaration = validatedProductionDeclarations.find(({ owner, code }) => owner === snapshot.owner && code === snapshot.code)
         if (!declaration) throw new RefusalError('environment observation has no declared producer authority')
-        if (!declaration.isIssued(value)) throw new RefusalError('environment observation is not producer-issued')
-        const producerIssuedAt = declaration.issuedAt?.(value)
-        if (producerIssuedAt === undefined) throw new RefusalError('environment observation lacks producer issuance authority')
         const key = `${snapshot.stackId}\0${snapshot.owner}\0${snapshot.code}`
         if (suppliedKeys.has(key)) throw new RefusalError('preflight contains duplicate mechanism evidence')
         suppliedKeys.add(key)
@@ -317,7 +308,6 @@ function evaluatePreflight(
         const freshness = observedTime < Date.parse(authority.evaluatedAt)
             || observedTime > Date.parse(authority.validThrough)
             || observedTime > evaluationInstant
-            || observedTime > producerIssuedAt
             ? { state: 'stale' as const, reason: 'observation timestamp does not match the evaluation boundary' }
             : snapshot.freshness.state === 'current' ? { state: 'current' as const } : snapshot.freshness
         const expectation = snapshot.code === ENVIRONMENT_CODES.CONFIG_STALE
@@ -354,9 +344,7 @@ function evaluatePreflight(
     const revision = distinctRevisions.size === 1
         ? [...distinctRevisions][0]!
         : createHash('sha256').update(revisionEntries.join('\0')).digest('hex')
-    const result: PreflightEvaluation = { verdict, revision, checks }
-    issuedPreflights.add(result)
-    return result
+    return { verdict, revision, checks }
 }
 
 function evidenceValue(value: JsonSnapshot | undefined): string {
@@ -364,7 +352,6 @@ function evidenceValue(value: JsonSnapshot | undefined): string {
 }
 
 export function projectDoctor(preflight: PreflightEvaluation): DoctorProjection {
-    if (!issuedPreflights.has(preflight)) throw new RefusalError('preflight evaluation is not authentic')
     return {
         verdict: preflight.verdict,
         checks: preflight.checks.map((check) => ({

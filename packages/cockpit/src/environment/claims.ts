@@ -12,7 +12,6 @@ import {
     errorCause,
     isCanonicalTimestamp,
     snapshotJson,
-    snapshotEnvironmentObservation,
     type CheckoutId,
     type CockpitId,
     type EnvironmentCode,
@@ -47,25 +46,8 @@ import {
 const OWNER = 'environment-claims'
 
 export const observationDeclarations = Object.freeze([
-    { id: 'claim-state', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'not-applicable', reason: 'claims do not exist before the first seed' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.CLAIM_STATE_UNHEALTHY, isIssued: isClaimObservation, issuedAt: observationIssuedAt },
+    { id: 'claim-state', owner: OWNER, postures: ['environment'], stages: [{ stage: 'bootstrap', disposition: 'not-applicable', reason: 'claims do not exist before the first seed' }, { stage: 'steady', disposition: 'required' }], code: ENVIRONMENT_CODES.CLAIM_STATE_UNHEALTHY },
 ] as const)
-
-const issuedObservations = new WeakMap<object, number>()
-
-function issueObservation(value: EnvironmentObservation): EnvironmentObservation {
-    const snapshot = snapshotEnvironmentObservation(value)
-    if (!snapshot || snapshot.owner !== OWNER) throw new RefusalError('claim observation is malformed')
-    issuedObservations.set(snapshot, Date.now())
-    return snapshot
-}
-
-function isClaimObservation(value: unknown): value is EnvironmentObservation {
-    return value !== null && typeof value === 'object' && issuedObservations.has(value)
-}
-
-function observationIssuedAt(value: unknown): number | undefined {
-    return value !== null && typeof value === 'object' ? issuedObservations.get(value) : undefined
-}
 
 export async function observeClaimState(input: { readonly namespace: StateNamespace; readonly stackId: StackId; readonly observedAt: string }): Promise<EnvironmentObservation> {
     const namespace = snapshotStateNamespace(input.namespace)
@@ -74,7 +56,7 @@ export async function observeClaimState(input: { readonly namespace: StateNamesp
     }
     const inventory = await readActiveStackInventory(namespace)
     const refusal = inventory.kind === 'refusal' ? inventory.diagnostics[0] : undefined
-    return issueObservation({
+    return {
         code: ENVIRONMENT_CODES.CLAIM_STATE_UNHEALTHY,
         owner: OWNER,
         stackId: input.stackId,
@@ -86,7 +68,7 @@ export async function observeClaimState(input: { readonly namespace: StateNamesp
         applicability: { state: 'required', posture: 'environment' },
         freshness: { state: 'current' },
         remedy: 'repair or release malformed coordination state',
-    })
+    }
 }
 
 const holderIdentity = /^holder:[a-f0-9]{64}:session$/

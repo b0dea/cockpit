@@ -42,7 +42,6 @@ const RELATIVE_SINCE = /^\d+(?:\.\d+)?[smhd]$/
 const SHA256 = /^[a-f0-9]{64}$/
 const STACK_ID = /^stack:[a-f0-9]{64}$/
 const RFC3339 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|([+-])(\d{2}):(\d{2}))$/
-const issuedLogPlans = new WeakSet<object>()
 
 function validInstant(value: string): boolean {
     const match = RFC3339.exec(value)
@@ -148,9 +147,7 @@ export function planLogs(
     }
     const resolvedStep = snapshotExecutionStep(step)
     if (resolvedStep === undefined) return { kind: 'unavailable', code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE, reason: 'log request did not produce a valid execution plan' }
-    const plan = { kind: 'planned' as const, step: resolvedStep }
-    issuedLogPlans.add(plan)
-    return plan
+    return { kind: 'planned', step: resolvedStep }
 }
 
 export interface FailureLogRequest {
@@ -160,17 +157,15 @@ export interface FailureLogRequest {
     readonly outputLimitBytes: number
 }
 
-export type FailureLogPlan = { readonly kind: 'planned'; readonly step: ExecutionStep }
-    | { readonly kind: 'unavailable'; readonly reason: string }
-
-interface FailureLogContract {
-    readonly evidence: RuntimeServiceObservation | RuntimeServiceFailureLogContext
+export type FailureLogPlan = {
+    readonly kind: 'planned'
     readonly step: ExecutionStep
+    /** The service evidence the logs are read for; its observation window bounds every admitted record. */
+    readonly evidence: RuntimeServiceObservation | RuntimeServiceFailureLogContext
+    /** Read for a service that failed before it was observed running. */
     readonly early: boolean
 }
-
-const issuedFailureLogPlans = new WeakMap<object, FailureLogContract>()
-const consumedFailureLogPlans = new WeakSet<object>()
+    | { readonly kind: 'unavailable'; readonly reason: string }
 
 function unavailableFailurePlan(): FailureLogPlan {
     return { kind: 'unavailable', reason: 'failure logs are unavailable' }
@@ -289,9 +284,7 @@ export function planFailureLogs(input: FailureLogRequest): FailureLogPlan {
             compensation: [],
         })
         if (!step) return unavailableFailurePlan()
-        const plan = { kind: 'planned' as const, step }
-        issuedFailureLogPlans.set(plan, Object.freeze({ evidence, step, early: failureContext !== undefined }))
-        return plan
+        return { kind: 'planned', step, evidence, early: failureContext !== undefined }
     } catch {
         // Any throw while building the plan yields the unavailable plan; log content and executor errors can echo secrets.
         return unavailableFailurePlan()
@@ -332,11 +325,10 @@ export function admitFailureLogs(input: {
         const captured = captureOwnValues(input, ['plan', 'outcome'])
         const plan = captured?.plan as FailureLogPlan | undefined
         const suppliedOutcome = captured?.outcome as ExecuteProbeOutcome | undefined
-        if (!plan || plan.kind !== 'planned' || consumedFailureLogPlans.has(plan)) return unavailable()
-        const contract = issuedFailureLogPlans.get(plan)
-        const outcome = contract && suppliedOutcome ? authenticatedExecutionOutcome(suppliedOutcome, contract.step) : undefined
-        if (!contract || !outcome) return unavailable()
-        consumedFailureLogPlans.add(plan)
+        if (!plan || plan.kind !== 'planned') return unavailable()
+        const contract = plan
+        const outcome = suppliedOutcome ? authenticatedExecutionOutcome(suppliedOutcome, contract.step) : undefined
+        if (!outcome) return unavailable()
         if (outcome.kind !== 'complete') {
             if (contract.early) return {
                 kind: 'unavailable' as const,
@@ -473,7 +465,7 @@ function unreadable(reason: string) {
 
 export async function collectLogs(plan: Extract<LogPlan, { kind: 'planned' }>, execute: (step: ExecutionStep, options: { signal?: AbortSignal }) => Promise<LogExecution>, signal?: AbortSignal, restart?: RestartWindow) {
     const resolvedPlan = ownedLogPlan(plan)
-    if (resolvedPlan === undefined || !issuedLogPlans.has(plan)) return unreadable('the log plan was not issued by cockpit')
+    if (resolvedPlan === undefined) return unreadable('the log plan is malformed')
     const resolvedRestart = restart === undefined ? undefined : ownedRestartWindow(restart)
     if (restart !== undefined && resolvedRestart === undefined) return unreadable('the restart window is malformed')
     let rawOutcome: unknown

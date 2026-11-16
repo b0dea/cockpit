@@ -78,7 +78,6 @@ const CONFINED: readonly (readonly [capability: string, pattern: RegExp, allowed
         [`${SRC}guards/evaluator.ts`, `${ENV}application/guard.ts`]],
     ['guard policy is captured where it is evaluated or rendered', /\bcapturePolicy\b/, [`${SRC}guards/evaluator.ts`, `${SRC}surfaces/restrictions.ts`]],
     ['one entrypoint-kind vocabulary', /\b(?:callback_url|advertised_listener|cors_origin|public_base_url)\b/, [`${SRC}entrypoint-kinds.ts`]],
-    ['observations are issued only by their owner', /\bexport\s+(?:async\s+)?function\s+issue\w*Observation\b|\bimport\s*(?:type\s*)?\{[^}]*\bissue\w*Observation\b/, []],
 ]
 
 describe('product architecture', () => {
@@ -349,5 +348,81 @@ describe('error surfacing controls', () => {
     it('reports a planted empty catch by module and enclosing function', () => {
         const sources = new Map([['packages/cockpit/src/planted.ts', 'export function load() { try { read() } catch { /* ignored */ } }']])
         expect(emptyCatchSites(sources)).toEqual(['packages/cockpit/src/planted.ts#load'])
+    })
+})
+
+// Cockpit's own modules hand each other plain typed values; validation belongs where data enters from
+// disk, a child process, the command line or another process. A WeakMap or WeakSet keyed by a value
+// another module built recognises that value by identity, which made copies, retries and refactors
+// fail in ways no user input could cause. Each one left in the environment runtime is named here with
+// why it stays; a new one passes a plain value instead, or earns an entry.
+const ISSUED = 'an issued-value registry not yet replaced by a plain value'
+const SIDE_TABLE = 'a side table one composition keeps for the run contexts it returned, holding what it loaded for them'
+const PATH_TRACKING = 'tracks the objects on the path being copied, so a cyclic value is refused'
+const ENVIRONMENT_IDENTITY_TABLES: readonly (readonly [site: string, why: string])[] = [
+    [`${ENV}claims.ts#issuedListenerHosts`, ISSUED],
+    [`${ENV}claims.ts#seen`, PATH_TRACKING],
+    [`${ENV}contract.ts#ancestors`, PATH_TRACKING],
+    [`${ENV}contract.ts#ancestors`, PATH_TRACKING],
+    [`${ENV}destructive-composition.ts#issued`, SIDE_TABLE],
+    [`${ENV}destructive-composition.ts#readinessRoots`, SIDE_TABLE],
+    [`${ENV}lifecycle-composition.ts#bindings`, SIDE_TABLE],
+    [`${ENV}generated-application/check.ts#issuedRepairs`, ISSUED],
+    ...['consumedBootstrapStatePublications', 'issuedApplicationProjections', 'issuedSelectedBootstrapAuthorities',
+        'issuedWorkApplicationAuthorities', 'projectedWorkApplicationAuthorities']
+        .map((name) => [`${ENV}generated-application/shared.ts#${name}`, ISSUED] as const),
+    ...['issuedObservations', 'issuedProjections'].map((name) => [`${ENV}install-policy-observation.ts#${name}`, ISSUED] as const),
+    [`${ENV}lifecycle-stage.ts#issuedLifecycleStageProjections`, ISSUED],
+    ...['admittedUpPlans', 'issuedPlans'].map((name) => [`${ENV}lifecycle.ts#${name}`, ISSUED] as const),
+    ...['availableCompensations', 'availableRetainedPortFamilies', 'issuedEntrypointResults', 'issuedLeaseProjections',
+        'issuedLeaseResults', 'issuedRetainedPortFamilies', 'reservedCompensations']
+        .map((name) => [`${ENV}ports.ts#${name}`, ISSUED] as const),
+    ...['consumedRuntimeServiceFailureObservations', 'issuedMachineFloorAuthorities', 'issuedMachineFloorEvidence', 'issuedRuntimePlans',
+        'issuedRuntimeServiceEvidence', 'issuedRuntimeServiceFailures', 'issuedRuntimeServiceObservations', 'issuedTopologyEvidence']
+        .map((name) => [`${ENV}runtime.ts#${name}`, ISSUED] as const),
+    ...['issuedGeneratedCheckoutIdentities', 'issuedSetupCheckoutObservations', 'issuedSetupCheckoutProjections']
+        .map((name) => [`${ENV}setup-observation.ts#${name}`, ISSUED] as const),
+    ...['issuedBootstrapAnswerResets', 'issuedBootstrapNamespaces', 'issuedBootstrapObservationRefreshes', 'issuedBootstrapPublicationRefreshes',
+        'issuedBootstrapRestarts', 'issuedNamespacePaths', 'issuedNamespaces', 'issuedStatePublications']
+        .map((name) => [`${ENV}state.ts#${name}`, ISSUED] as const),
+    [`${ENV}state.ts#issuedScopedLocks`, 'the state lock\'s handles, which go with the state lock'],
+    [`${ENV}state.ts#unwaitableRefusals`, 'marks a state lock refusal that waiting cannot clear, private to the state lock'],
+]
+
+/**
+ * Each value use of `WeakMap` or `WeakSet`, by module and the name it is bound to. Reading the name
+ * rather than `new WeakMap` also finds `new globalThis.WeakMap()` and an alias such as `const R = WeakMap`.
+ */
+function identityTableSites(sources: ReadonlyMap<string, string>): string[] {
+    const sites: string[] = []
+    for (const [path, source] of sources) {
+        const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+        const visit = (node: ts.Node): void => {
+            if (ts.isIdentifier(node) && /^Weak(?:Map|Set)$/.test(node.text) && !ts.isTypeReferenceNode(node.parent) && !ts.isTypeQueryNode(node.parent)) {
+                let holder: ts.Node = node.parent
+                while (!ts.isSourceFile(holder) && !ts.isVariableDeclaration(holder) && !ts.isPropertyAssignment(holder) && !ts.isParameter(holder)) holder = holder.parent
+                sites.push(`${path}#${ts.isSourceFile(holder) ? '<unnamed>' : holder.name.getText(file)}`)
+            }
+            ts.forEachChild(node, visit)
+        }
+        visit(file)
+    }
+    return sites.sort()
+}
+
+describe('plain values between environment modules', () => {
+    it('names why each remaining identity table in the environment runtime stays', () => {
+        const environment = new Map([...product].filter(([path]) => path.startsWith(ENV)))
+        expect(identityTableSites(environment)).toEqual(ENVIRONMENT_IDENTITY_TABLES.map(([site]) => site).sort())
+    })
+
+    it('reports a planted registry by module and binding', () => {
+        const sources = new Map([[`${ENV}planted.ts`, [
+            'const issuedPlans = new WeakSet<object>()',
+            'const issuedRuns = new globalThis.WeakMap<object, number>()',
+            'const Registry = WeakSet',
+            'const typed: WeakMap<object, number> | undefined = undefined',
+        ].join('\n')]])
+        expect(identityTableSites(sources)).toEqual([`${ENV}planted.ts#Registry`, `${ENV}planted.ts#issuedPlans`, `${ENV}planted.ts#issuedRuns`])
     })
 })

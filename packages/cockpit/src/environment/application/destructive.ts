@@ -41,9 +41,7 @@ import {
     type ResetCommandAdapters,
     type ResetCommandInput,
     type ResetCommandResult,
-    issuedDestructiveRuns,
     lifecycleContextRefusal,
-    provisionalClaims,
     withLifecycleRunNotices,
 } from './lifecycle-context.js'
 import {
@@ -74,9 +72,9 @@ async function settleProvisionalClaim<Outcome extends Readonly<{ kind: string; d
     context: DestructiveRunContext,
     outcome: Outcome,
 ): Promise<Outcome | Extract<DownCommandResult, { kind: 'refusal' }>> {
-    const claim = provisionalClaims.get(context)
+    const claim = context.provisionalClaim
     if (!claim) return outcome
-    provisionalClaims.delete(context)
+    context.provisionalClaim = undefined
     const released = await compensateAcquiredPortHolder({ namespace: context.namespace, leaseResult: claim, now: new Date().toISOString() })
     if (released.kind === 'complete') return outcome
     return forwardedRefusal(uniqueDiagnostics([...outcome.kind === 'refusal' ? outcome.diagnostics : [], ...released.diagnostics]))
@@ -90,10 +88,10 @@ async function loadDestructiveContext(
     if (!configPath) return lifecycleContextRefusal()
     const loaded = await adapters.load({ configPath })
     if (loaded.kind !== 'complete') return loaded.kind === 'refusal' ? loaded : lifecycleContextRefusal()
-    if (loaded.result.configPath !== configPath || !issuedDestructiveRuns.delete(loaded.result)) {
+    if (loaded.result.configPath !== configPath) {
         return lifecycleRefusal(
             ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
-            'destructive run authority is unavailable',
+            'destructive run context names another configuration',
             configPath,
         )
     }
@@ -223,7 +221,7 @@ async function executeDestructivePlan(
     }
     const request = recoveredRequest ?? lifecyclePlan.request
     // From here the drain owns the stack's claim: it releases it on completion, and keeps it for repair.
-    provisionalClaims.delete(context)
+    context.provisionalClaim = undefined
     const reserved = recoveredReservation ?? await reserveDrain({ namespace: context.namespace, request })
     if (reserved.kind !== 'complete') return forwardedRefusal(reserved.diagnostics)
     let availableReservation = reserved.reservation.completedActionCount === 0 ? undefined : reserved
@@ -415,8 +413,6 @@ interface PrivateResetSession {
     readonly preview: ResetPreview
 }
 
-const privateResetSessions = new WeakMap<object, PrivateResetSession>()
-
 async function resetPreview(
     context: DestructiveRunContext,
     adapters: ResetCommandAdapters,
@@ -459,18 +455,19 @@ export async function beginOperatorReset(
     const context = loaded.result
     const preview = await resetPreview(context, adapters)
     if ('status' in preview) return withLifecycleRunNotices(context, await settleProvisionalClaim(context, preview))
-    const token = {}
-    privateResetSessions.set(token, Object.freeze({ context, adapters, preview }))
-    const session = {
+    // A session decides once; a second decision finds it spent.
+    let pending: PrivateResetSession | undefined = { context, adapters, preview }
+    return {
         preview: withLifecycleRunNotices(context, publicResetPreview(context, preview)),
-        decide: (decision: 'approve' | 'decline') => continueOperatorReset(token, decision),
+        decide: (decision: 'approve' | 'decline') => {
+            const session = pending
+            pending = undefined
+            return continueOperatorReset(session, decision)
+        },
     }
-    return session
 }
 
-async function continueOperatorReset(token: object, decision: 'approve' | 'decline'): Promise<OperatorResetResult> {
-    const session = privateResetSessions.get(token)
-    privateResetSessions.delete(token)
+async function continueOperatorReset(session: PrivateResetSession | undefined, decision: 'approve' | 'decline'): Promise<OperatorResetResult> {
     const unapproved = forwardedRefusal([{
         severity: 'error', code: ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH,
         message: decision === 'decline' ? 'reset was declined' : 'reset operator session is unavailable', target: 'reset',

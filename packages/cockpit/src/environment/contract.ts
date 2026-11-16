@@ -938,8 +938,6 @@ export interface ObservationDeclaration {
     readonly postures: readonly string[]
     readonly stages: readonly ObservationStageDeclaration[]
     readonly code: EnvironmentCode
-    readonly isIssued: (value: unknown) => value is EnvironmentObservation
-    readonly issuedAt?: (value: unknown) => number | undefined
 }
 
 export type ObservationStageDeclaration =

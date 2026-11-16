@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -23,14 +22,11 @@ import { loadCockpitConfig } from './config/load.js'
 import { CockpitConfig } from './schema.js'
 import { executeProbe } from './environment-exec/execute.js'
 import { ENVIRONMENT_CODES, type EnvironmentObservation } from './environment/contract.js'
-import { resolvedExecutable, resolveGitExecutable } from './environment/executable.js'
+import { resolveGitExecutable } from './environment/executable.js'
 import { observeSetupCheckout, withSetupCheckoutProjection } from './environment/setup-observation.js'
 import { observeConfiguration, selectStateRoot } from './environment/state.js'
 import { recordLifecycleStarted, recordLifecycleSeeded, resolveLifecycleStage } from './environment/lifecycle-stage.js'
 import { refreshObservationPostures, resolveObservationPostures, type PreflightContext } from './environment/observations.js'
-import { createRuntimeAdapter, observeRuntimeExecution, projectRuntimeExecutionEnvironment } from './environment/runtime.js'
-import { deriveEntrypoints, observePortFamily, projectPortLeaseResult } from './environment/ports.js'
-import { leasePortFamilyFixture } from '../test-support/port-lease-fixture.js'
 import { holderId as deriveHolderId } from './environment/identity.js'
 import type { HealthObservationProducers, HealthObservationSource, HealthObservationSourceInput } from './environment/application/health.js'
 
@@ -124,7 +120,7 @@ describe('setup command adapter boundary', () => {
 })
 
 describe('environment observation command adapters', () => {
-    it('preserves producer-issued tri-state healthy, unhealthy, empty, unavailable configuration and transport facts through both real routes', async () => {
+    it('preserves producer-issued tri-state healthy, unhealthy, unavailable configuration and transport facts through both real routes', async () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'cockpit-health-routes-')))
         try {
             execFileSync('git', ['init', '--quiet', root])
@@ -153,41 +149,19 @@ describe('environment observation command adapters', () => {
             const posture = await resolveObservationPostures({ configuration, cockpitId: cockpit, checkoutPath: root, variant: { kind: 'shared' } })
             const git = await resolveGitExecutable({ PATH: process.env.PATH ?? '' })
             if (git.state !== 'available') throw new Error('health route Git executable was unavailable')
-            const runtimeValues = async (healthy: boolean) => {
-                const directory = join(root, healthy ? 'healthy' : 'unhealthy')
-                await mkdir(directory)
-                const path = join(directory, 'docker')
-                const script = healthy ? "#!/bin/sh\nprintf 'services:\\n  app:\\n    volumes:\\n      - /tmp/source:/workspace\\n'\n" : '#!/bin/sh\nexit 9\n'
-                await writeFile(path, script)
-                await chmod(path, 0o755)
-                const executable = resolvedExecutable({ canonicalPath: path, invocationPath: path,
-                    sha256: createHash('sha256').update(script).digest('hex'), executionMode: 'verified-path' })!
-                const source = 'services: {}\n'
-                const composePath = join(root, 'compose.yml')
-                await writeFile(composePath, source)
-                const planned = createRuntimeAdapter({ runtime: { name: 'docker', version: '27.1.2', executableSha256: executable.sha256 },
-                    composeVersion: '2.39.2', executable, operation: 'validate', cwd: root, stackId: stack,
-                    coldStartLimitMillis: 10_000, expectedMountSources: ['/tmp/source'],
-                    composeFiles: [{ reference: 'compose.yml', canonicalPath: composePath, source, sha256: createHash('sha256').update(source).digest('hex') }],
-                    projectName: 'synthetic-health', env: {}, ports: [], labels: {}, timeoutMs: 10_000 })
-                if (planned.kind !== 'preview') throw new Error('health runtime plan was refused')
-                return observeRuntimeExecution({ plan: planned.plan, outcome: await executeProbe(planned.plan.steps[0]!) })
-            }
-            const healthy = await runtimeValues(true)
-            const unhealthy = await runtimeValues(false)
-            const lease = await leasePortFamilyFixture({ namespace: state.value, stackId: stack, holderId: holder, checkoutId: checkout,
-                config: { step: 100, count: 1, bases: { WEB: 43000 } }, now: observedAt, listenerTimeoutMs: 100,
-                listenerEvidence: [{ ports: [43000], observation: { state: 'available', value: [], observedAt, producer: 'synthetic-listener-probe' } }] })
-            if (lease.kind !== 'complete') throw new Error('health empty listener evidence was refused')
-            const empty = await observePortFamily({ namespace: state.value, stackId: stack, observedAt, leaseEvidence: lease })
+            const runtimeRow = (code: EnvironmentObservation['code'], observed: EnvironmentObservation['observed']): EnvironmentObservation => ({
+                code, owner: 'runtime-planning', stackId: stack, source: 'docker', observed,
+                expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'mounted' },
+                freshness: { state: 'current' }, remedy: 'restore the declared runtime executable and retry the bounded probe',
+            })
             const missingConfiguration = (await observeConfiguration({ stackId: stack, observedAt, path: join(root, 'missing.toml') }))
                 .find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)!
             const rows: readonly { name: string; producer: keyof HealthObservationProducers; value: EnvironmentObservation; verdict: 'pass' | 'fail' | 'unavailable'; measured?: boolean }[] = [
-                { name: 'healthy', producer: 'runtime', value: healthy.find(({ code }) => code === ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE)!, verdict: 'pass', measured: true },
-                { name: 'unhealthy', producer: 'runtime', value: unhealthy.find(({ code }) => code === ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE)!, verdict: 'fail', measured: false },
-                { name: 'acquisition-only', producer: 'ports', value: empty, verdict: 'unavailable' },
+                { name: 'healthy', producer: 'runtime', value: runtimeRow(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, { state: 'available', value: true, observedAt }), verdict: 'pass', measured: true },
+                { name: 'unhealthy', producer: 'runtime', value: runtimeRow(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, { state: 'available', value: false, observedAt }), verdict: 'fail', measured: false },
                 { name: 'configuration-unavailable', producer: 'state', value: missingConfiguration, verdict: 'unavailable' },
-                { name: 'transport', producer: 'runtime', value: unhealthy.find(({ code }) => code === ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE)!, verdict: 'unavailable' },
+                { name: 'transport', producer: 'runtime', value: runtimeRow(ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE,
+                    { state: 'unavailable', reason: 'mount evidence requires a successful runtime validation plan', observedAt }), verdict: 'unavailable' },
             ]
             const actualHealth = await vi.importActual<typeof import('./environment/application/health.js')>('./environment/application/health.js')
             const actualDoctor = await vi.importActual<typeof import('./environment/application/doctor.js')>('./environment/application/doctor.js')
@@ -230,12 +204,6 @@ describe('environment observation command adapters', () => {
                 const adapters = { load, execute: executeProbe }
                 const first = await actualHealth.runPreflight({ configPath }, adapters)
                 const second = await actualDoctor.runDoctor({ configPath }, adapters)
-                if (row.name === 'acquisition-only') {
-                    expect(first).toMatchObject({ kind: 'blocked', status: 2, result: { verdict: 'unavailable', checks: [] } })
-                    expect(second.result).toMatchObject({ verdict: 'unavailable', checks: [] })
-                    expect(first.diagnostics).toContainEqual(expect.objectContaining({ code: ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID }))
-                    continue
-                }
                 const checks = [first.result, second.result].map(result => result.checks.find(({ owner, code }) => owner === row.value.owner && code === row.value.code))
                 for (const check of checks) {
                     expect(check, row.name).toMatchObject({ owner: row.value.owner, code: row.value.code, verdict: row.verdict })
