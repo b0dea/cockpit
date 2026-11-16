@@ -40,7 +40,7 @@ export const MAX_RECORDED_HELD_PATHS = 32
 export const MAX_RETRIES = 16
 export const MAX_RETRY_FAILURES = 64
 export const MAX_RETRY_FAILURE_TEXT = 300
-const Verdict = z.object({ id: z.string().max(64), verdict: z.enum(['met', 'unmet', 'unclear']), note: z.string().max(4_096) }).strict()
+const Verdict = z.object({ id: z.string().max(64), verdict: z.enum(['met', 'unmet', 'unclear']), note: z.string().max(4_096), unquoted: z.literal(true).optional() }).strict()
 const Grade = z.object({
     at, digest: z.string().length(64), mode: z.enum(GRADE_MODES), passed: z.boolean(),
     criteria: z.array(Verdict).max(64), outOfScope: z.array(z.string().max(1_100)).max(MAX_RECORDED_OUT_OF_SCOPE),

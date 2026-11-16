@@ -27,9 +27,9 @@ Return one verdict per criterion, with a `note` saying what you observed and why
 
 - **met** — what you observed supports the criterion. Give `evidence`: for each claim, the `source`
   (a changed file's path exactly as `changes` names it, or `check:<criterion id>` for a check's output)
-  and a `quote` copied from that diff or output. A quote must be at least eight characters and occur
-  exactly once in what it cites, so quote a longer, distinctive span. A `met` whose quotes are not
-  found reads as unclear.
+  and a `quote` copied character for character from that diff or output, never a summary or a
+  paraphrase. A quote must be at least eight characters and occur exactly once in what it cites, so
+  quote a longer, distinctive span. A `met` whose quotes are not found reads as unclear.
 - **unmet** — what you observed disagrees with the criterion, such as a check that failed or code that
   does something else.
 - **unclear** — support is missing, doubtful or could not be observed; say what prevented it.
