@@ -164,7 +164,7 @@ describe('agent admission', () => {
             expect(agentMayRun(args, { ...authority, grants: authority.grants.filter(row => row !== grant) }), args.join(' ')).toBe(false)
         }
         const ungranted = { ...authority, grants: [] }
-        for (const args of [['sync'], ['upgrade', '1.2.3'], ['setup', '--write-instruction-files'], ['setup', '--write-instruction-pointers'], ['sync', '--dry-run']]) {
+        for (const args of [['sync'], ['upgrade', '1.2.3'], ['setup', '--write-instruction-files'], ['setup', '--write-instruction-pointers'], ['sync', '--dry-run'], ['reset']]) {
             expect(agentMayRun(args, ungranted), args.join(' ')).toBe(true)
         }
     })

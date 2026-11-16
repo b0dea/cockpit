@@ -401,8 +401,9 @@ const sources = [
         summary: 'Preview a reset, then approve it interactively, or apply it where a seed is declared (on the active local Docker context)',
         handler: 'reset',
         visibility: 'public',
-        // Reset deletes stack data, so an agent applies one only where a declared seed refills it.
-        agent: { personFlags: ['interactive'], requires: 'seeded-reset' },
+        // Reset deletes stack data, so an agent applies one only where a declared seed refills it; the
+        // preview without --apply deletes nothing.
+        agent: { personFlags: ['interactive'], flagGrant: { flags: ['apply'], grant: 'seeded-reset' } },
         flags: { config: configFlag, interactive: bool(), apply: bool(), json: jsonFlag },
     },
     {
