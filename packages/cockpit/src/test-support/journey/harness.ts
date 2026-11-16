@@ -157,6 +157,10 @@ export interface FakeDocker {
     calls(): string[][]
     /** Lets `succeeding` more removals through, then fails the next one before it removes anything. */
     failRemovalAfter(succeeding: number): void
+    /** Holds the next `compose stop` open until it is killed. */
+    blockStop(): void
+    /** The pid of the stop `blockStop` held, once it started. */
+    blockedStopPid(): number | undefined
     /** What the daemon holds now, in the shape `docker inspect` reports it. */
     state(): {
         containers: { Id: string; project: string; service: string; State: { Status: string }; Config: { Labels: Record<string, string> } }[]
@@ -191,6 +195,8 @@ export function createMachine(name: string, options: { realDocker?: string } = {
         docker: {
             calls: () => readFileSync(join(state, 'calls.jsonl'), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)),
             failRemovalAfter: (succeeding) => writeFileSync(join(state, 'fail-removal'), String(succeeding)),
+            blockStop: () => writeFileSync(join(state, 'block-stop'), ''),
+            blockedStopPid: () => existsSync(join(state, 'blocked-stop.pid')) ? Number(readFileSync(join(state, 'blocked-stop.pid'), 'utf8')) : undefined,
             state: () => JSON.parse(readFileSync(join(state, 'state.json'), 'utf8')),
         },
     }

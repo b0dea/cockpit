@@ -429,10 +429,12 @@ still this stack's data, and `reset` deletes it.
 
 `sleep`, `down` and `reset` each take a lock on the stack, then stop it, read what Docker reports
 now, and remove what the ownership labels show is this stack's, one resource at a time by its id.
-They read Docker again after the removals and refuse when a removed resource is still listed. If
-one is interrupted, run the same command again: stopping is a no-op on a stopped stack, and it
-removes only what is still there. A lock left by a command that was killed is taken over by the
-next one. While one of them runs, another refuses with `STATE_LOCKED`, and `up` refuses to lease
+They read Docker again after the removals, refuse when a removed resource is still listed, and
+refuse when a container of the stack appeared meanwhile, keeping the stack and its ports. Ctrl-C or
+SIGTERM ends the step running and waits for it before the command exits; only SIGKILL leaves a step
+running. If one is interrupted, run the same command again: stopping is a no-op on a stopped stack,
+and it removes only what is still there. A lock left by a command that was killed is taken over by
+the next one. While one of them runs, another refuses with `STATE_LOCKED`, and `up` refuses to lease
 the stack's ports.
 
 ### List and prune stacks across the machine

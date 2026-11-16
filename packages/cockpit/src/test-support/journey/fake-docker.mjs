@@ -250,6 +250,14 @@ async function compose(rest) {
             return
         }
         case 'stop':
+            // A journey arms `block-stop` to hold one stop open, as a slow daemon does, until
+            // something ends it; the pid it leaves says whether it was ended.
+            if (existsSync(join(stateDir, 'block-stop'))) {
+                rmSync(join(stateDir, 'block-stop'))
+                writeFileSync(join(stateDir, 'blocked-stop.pid'), String(process.pid))
+                rmSync(lock, { recursive: true, force: true })
+                await new Promise(() => setInterval(() => undefined, 1_000))
+            }
             for (const container of mine) stop(container)
             save()
             return

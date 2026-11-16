@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { afterAll, expect, it } from 'vitest'
 import { cloneProduct, createMachine, createProduct, explain, JOURNEY_TIMEOUT, ok, type Product, removeScratch } from '../test-support/journey/harness.js'
 
@@ -11,7 +13,7 @@ function bringUp(product: Product) {
 
 const removals = (calls: string[][]) => calls.filter((argv) => argv.includes('rm') || argv.includes('down'))
 
-it('starts the stack, shows it to every later command, resets only declared data and starts it again', () => {
+it('starts the stack, shows it to every later command, resets only declared data and starts it again', async () => {
     const shop = createProduct('shop')
     bringUp(shop)
     const unready = shop.cockpit(['test-run', '--gate', 'all'])
@@ -54,6 +56,16 @@ it('starts the stack, shows it to every later command, resets only declared data
     expect(shop.docker.state().networks).toEqual([])
     expect(volumes()).toEqual(['cache', 'data'])
     expect(ok(shop, ['up']).json?.result.change).toBe('started')
+    // Ctrl-C during a teardown step ends that step before cockpit exits, so nothing keeps stopping
+    // or deleting behind the next command.
+    shop.docker.blockStop()
+    const down = spawn('./node_modules/.bin/cockpit', ['down', '--config', 'cockpit.toml', '--json'], { cwd: shop.root, env: shop.env, stdio: 'ignore' })
+    const exited = once(down, 'exit')
+    while (shop.docker.blockedStopPid() === undefined) await new Promise((resolve) => setTimeout(resolve, 50))
+    down.kill('SIGINT')
+    const [code] = await exited
+    expect(code).toBe(2)
+    expect(() => process.kill(shop.docker.blockedStopPid()!, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
     ok(shop, ['down'])
 }, JOURNEY_TIMEOUT)
 
