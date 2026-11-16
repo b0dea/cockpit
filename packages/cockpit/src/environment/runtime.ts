@@ -17,8 +17,6 @@ import {
     OBSERVATION_REASON_BYTE_LIMIT,
     type EnvironmentCommandOutcome,
     type EnvironmentObservation,
-    type ExecutionFailureCode,
-    type ExecutionFence,
     type ExecutionPlan,
     type ExecutionStep,
     type RefusalCode,
@@ -30,11 +28,7 @@ import { isResolvedDockerExecutable, resolvedDockerExecutable, resolvedExecutabl
 import {
     isIssuedListenerHost,
     observeSessionListeners,
-    type DrainOutcome,
-    type DrainReservation,
     type ListenerHost,
-    type ReservedDrainAttempt,
-    type RuntimeStopped,
     type SessionListenerObservation,
 } from './claims.js'
 import { stackId as deriveStackId } from './identity.js'
@@ -993,8 +987,8 @@ const MAX_OBSERVATION_WINDOW_MS = MAX_COLD_START_SECONDS * 1_000 + OBSERVATION_W
 // `compose stop` waits up to each service's stop grace (Compose default 10s) before it kills a
 // process that ignores SIGTERM, which a shell or Node.js running as PID 1 does. It stops dependents
 // before their dependencies, one dependency level at a time, so the grace is paid once per level. A
-// stop held to the ordinary 10s command budget timed out on such a service and left the drain
-// attempt for repair; one grace for a two-level stack timed out the same way.
+// stop held to the ordinary 10s command budget timed out on such a service and failed the teardown;
+// one grace for a two-level stack timed out the same way.
 const COMPOSE_STOP_GRACE_MS = 10_000
 
 function dependencyLevels(services: ReadonlyMap<string, RuntimeTopologyService>): number {
@@ -2654,99 +2648,49 @@ export function consumeRuntimeServiceObservationForFailureLogs(value: RuntimeSer
     }
 }
 
-type RuntimeStopOutcome =
-    /** Compose stopped the stack and a fresh `ps` found nothing running. */
-    | { readonly kind: 'stopped'; readonly outcome: DrainOutcome; readonly fence: ExecutionFence }
-    /** The stop never started, so the drain attempt is settled as failed and nothing changed. */
-    | { readonly kind: 'not-started'; readonly code: ExecutionFailureCode; readonly outcome: DrainOutcome; readonly fence: ExecutionFence }
-    /** No proof either way; the drain attempt stays open and its fence stays for repair. */
-    | { readonly kind: 'unavailable'; readonly reason: string }
-
-function unavailableRuntimeStop(error?: unknown): { readonly kind: 'unavailable'; readonly reason: string } {
-    return { kind: 'unavailable', reason: unavailableReason('runtime stop evidence is unavailable', error) }
-}
-
-function receiptWithin(outcome: ExecuteProbeOutcome, notBefore: string, notAfter: string): outcome is ExecuteProbeOutcome & { readonly receipt: NonNullable<ExecuteProbeOutcome['receipt']> } {
-    const receipt = outcome.receipt
-    return receipt !== undefined && isCanonicalTimestamp(receipt.startedAt) && isCanonicalTimestamp(receipt.finishedAt)
-        && Date.parse(receipt.startedAt) >= Date.parse(notBefore)
-        && Date.parse(receipt.startedAt) <= Date.parse(receipt.finishedAt)
-        && Date.parse(receipt.finishedAt) <= Date.parse(notAfter)
-        && Date.parse(receipt.finishedAt) <= Date.now()
-}
+export type RuntimeStopOutcome =
+    | { readonly kind: 'stopped' }
+    | { readonly kind: 'refusal'; readonly reason: string }
 
 /**
- * Runs the drain's runtime-stop action: `compose stop` under the attempt's execution fence, then a
- * fresh `ps` that must find nothing running, and settles the attempt as the outcome to publish.
+ * `compose stop`, then a fresh `ps` that must find nothing running. Stopping a stopped stack is a
+ * no-op, so a teardown that was interrupted simply stops it again.
  */
 export async function stopRuntime(input: {
     readonly topology: RuntimeTopologyEvidence
-    readonly attempt: ReservedDrainAttempt
     readonly execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
 }): Promise<RuntimeStopOutcome> {
     const topology = issuedTopologyEvidence.get(input.topology)
-    const { reservation, attempt, fence } = input.attempt
-    const now = Date.now()
-    if (!topology || attempt.status !== 'active' || reservation.attempt?.attemptId !== attempt.attemptId
-        || reservation.stackId !== topology.stackId
-        || reservation.configSha256 !== topology.configSha256
-        || attempt.currentStage !== 'runtime-stop' || attempt.currentTarget !== reservation.stackId
-        || now < Date.parse(topology.observationWindow.startedAt)
-        || now > Date.parse(topology.observationWindow.expiresAt)
-        || now < Date.parse(attempt.committedAt) || now > Date.parse(attempt.validThrough)) return unavailableRuntimeStop()
+    if (!topology) return { kind: 'refusal', reason: 'the stack topology is no longer current' }
+    const issuanceId = randomBytes(32).toString('hex')
     const step = derivedComposeStep(
         { ...topology.step, timeoutMs: topology.step.timeoutMs + COMPOSE_STOP_GRACE_MS * dependencyLevels(topology.services) },
         `runtime:docker-compose:stop:${topology.runtime.projectName}`,
         'stop',
         ['--progress', 'quiet', 'stop'],
         OUTPUT_LIMIT_BYTES,
-        reservation.generation,
-        Date.parse(attempt.validThrough) - now,
-        attempt.validThrough,
+        issuanceId,
+        undefined,
+        undefined,
         topology.runtime.interpolatedNames,
     )
-    if (!step) return unavailableRuntimeStop()
-    const stopped = await input.execute({ ...step, executionFence: fence })
-    if (stopped.kind === 'refusal') {
-        // Only a stop that provably never started leaves the stack as it was.
-        if (stopped.receipt !== undefined || stopped.execution.started || stopped.execution.signal !== null
-            || stopped.execution.exitCode === 0) return unavailableRuntimeStop()
-        return { kind: 'not-started', code: stopped.code, outcome: { kind: 'failure', reservation, failedAt: new Date().toISOString() }, fence }
-    }
-    if (stopped.stderr.byteLength !== 0 || !receiptWithin(stopped, attempt.committedAt, attempt.validThrough)) return unavailableRuntimeStop()
+    if (!step) return { kind: 'refusal', reason: 'the compose stop step could not be built' }
+    const stopped = await input.execute(step)
+    if (stopped.kind !== 'complete') return { kind: 'refusal', reason: `docker compose stop failed (${stopped.code})` }
     const observationStep = derivedComposeStep(
         topology.step,
         `runtime:docker-compose:stopped:${topology.runtime.projectName}`,
         'ps-stopped',
         ['ps', '--format', 'json', '--status', 'running'],
         OUTPUT_LIMIT_BYTES,
-        reservation.generation,
+        issuanceId,
         MAX_OBSERVATION_WINDOW_MS,
         undefined,
         topology.runtime.interpolatedNames,
     )
-    if (!observationStep) return unavailableRuntimeStop()
+    if (!observationStep) return { kind: 'refusal', reason: 'the compose ps step could not be built' }
     const observed = await input.execute(observationStep)
-    if (observed.kind !== 'complete' || observed.stderr.byteLength !== 0 || observed.stdout.byteLength !== 0
-        || !receiptWithin(observed, stopped.receipt.finishedAt, attempt.validThrough)) return unavailableRuntimeStop()
-    const fact = {
-        purpose: reservation.purpose,
-        stackId: reservation.stackId,
-        configSha256: reservation.configSha256,
-        planDigest: reservation.planDigest,
-        operationBasis: reservation.operationBasis,
-        coordinationRevision: reservation.coordinationRevision,
-        reservationId: reservation.reservationId,
-        reservedAt: reservation.reservedAt,
-        generation: reservation.generation,
-        attemptId: attempt.attemptId,
-        attemptRevision: attempt.committedRevision,
-        attemptCommittedAt: attempt.committedAt,
-        validThrough: attempt.validThrough,
-        actionIndex: attempt.actionIndex,
-        currentTarget: attempt.currentTarget,
-        currentStage: attempt.currentStage,
-        observedAt: observed.receipt.finishedAt,
-    } satisfies RuntimeStopped
-    return { kind: 'stopped', outcome: { kind: 'success', reservation, fact }, fence }
+    if (observed.kind !== 'complete') return { kind: 'refusal', reason: `docker compose ps failed (${observed.code})` }
+    return observed.stdout.byteLength === 0 ? { kind: 'stopped' }
+        : { kind: 'refusal', reason: 'docker compose ps still lists running services after the stop' }
 }

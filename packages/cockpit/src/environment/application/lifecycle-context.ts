@@ -134,7 +134,7 @@ export interface ResetCommandInput {
 
 export interface DestructiveRunContext extends LifecycleRunContext {
     readonly instance: SelectDestructiveInstanceInput
-    /** The holder claim the load took on a stack no session held; cleared once settled or handed to a drain. */
+    /** The holder claim the load took on a stack no session held; cleared once given back or released with the stack. */
     provisionalClaim?: LeasePortFamilyResult
 }
 
@@ -142,11 +142,11 @@ export interface DestructiveObservation {
     readonly instance: SelectDestructiveInstanceInput
     readonly runtime: RuntimeLifecycleProjection
     readonly ports: PortLeaseProjection
-    readonly down: Omit<PlanTeardownInput, 'expectedDiscoveryDigest' | 'consent' | 'continuation' | 'recoveredReservation'>
-    readonly reset: Omit<PlanResetInput, 'confirmationDigest' | 'consent' | 'continuation' | 'recoveredReservation'>
+    readonly down: PlanTeardownInput
+    readonly reset: PlanResetInput
 }
 
-/** The evidence a step of an already-reserved drain re-reads: no runtime readiness, no ports. */
+/** The evidence a teardown re-reads after its removals: no runtime readiness, no ports. */
 export type DestructiveReclaimObservation = Pick<DestructiveObservation, 'instance' | 'down' | 'reset'>
 
 export interface DestructiveCommandAdapters {

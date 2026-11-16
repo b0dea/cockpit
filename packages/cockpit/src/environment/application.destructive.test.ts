@@ -5,26 +5,10 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { cockpitCommand } from '../fix-catalogue.js'
-const executionFence = (id: string) => {
-    const attemptId = createHash('sha256').update(`${process.pid}:${id}`).digest('hex')
-    const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
-    return { attemptId, markerPath: join(tmpdir(), `cockpit-test-${attemptId}.json`), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
-}
 const applicationOwners = vi.hoisted(() => ({
-    lifecycle: {} as Partial<Pick<typeof import('./lifecycle.js'), 'consumeLifecycleIssuance' | 'planDown' | 'planResetLifecycle'>>,
     runtime: {} as Partial<Pick<typeof import('./runtime.js'), 'stopRuntime'>>,
-    claims: {} as Partial<Pick<typeof import('./claims.js'), 'commitDrainOutcome' | 'recoverDrainReservation' | 'reserveDrain' | 'reserveDrainAttempt'>>,
-    reclaim: {} as Partial<Pick<typeof import('./reclaim.js'), 'executeReclaimAction' | 'keptTeardownResources' | 'planReset' | 'planTeardown' | 'reconcileReclaimAction'>>,
+    reclaim: {} as Partial<Pick<typeof import('./reclaim.js'), 'keptTeardownResources' | 'planReset' | 'planTeardown'>>,
 }))
-vi.mock('./lifecycle.js', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('./lifecycle.js')>()
-    return {
-        ...actual,
-        consumeLifecycleIssuance: (...args: Parameters<typeof actual.consumeLifecycleIssuance>) => applicationOwners.lifecycle.consumeLifecycleIssuance?.(...args) ?? actual.consumeLifecycleIssuance(...args),
-        planDown: (...args: Parameters<typeof actual.planDown>) => applicationOwners.lifecycle.planDown?.(...args) ?? actual.planDown(...args),
-        planResetLifecycle: (...args: Parameters<typeof actual.planResetLifecycle>) => applicationOwners.lifecycle.planResetLifecycle?.(...args) ?? actual.planResetLifecycle(...args),
-    }
-})
 vi.mock('./runtime.js', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./runtime.js')>()
     return {
@@ -32,31 +16,19 @@ vi.mock('./runtime.js', async (importOriginal) => {
         stopRuntime: (...args: Parameters<typeof actual.stopRuntime>) => applicationOwners.runtime.stopRuntime?.(...args) ?? actual.stopRuntime(...args),
     }
 })
-vi.mock('./claims.js', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('./claims.js')>()
-    return {
-        ...actual,
-        commitDrainOutcome: (...args: Parameters<typeof actual.commitDrainOutcome>) => applicationOwners.claims.commitDrainOutcome?.(...args) ?? actual.commitDrainOutcome(...args),
-        recoverDrainReservation: (...args: Parameters<typeof actual.recoverDrainReservation>) => applicationOwners.claims.recoverDrainReservation?.(...args) ?? actual.recoverDrainReservation(...args),
-        reserveDrain: (...args: Parameters<typeof actual.reserveDrain>) => applicationOwners.claims.reserveDrain?.(...args) ?? actual.reserveDrain(...args),
-        reserveDrainAttempt: (...args: Parameters<typeof actual.reserveDrainAttempt>) => applicationOwners.claims.reserveDrainAttempt?.(...args) ?? actual.reserveDrainAttempt(...args),
-    }
-})
 vi.mock('./reclaim.js', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./reclaim.js')>()
     return {
         ...actual,
-        executeReclaimAction: (...args: Parameters<typeof actual.executeReclaimAction>) => applicationOwners.reclaim.executeReclaimAction?.(...args) ?? actual.executeReclaimAction(...args),
         keptTeardownResources: (...args: Parameters<typeof actual.keptTeardownResources>) => applicationOwners.reclaim.keptTeardownResources?.(...args) ?? actual.keptTeardownResources(...args),
         planReset: (...args: Parameters<typeof actual.planReset>) => applicationOwners.reclaim.planReset?.(...args) ?? actual.planReset(...args),
         planTeardown: (...args: Parameters<typeof actual.planTeardown>) => applicationOwners.reclaim.planTeardown?.(...args) ?? actual.planTeardown(...args),
-        reconcileReclaimAction: (...args: Parameters<typeof actual.reconcileReclaimAction>) => applicationOwners.reclaim.reconcileReclaimAction?.(...args) ?? actual.reconcileReclaimAction(...args),
     }
 })
 import { beginOperatorReset, runDown, runReset } from './application/destructive.js'
 import { issueDestructiveRunContext } from './application/lifecycle-context.js'
-import { decodeCoordinationRecord } from './claims.js'
-import { readState, transactState } from './state.js'
+import { decodeCoordinationRecord, withStackTeardown } from './claims.js'
+import { readState, transactState, type StateRecord } from './state.js'
 import { resolveLifecycleStage } from './lifecycle-stage.js'
 import { createApplicationFixtureSupport } from '../../test-support/application-fixture.js'
 
@@ -73,138 +45,80 @@ const gitExecutable = {
 }
 
 describe('destructive application contracts', () => {
-    async function destructiveFixture() {
+    async function destructiveFixture(otherHolder = false) {
         const { configPath, context: lifecycle } = await lifecycleContextFixture()
         const candidate = Object.freeze({ stackId: lifecycle.stackId, checkoutId: lifecycle.checkoutId })
         const instance = Object.freeze({ served: candidate, launcher: candidate, claimInventory: Object.freeze([candidate]) })
         const issued = issueDestructiveRunContext({ lifecycle, instance })
         if (issued.kind !== 'complete') throw new Error('destructive context was not issued')
         const now = new Date().toISOString()
+        const holders: { holderId: string; checkoutId: string; claimedAt: string; pid?: number }[] = [
+            { holderId: issued.result.holderId, checkoutId: issued.result.checkoutId, claimedAt: now },
+            ...otherHolder ? [{ holderId: `holder:${'9'.repeat(64)}:session`, checkoutId: `checkout:${'8'.repeat(64)}`, claimedAt: now, pid: 4242 }] : [],
+        ]
         const seeded = await transactState(
             issued.result.namespace,
             issued.result.namespace.paths.coordination(issued.result.stackId),
             { ownerId: issued.result.holderId },
-            () => ({
+            (): StateRecord => ({
                 format: 'cockpit-state/v1', kind: 'coordination', cockpitId: issued.result.cockpitId,
                 subjectId: issued.result.stackId, revision: 0, updatedAt: now,
                 value: {
-                    holders: [{ holderId: issued.result.holderId, checkoutId: issued.result.checkoutId, claimedAt: now }],
+                    holders,
                     lease: { offset: 0, ports: { APP_PORT: 4100 }, released: false,
                         declaration: { step: 100, count: 1, bases: { APP_PORT: 4100 } } },
-                    lastReleasedHolder: null, drain: null,
+                    lastReleasedHolder: null,
                 },
             }),
         )
         if (seeded.kind !== 'complete') throw new Error('destructive coordination fixture was not seeded')
-        return { configPath, context: issued.result, instance }
+        return { configPath, context: issued.result, instance, record: seeded.value }
     }
 
-    function resetObservation(
+    // The reclaim owners are stubbed, so the observation's discovery is an opaque stand-in.
+    function observation(
         instance: Awaited<ReturnType<typeof destructiveFixture>>['instance'],
-        coordinationRecord: unknown = null,
+        coordinationRecord: StateRecord,
+        resources: readonly object[] = [],
     ) {
-        return Object.freeze({
-            instance,
-            runtime: Object.freeze({}),
-            ports: Object.freeze({}),
-            down: Object.freeze({ discovery: Object.freeze({}), coordinationRecord }),
-            reset: Object.freeze({ discovery: Object.freeze({}), coordinationRecord }),
-        }) as never
+        const observed = Object.freeze({ coordinationRecord, discovery: Object.freeze({ resources }) })
+        return Object.freeze({ instance, runtime: Object.freeze({}), ports: Object.freeze({}), down: observed, reset: observed }) as never
     }
 
-    function failedDestructiveRecord(
-        context: Awaited<ReturnType<typeof destructiveFixture>>['context'],
-        purpose: 'down' | 'reset',
-    ) {
-        const now = new Date().toISOString()
-        const validThrough = new Date(Date.parse(now) + 47_000).toISOString()
-        const reservationId = (purpose === 'down' ? '4' : '6').repeat(64)
-        const attemptId = (purpose === 'down' ? '5' : '7').repeat(64)
-        const targetCommitment = {
-            format: 'cockpit-reclaim-target/v1' as const,
-            sha256: createHash('sha256').update('{}').digest('hex'),
-            body: '{}',
-        }
-        return Object.freeze({
-            format: 'cockpit-state/v1', kind: 'coordination', cockpitId: context.cockpitId,
-            subjectId: context.stackId, revision: 13, updatedAt: now,
-            value: {
-                holders: [{ holderId: context.holderId, checkoutId: context.checkoutId, claimedAt: now }],
-                lease: { offset: 0, ports: { APP_PORT: 4100 }, released: false,
-                    declaration: { step: 100, count: 1, bases: { APP_PORT: 4100 } } },
-                lastReleasedHolder: null,
-                drain: {
-                    purpose, stackId: context.stackId, holderId: context.holderId, requesterId: context.holderId,
-                    configSha256: '1'.repeat(64), planDigest: '5'.repeat(64), operationBasis: '2'.repeat(64),
-                    generation: '3'.repeat(64), targetIds: [context.stackId, 'volume:synthetic-volume'].sort(),
-                    actions: [
-                        { stage: 'runtime-stop', targetId: context.stackId, validForMs: 31_000 },
-                        { stage: 'reclaim', targetId: 'volume:synthetic-volume', validForMs: 47_000, targetCommitment },
-                    ],
-                    expectedCoordinationRevision: 9, coordinationRevision: 10, reservedAt: now,
-                    reservationId, completedActionCount: 1, progressRevision: 11,
-                    attempt: {
-                        attemptId, reservationId, purpose,
-                        targetIds: [context.stackId, 'volume:synthetic-volume'].sort(), generation: '3'.repeat(64),
-                        actionIndex: 1, currentTarget: 'volume:synthetic-volume', currentStage: 'reclaim',
-                        committedRevision: 12, committedAt: now, validThrough,
-                        status: 'failed', failedRevision: 13, failedAt: now,
-                    },
-                },
-            },
-        })
+    const removal = (id: string) => Object.freeze({ kind: 'container', id, name: `synthetic-${id}`, step: Object.freeze({ id: `remove:${id}` }) })
+    const resetPlan = (digest: string, noop = false) => Object.freeze({
+        kind: 'complete', digest, noop,
+        targets: Object.freeze(noop ? [] : [Object.freeze({ kind: 'volume', identity: 'synthetic-volume', declaration: 'data' })]),
+        removals: Object.freeze(noop ? [] : [removal('volume-1')]),
+    }) as never
+
+    async function holders(context: Awaited<ReturnType<typeof destructiveFixture>>['context']) {
+        const stored = await readState(context.namespace.paths.coordination(context.stackId))
+        if (stored.kind !== 'complete') throw new Error('coordination record unavailable')
+        return decodeCoordinationRecord(stored.value, context.stackId)?.holders.map(({ holderId }) => holderId)
     }
 
-    function persistFailedDestructiveRecord(
-        context: Awaited<ReturnType<typeof destructiveFixture>>['context'],
-        purpose: 'down' | 'reset',
-    ) {
-        const record = failedDestructiveRecord(context, purpose)
-        const address = context.namespace.paths.coordination(context.stackId)
-        mkdirSync(dirname(address.path), { recursive: true })
-        writeFileSync(address.path, `${JSON.stringify(record)}\n`)
-        return record
-    }
-
-    function persistedDrainRequest(
-        context: Awaited<ReturnType<typeof destructiveFixture>>['context'],
-        record: ReturnType<typeof failedDestructiveRecord>,
-    ) {
-        const drain = decodeCoordinationRecord(record as never, context.stackId)?.drain
-        if (!drain) throw new Error('expected persisted drain request')
-        const {
-            coordinationRevision: _coordinationRevision, reservedAt: _reservedAt,
-            reservationId: _reservationId, completedActionCount: _completedActionCount,
-            progressRevision: _progressRevision, attempt: _attempt, ...request
-        } = drain
-        return request
-    }
-
-    it('returns reset preview data without consent or continuation authority', async () => {
-        const { configPath, context, instance } = await destructiveFixture()
-        applicationOwners.reclaim.planReset = async () => Object.freeze({
-            kind: 'preview', digest: '1'.repeat(64), coordinationRevision: 7,
-            targets: Object.freeze([Object.freeze({ kind: 'volume', identity: 'synthetic-volume', declaration: 'data' })]),
-            noop: false, consent: Object.freeze({}),
-        }) as never
+    it('returns reset preview data and nothing that can act on it', async () => {
+        const { configPath, context, instance, record } = await destructiveFixture()
+        applicationOwners.reclaim.planReset = async () => resetPlan('1'.repeat(64))
+        const execute = vi.fn()
 
         const result = await runReset({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            observe: async () => resetObservation(instance),
-            execute: vi.fn(),
+            observe: async () => observation(instance, record),
+            execute,
         })
 
         expect(result).toMatchObject({
             kind: 'preview', result: { stackId: context.stackId, planDigest: '1'.repeat(64), noop: false },
         })
-        expect(JSON.stringify(result)).not.toMatch(/consent|continuation|authority|decide/)
+        expect(JSON.stringify(result)).not.toMatch(/removals|step|decide/)
+        expect(execute).not.toHaveBeenCalled()
     })
 
     it.each([['down', runDown], ['reset', runReset]] as const)(
-        'reports an unobservable %s precondition as evidence, not as an attempt needing repair', async (_command, run) => {
+        'reports an unobservable %s precondition as evidence and runs nothing', async (_command, run) => {
             const { configPath, context } = await destructiveFixture()
-            const reserve = vi.fn()
-            applicationOwners.claims.reserveDrain = reserve
             const execute = vi.fn()
 
             const result = await run({ configPath }, {
@@ -214,467 +128,142 @@ describe('destructive application contracts', () => {
             })
 
             expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
-            expect(JSON.stringify(result)).not.toContain('DRAIN_ATTEMPT_REPAIR_REQUIRED')
-            expect(reserve).not.toHaveBeenCalled()
             expect(execute).not.toHaveBeenCalled()
         })
 
     it('keeps a declined operator session one-shot and performs no destructive work', async () => {
-        const { configPath, context, instance } = await destructiveFixture()
-        applicationOwners.reclaim.planReset = async () => Object.freeze({
-            kind: 'preview', digest: '2'.repeat(64), coordinationRevision: 8,
-            targets: Object.freeze([]), noop: true, consent: Object.freeze({}),
-        }) as never
-        const reserve = vi.fn()
-        applicationOwners.claims.reserveDrain = reserve
+        const { configPath, context, instance, record } = await destructiveFixture()
+        applicationOwners.reclaim.planReset = async () => resetPlan('2'.repeat(64))
+        const stop = vi.fn()
+        applicationOwners.runtime.stopRuntime = stop
         const execute = vi.fn()
-        const adapters = {
+
+        const session = await beginOperatorReset({ configPath }, {
             load: async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [], result: context }),
-            observe: async () => resetObservation(instance),
+            observe: async () => observation(instance, record),
             execute,
-        }
-
-        const session = await beginOperatorReset({ configPath }, adapters)
+        })
         if (!('decide' in session)) throw new Error('operator reset session was not issued')
-        const decide = session.decide
-        await expect(decide('decline')).resolves.toMatchObject({ kind: 'refusal' })
-        await expect(decide('approve')).resolves.toMatchObject({ kind: 'refusal' })
+        await expect(session.decide('decline')).resolves.toMatchObject({ kind: 'refusal' })
+        await expect(session.decide('approve')).resolves.toMatchObject({ kind: 'refusal' })
 
+        expect(stop).not.toHaveBeenCalled()
         expect(execute).not.toHaveBeenCalled()
-        expect(reserve).not.toHaveBeenCalled()
     })
 
-    it('completes an approved noop reset as unchanged without reserving or executing', async () => {
-        const { configPath, context, instance } = await destructiveFixture()
-        let calls = 0
-        applicationOwners.reclaim.planReset = async () => {
-            calls += 1
-            return calls === 1 ? {
-                kind: 'preview', digest: '7'.repeat(64), coordinationRevision: 8,
-                targets: [], noop: true, consent: {},
-            } as never : {
-                kind: 'complete', action: null, remaining: 0,
-                noop: true, digest: '7'.repeat(64), envelope: {},
-            } as never
-        }
-        const reserve = vi.fn()
-        applicationOwners.claims.reserveDrain = reserve
+    it('completes an approved noop reset as unchanged without stopping the stack', async () => {
+        const { configPath, context, instance, record } = await destructiveFixture()
+        applicationOwners.reclaim.planReset = async () => resetPlan('7'.repeat(64), true)
+        const stop = vi.fn()
+        applicationOwners.runtime.stopRuntime = stop
         const execute = vi.fn()
-        const adapters = {
-            load: async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [], result: context }),
-            observe: async () => resetObservation(instance), execute,
-        }
 
-        const session = await beginOperatorReset({ configPath }, adapters)
+        const session = await beginOperatorReset({ configPath }, {
+            load: async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [], result: context }),
+            observe: async () => observation(instance, record), execute,
+        })
         if (!('decide' in session)) throw new Error('operator reset session was not issued')
         await expect(session.decide('approve')).resolves.toMatchObject({
             kind: 'complete', result: { stackId: context.stackId, change: 'unchanged' },
         })
-        expect(reserve).not.toHaveBeenCalled()
+        expect(stop).not.toHaveBeenCalled()
         expect(execute).not.toHaveBeenCalled()
     })
 
-    it('refuses an approved noop reset when fresh owner confirmation no longer matches', async () => {
-        const { configPath, context, instance } = await destructiveFixture()
+    it('refuses an approved reset when the stack changed after the preview, and removes nothing', async () => {
+        const { configPath, context, instance, record } = await destructiveFixture()
         let calls = 0
-        applicationOwners.reclaim.planReset = async () => {
-            calls += 1
-            return calls === 1 ? {
-                kind: 'preview', digest: '7'.repeat(64), coordinationRevision: 8,
-                targets: [], noop: true, consent: {},
-            } as never : {
-                kind: 'refusal', diagnostics: [{ severity: 'error', code: 'RESET_CONFIRMATION_MISMATCH', message: 'changed' }],
-            } as never
-        }
-        const reserve = vi.fn()
-        applicationOwners.claims.reserveDrain = reserve
+        applicationOwners.reclaim.planReset = async () => resetPlan((calls++ === 0 ? '7' : '8').repeat(64))
+        const stop = vi.fn()
+        applicationOwners.runtime.stopRuntime = stop
         const execute = vi.fn()
-        const adapters = {
-            load: async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [], result: context }),
-            observe: async () => resetObservation(instance), execute,
-        }
 
-        const session = await beginOperatorReset({ configPath }, adapters)
+        const session = await beginOperatorReset({ configPath }, {
+            load: async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [], result: context }),
+            observe: async () => observation(instance, record), execute,
+        })
         if (!('decide' in session)) throw new Error('operator reset session was not issued')
         await expect(session.decide('approve')).resolves.toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: 'RESET_CONFIRMATION_MISMATCH' }],
+            kind: 'refusal', diagnostics: [{ code: 'RESET_CONFIRMATION_MISMATCH', fix: 'run reset again to see and approve the current targets' }],
         })
-        expect(reserve).not.toHaveBeenCalled()
+        expect(stop).not.toHaveBeenCalled()
         expect(execute).not.toHaveBeenCalled()
+        expect(await holders(context)).toEqual([context.holderId])
     })
 
-    it('refuses a freshly confirmed noop while a failed destructive attempt remains unresolved', async () => {
-        const { configPath, context, instance } = await destructiveFixture()
-        const failedRecord = persistFailedDestructiveRecord(context, 'down')
-        let calls = 0
-        applicationOwners.reclaim.planReset = async () => {
-            calls += 1
-            return calls === 1 ? {
-                kind: 'preview', digest: '7'.repeat(64), coordinationRevision: failedRecord.revision,
-                targets: [], noop: true, consent: {},
-            } as never : {
-                kind: 'complete', action: null, remaining: 0,
-                noop: true, digest: '7'.repeat(64), envelope: {},
-            } as never
-        }
-        const reserve = vi.fn()
-        const recover = vi.fn()
-        applicationOwners.claims.reserveDrain = reserve
-        applicationOwners.claims.recoverDrainReservation = recover
-        const execute = vi.fn()
-        const adapters = {
-            load: async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [], result: context }),
-            observe: async () => resetObservation(instance, failedRecord), execute,
-        }
+    it('removes an approved reset\'s targets after stopping the stack, and releases it', async () => {
+        const { configPath, context, instance, record } = await destructiveFixture()
+        applicationOwners.reclaim.planReset = async () => resetPlan('5'.repeat(64))
+        const events: string[] = []
+        applicationOwners.runtime.stopRuntime = async () => { events.push('stop'); return { kind: 'stopped' } }
 
-        const session = await beginOperatorReset({ configPath }, adapters)
+        const session = await beginOperatorReset({ configPath }, {
+            load: async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [], result: context }),
+            observe: async () => observation(instance, record),
+            observeReclaim: async () => observation(instance, record),
+            execute: async (step) => { events.push(step.id); return { kind: 'complete' } as never },
+        })
         if (!('decide' in session)) throw new Error('operator reset session was not issued')
         await expect(session.decide('approve')).resolves.toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: 'DRAIN_ATTEMPT_REPAIR_REQUIRED' }],
+            kind: 'complete', result: { change: 'reset', targets: [{ kind: 'volume', identity: 'synthetic-volume' }] },
         })
-        expect(calls).toBe(1)
-        expect(reserve).not.toHaveBeenCalled()
-        expect(recover).not.toHaveBeenCalled()
-        expect(execute).not.toHaveBeenCalled()
+        expect(events).toEqual(['stop', 'remove:volume-1'])
+        expect(await holders(context)).toEqual([])
     })
 
-    it.each(['co-tenant', 'missing'] as const)(
-        'refuses a freshly confirmed noop when coordination becomes %s before final admission',
-        async (change) => {
-            const { configPath, context, instance } = await destructiveFixture()
-            let calls = 0
-            applicationOwners.reclaim.planReset = async () => {
-                calls += 1
-                if (calls === 1) return {
-                    kind: 'preview', digest: '7'.repeat(64), coordinationRevision: 0,
-                    targets: [], noop: true, consent: {},
-                } as never
-                const address = context.namespace.paths.coordination(context.stackId)
-                if (change === 'missing') {
-                    rmSync(address.path)
-                } else {
-                    const changed = await transactState(context.namespace, address, { ownerId: context.holderId }, (current) => ({
-                        ...current!, revision: current!.revision + 1, updatedAt: new Date().toISOString(),
-                        value: {
-                            ...(current!.value as object),
-                            holders: [
-                                ...((current!.value as { holders: unknown[] }).holders),
-                                { holderId: `holder:${'9'.repeat(64)}:session`, checkoutId: context.checkoutId,
-                                    claimedAt: new Date().toISOString() },
-                            ],
-                        },
-                    } as never))
-                    if (changed.kind !== 'complete') throw new Error('coordination race fixture was not published')
-                }
-                return {
-                    kind: 'complete', action: null, remaining: 0,
-                    noop: true, digest: '7'.repeat(64), envelope: {},
-                } as never
-            }
-            const execute = vi.fn()
+    it.each([['down', runDown], ['reset', runReset]] as const)(
+        'refuses %s while another session holds the stack, before stopping anything', async (command, run) => {
+            const { configPath, context, instance, record } = await destructiveFixture(true)
+            applicationOwners.reclaim.planReset = async () => resetPlan('4'.repeat(64))
+            const stop = vi.fn()
+            applicationOwners.runtime.stopRuntime = stop
             const adapters = {
                 load: async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [], result: context }),
-                observe: async () => resetObservation(instance), execute,
+                observe: async () => observation(instance, record),
+                execute: vi.fn(),
             }
-
-            const session = await beginOperatorReset({ configPath }, adapters)
-            if (!('decide' in session)) throw new Error('operator reset session was not issued')
-            await expect(session.decide('approve')).resolves.toMatchObject({ kind: 'refusal' })
-            expect(calls).toBe(2)
-            expect(execute).not.toHaveBeenCalled()
-        },
-    )
-
-    it('commits the reset reservation and current attempt before stopping the runtime', async () => {
-        const { configPath, context, instance } = await destructiveFixture()
-        const events: string[] = []
-        const consent = Object.freeze({})
-        let resetCalls = 0
-        applicationOwners.reclaim.planReset = async () => {
-            resetCalls += 1
-            return resetCalls === 1 ? Object.freeze({
-                kind: 'preview', digest: '3'.repeat(64), coordinationRevision: 9,
-                targets: Object.freeze([Object.freeze({ kind: 'volume', identity: 'synthetic-volume', declaration: 'data' })]),
-                noop: false, consent,
-            }) as never : Object.freeze({
-                kind: 'complete', action: null, remaining: 0,
-                noop: false, digest: '3'.repeat(64), envelope: {},
-            }) as never
-        }
-        const request = Object.freeze({
-            purpose: 'reset', stackId: context.stackId, holderId: context.holderId, requesterId: context.holderId,
-            configSha256: '1'.repeat(64), planDigest: '3'.repeat(64), operationBasis: '2'.repeat(64),
-            generation: '3'.repeat(64), targetIds: Object.freeze([context.stackId]),
-            actions: Object.freeze([{ stage: 'runtime-stop' as const, targetId: context.stackId, validForMs: 60_000 }]),
-            expectedCoordinationRevision: 9,
+            if (command === 'down') {
+                expect(await run({ configPath }, adapters)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'CLAIM_CO_TENANT' }] })
+            } else {
+                const session = await beginOperatorReset({ configPath }, adapters)
+                if (!('decide' in session)) throw new Error('operator reset session was not issued')
+                expect(await session.decide('approve')).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'CLAIM_CO_TENANT' }] })
+            }
+            expect(stop).not.toHaveBeenCalled()
+            expect(adapters.execute).not.toHaveBeenCalled()
         })
-        const lifecyclePlan = Object.freeze({ diagnostics: Object.freeze([]) })
-        applicationOwners.lifecycle.planResetLifecycle = () => ({ kind: 'drain', plan: lifecyclePlan, request }) as never
-        applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
-            topology: Object.freeze({}), drainRequest: request, reclaim: { purpose: 'reset' },
-        }) as never
-        const reservedAt = new Date().toISOString()
-        const reservationId = '4'.repeat(64)
-        const reservation = Object.freeze({
-            ...request, coordinationRevision: 10, reservedAt, reservationId,
-            completedActionCount: 0, progressRevision: 10, attempt: null,
-        })
-        const attempt = Object.freeze({
-            attemptId: '5'.repeat(64), reservationId, purpose: 'reset' as const,
-            targetIds: request.targetIds, generation: request.generation,
-            actionIndex: 0, currentTarget: context.stackId, currentStage: 'runtime-stop' as const,
-            committedRevision: 11, committedAt: reservedAt,
-            validThrough: new Date(Date.parse(reservedAt) + 60_000).toISOString(),
-            status: 'active' as const, failedRevision: null, failedAt: null,
-        })
-        applicationOwners.claims.reserveDrain = async () => {
-            events.push('reservation')
-            return { kind: 'complete', reservation } as never
-        }
-        applicationOwners.claims.recoverDrainReservation = async () => ({ kind: 'refusal', diagnostics: [] }) as never
-        applicationOwners.claims.reserveDrainAttempt = async () => {
-            events.push('attempt')
-            return {
-                kind: 'complete', reservation: Object.freeze({ ...reservation, attempt }), attempt,
-                fence: executionFence('reset-stop'),
-            } as never
-        }
-        applicationOwners.runtime.stopRuntime = async ({ execute }) => {
-            await execute({ id: 'runtime-stop' } as never)
-            await execute({ id: 'runtime-observe' } as never)
-            return { kind: 'stopped', outcome: Object.freeze({}), fence: executionFence('reset-stop') } as never
-        }
-        applicationOwners.claims.commitDrainOutcome = async () => {
-            events.push('publication')
-            return { kind: 'complete', value: Object.freeze({}) } as never
-        }
-        const adapters = {
-            load: async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [], result: context }),
-            observe: async () => resetObservation(instance),
-            execute: async (step: { id: string }) => {
-                events.push(step.id)
-                return Object.freeze({ kind: 'complete' }) as never
-            },
-        }
 
-        const session = await beginOperatorReset({ configPath }, adapters as never)
-        if (!('decide' in session)) throw new Error('operator reset session was not issued')
-        const result = await session.decide('approve')
-
-        expect(events).toEqual(['reservation', 'attempt', 'runtime-stop', 'runtime-observe', 'publication'])
-        expect(result).toMatchObject({ kind: 'complete', result: { stackId: context.stackId, change: 'reset', targets: session.preview.result.targets } })
-    })
-
-    it('refuses co-tenancy before minting or executing a reset action', async () => {
-        const { configPath, context, instance } = await destructiveFixture()
-        const planReset = vi.fn(async () => Object.freeze({
-            kind: 'preview', digest: '4'.repeat(64), coordinationRevision: 10,
-            targets: Object.freeze([Object.freeze({ kind: 'volume', identity: 'synthetic-volume', declaration: 'data' })]),
-            noop: false, consent: Object.freeze({}),
-        }) as never)
-        applicationOwners.reclaim.planReset = planReset
-        applicationOwners.lifecycle.planResetLifecycle = () => ({
-            kind: 'refusal', diagnostics: [{ severity: 'error', code: 'CLAIM_CO_TENANT', message: 'co-tenant', target: context.stackId }],
-        }) as never
+    it('refuses while another sleep, down or reset of the stack runs, and runs nothing', async () => {
+        const { configPath, context, instance, record } = await destructiveFixture()
         const execute = vi.fn()
-        const adapters = {
-            load: async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [], result: context }),
-            observe: async () => resetObservation(instance),
+        const result = await withStackTeardown(context.namespace, context.stackId, context.holderId, () => runDown({ configPath }, {
+            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
+            observe: async () => observation(instance, record),
             execute,
-        }
-
-        const session = await beginOperatorReset({ configPath }, adapters)
-        if (!('decide' in session)) throw new Error('operator reset session was not issued')
-        const result = await session.decide('approve')
-
-        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'CLAIM_CO_TENANT' }] })
-        expect(planReset).toHaveBeenCalledOnce()
-        expect(execute).not.toHaveBeenCalled()
-    })
-
-    it('recovers a persisted failed down action with its original generation and validity windows', async () => {
-        const { configPath, context, instance } = await destructiveFixture()
-        const failedRecord = persistFailedDestructiveRecord(context, 'down')
-        const events: string[] = []
-        let teardownCalls = 0
-        applicationOwners.reclaim.planTeardown = async () => {
-            teardownCalls += 1
-            return teardownCalls === 1 ? {
-                kind: 'complete', action: {}, remaining: 1, noop: false,
-                discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: {}, envelope: {},
-            } as never : {
-                kind: 'complete', action: {}, remaining: 1, noop: false,
-                discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: null, envelope: {},
-            } as never
-        }
-        // The discoveries here are opaque stand-ins, so the kept-resource classification is too.
-        applicationOwners.reclaim.keptTeardownResources = () => []
-        const recoveredRequest = persistedDrainRequest(context, failedRecord)
-        const request = { ...recoveredRequest, expectedCoordinationRevision: failedRecord.revision }
-        const planDown = vi.fn(() => ({ kind: 'drain', plan: { diagnostics: [] }, request }) as never)
-        applicationOwners.lifecycle.planDown = planDown
-        applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
-            topology: {}, drainRequest: request, reclaim: { purpose: 'down' },
-        }) as never
-        applicationOwners.claims.reserveDrainAttempt = async () => {
-            events.push('attempt')
-            return { kind: 'complete', reservation: {}, attempt: {}, fence: {} } as never
-        }
-        applicationOwners.reclaim.executeReclaimAction = async ({ execute }) => {
-            events.push('reclaim-action')
-            await execute({ id: 'reclaim' } as never)
-            return { kind: 'executed', executed: { receipt: {}, fence: executionFence('recovered-down') } } as never
-        }
-        applicationOwners.reclaim.reconcileReclaimAction = () => ({
-            kind: 'complete', continuation: null, outcome: {},
-        }) as never
-        applicationOwners.claims.commitDrainOutcome = async () => ({ kind: 'complete', value: {} }) as never
-        const result = await runDown({ configPath }, {
-            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            observe: async () => resetObservation(instance, failedRecord),
-            execute: async () => {
-                events.push('execute')
-                return { kind: 'complete' } as never
-            },
-        })
-
-        expect(planDown).toHaveBeenCalledWith(expect.objectContaining({
-            operationGeneration: '3'.repeat(64), runtimeStopValidForMs: 31_000, reclaimValidForMs: 47_000,
         }))
-        expect(events).toEqual(['attempt', 'reclaim-action', 'execute'])
-        expect(result).toMatchObject({ kind: 'complete', result: { change: 'removed' } })
-    })
-
-    it('refuses persisted down recovery when the fresh lifecycle projection changes its request', async () => {
-        const { configPath, context, instance } = await destructiveFixture()
-        const failedRecord = persistFailedDestructiveRecord(context, 'down')
-        const recoveredReservation = decodeCoordinationRecord(failedRecord as never, context.stackId)?.drain
-        if (!recoveredReservation) throw new Error('expected persisted drain reservation')
-        const recoveredRequest = persistedDrainRequest(context, failedRecord)
-        const request = { ...recoveredRequest, expectedCoordinationRevision: failedRecord.revision }
-        applicationOwners.reclaim.planTeardown = async () => ({
-            kind: 'complete', action: {}, remaining: 1, noop: false,
-            discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: {}, envelope: {},
-        }) as never
-        applicationOwners.lifecycle.planDown = () => ({
-            kind: 'drain', plan: { diagnostics: [] }, request: { ...request, operationBasis: '8'.repeat(64) },
-        }) as never
-        const recover = vi.fn(async () => ({ kind: 'complete', reservation: recoveredReservation }) as never)
-        const reserveAttempt = vi.fn()
-        applicationOwners.claims.recoverDrainReservation = recover
-        applicationOwners.claims.reserveDrainAttempt = reserveAttempt
-        const execute = vi.fn()
-
-        await expect(runDown({ configPath }, {
-            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            observe: async () => resetObservation(instance, failedRecord), execute,
-        })).resolves.toMatchObject({ kind: 'refusal', diagnostics: [{
-            code: 'DRAIN_ATTEMPT_REPAIR_REQUIRED',
-            message: expect.stringContaining('will not overlap it with another destructive action'),
-        }] })
-        expect(recover).toHaveBeenCalledOnce()
-        expect(recover).toHaveBeenCalledWith({ namespace: context.namespace, request: recoveredRequest })
-        expect(reserveAttempt).not.toHaveBeenCalled()
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'STATE_LOCKED', message: expect.stringContaining('a sleep, down or reset of this stack is running') }] })
         expect(execute).not.toHaveBeenCalled()
-    })
-
-    it('measures the runtime once and plans each next removal from the discovery that reconciled the last', async () => {
-        const { configPath, context, instance } = await destructiveFixture()
-        const failedRecord = persistFailedDestructiveRecord(context, 'down')
-        const observations: string[] = []
-        const reclaimObservation = () => {
-            const discovery = Object.freeze({ observation: observations.length })
-            return Object.freeze({
-                instance,
-                down: Object.freeze({ discovery, coordinationRecord: null }),
-                reset: Object.freeze({ discovery, coordinationRecord: null }),
-            }) as never
-        }
-        const discoveries: unknown[] = []
-        const plans: Record<string, unknown>[] = []
-        applicationOwners.reclaim.planTeardown = async (input) => {
-            plans.push(input as never)
-            return plans.length === 1 ? {
-                kind: 'complete', action: {}, remaining: 2, noop: false,
-                discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: {}, envelope: {},
-            } as never : {
-                kind: 'complete', action: {}, remaining: 1, noop: false,
-                discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: null, envelope: {},
-            } as never
-        }
-        // The discoveries here are opaque stand-ins, so the kept-resource classification is too.
-        applicationOwners.reclaim.keptTeardownResources = () => []
-        const request = { ...persistedDrainRequest(context, failedRecord), expectedCoordinationRevision: failedRecord.revision }
-        applicationOwners.lifecycle.planDown = () => ({ kind: 'drain', plan: { diagnostics: [] }, request }) as never
-        applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
-            topology: {}, drainRequest: request, reclaim: { purpose: 'down' },
-        }) as never
-        applicationOwners.claims.recoverDrainReservation = async () => ({ kind: 'complete', reservation: { completedActionCount: 1 } }) as never
-        applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', reservation: {}, attempt: {}, fence: {} }) as never
-        applicationOwners.reclaim.executeReclaimAction = async () => ({ kind: 'executed', executed: { receipt: {}, fence: executionFence('reclaim-loop') } }) as never
-        const continuation = Object.freeze({})
-        let reconciliations = 0
-        applicationOwners.reclaim.reconcileReclaimAction = ({ discovery }) => {
-            discoveries.push(discovery)
-            reconciliations += 1
-            return { kind: 'complete', continuation: reconciliations === 1 ? continuation : null, outcome: {} } as never
-        }
-        applicationOwners.claims.commitDrainOutcome = async () => ({ kind: 'complete', value: {} }) as never
-
-        const result = await runDown({ configPath }, {
-            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            observe: async () => {
-                observations.push('runtime')
-                return resetObservation(instance, failedRecord)
-            },
-            observeReclaim: async () => {
-                observations.push('reclaim')
-                return reclaimObservation()
-            },
-            execute: async () => ({ kind: 'complete' }) as never,
-        })
-
-        expect(result, JSON.stringify(result)).toMatchObject({ kind: 'complete', result: { change: 'removed' } })
-        // Preview, plan, then one discovery per removal: the runtime is measured once, and no
-        // removal is followed by a second discovery before the next one is planned.
-        expect(observations).toEqual(['runtime', 'reclaim', 'reclaim', 'reclaim'])
-        expect(plans).toHaveLength(3)
-        expect(plans[2]!.discovery).toBe(discoveries[0])
-        expect(plans[2]).toMatchObject({ continuation, coordinationRecord: failedRecord, expectedDiscoveryDigest: request.planDigest })
     })
 
     it('retires a stack that never started without writing a lifecycle record up would refuse', async () => {
-        const { configPath, context, instance } = await destructiveFixture()
-        const failedRecord = persistFailedDestructiveRecord(context, 'down')
-        applicationOwners.reclaim.planTeardown = async () => ({
-            kind: 'complete', action: {}, remaining: 1, noop: false,
-            discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: null, envelope: {},
-        }) as never
+        const { configPath, context, instance, record } = await destructiveFixture()
+        applicationOwners.reclaim.planTeardown = () => ({ kind: 'complete', targets: [removal('container-1')] }) as never
         // The discoveries here are opaque stand-ins, so the kept-resource classification is too.
         applicationOwners.reclaim.keptTeardownResources = () => []
-        const request = { ...persistedDrainRequest(context, failedRecord), expectedCoordinationRevision: failedRecord.revision }
-        applicationOwners.lifecycle.planDown = () => ({ kind: 'drain', plan: { diagnostics: [] }, request }) as never
-        applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
-            topology: {}, drainRequest: request, reclaim: { purpose: 'down' },
-        }) as never
-        applicationOwners.claims.recoverDrainReservation = async () => ({ kind: 'complete', reservation: { completedActionCount: 1 } }) as never
-        applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', reservation: {}, attempt: {}, fence: {} }) as never
-        applicationOwners.reclaim.executeReclaimAction = async () => ({ kind: 'executed', executed: { receipt: {}, fence: executionFence('never-started') } }) as never
-        applicationOwners.reclaim.reconcileReclaimAction = () => ({ kind: 'complete', continuation: null, outcome: {} }) as never
-        applicationOwners.claims.commitDrainOutcome = async () => ({ kind: 'complete', value: {} }) as never
-        const discovery = Object.freeze({ down: Object.freeze({ discovery: Object.freeze({}), coordinationRecord: null }) })
+        applicationOwners.runtime.stopRuntime = async () => ({ kind: 'stopped' })
         const stackInputs = join(dirname(configPath), '.cockpit/local/stack-inputs')
         mkdirSync(dirname(stackInputs), { recursive: true })
         writeFileSync(stackInputs, '{}')
 
         const result = await runDown({ configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            observe: async () => resetObservation(instance, failedRecord),
-            observeReclaim: async () => Object.freeze({ instance, ...discovery, reset: discovery.down }) as never,
+            observe: async () => observation(instance, record, [{ kind: 'container', id: 'container-1' }]),
+            observeReclaim: async () => observation(instance, record),
             execute: async () => ({ kind: 'complete' }) as never,
         })
 
         expect(result, JSON.stringify(result)).toMatchObject({ kind: 'complete', result: { change: 'removed' } })
+        expect(await holders(context)).toEqual([])
         // Nothing runs that a later doctor could call stale.
         expect(() => readFileSync(stackInputs)).toThrow()
         // A lifecycle record without lifecycle history reads as malformed, so the next up refused.
@@ -683,23 +272,34 @@ describe('destructive application contracts', () => {
             .toMatchObject({ kind: 'complete', authority: { stage: 'bootstrap' } })
     })
 
+    it('keeps the stack held when a removal reported success but a fresh discovery still lists it', async () => {
+        const { configPath, context, instance, record } = await destructiveFixture()
+        applicationOwners.reclaim.planTeardown = () => ({ kind: 'complete', targets: [removal('container-1')] }) as never
+        applicationOwners.runtime.stopRuntime = async () => ({ kind: 'stopped' })
+        const still = observation(instance, record, [{ kind: 'container', id: 'container-1' }])
+
+        const result = await runDown({ configPath }, {
+            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
+            observe: async () => still,
+            observeReclaim: async () => still,
+            execute: async () => ({ kind: 'complete' }) as never,
+        })
+
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: 'RECLAIM_ACCOUNTING_MISMATCH', message: expect.stringContaining('container synthetic-container-1 (container-1)'),
+            fix: expect.stringContaining(cockpitCommand('down', { config: context.source.path })),
+        }] })
+        expect(await holders(context)).toEqual([context.holderId])
+    })
+
     it('refuses to report the stack removed while a resource it owns remains, and names what it kept', async () => {
         const downWith = async (resources: (labels: Record<string, string>) => readonly object[]) => {
-            const { configPath, context, instance } = await destructiveFixture()
-            const failedRecord = persistFailedDestructiveRecord(context, 'down')
-            applicationOwners.reclaim.planTeardown = async () => ({
-                kind: 'complete', action: null, remaining: 0, noop: true,
-                discoveryDigest: '5'.repeat(64), byteAccounting: {}, consent: null, envelope: {},
-            }) as never
-            const request = { ...persistedDrainRequest(context, failedRecord), expectedCoordinationRevision: failedRecord.revision }
-            applicationOwners.lifecycle.planDown = () => ({ kind: 'drain', plan: { diagnostics: [] }, request }) as never
-            applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
-                topology: {}, drainRequest: request, reclaim: { purpose: 'down' },
-            }) as never
-            applicationOwners.claims.recoverDrainReservation = async () => ({ kind: 'complete', reservation: { completedActionCount: 1 } }) as never
+            const { configPath, context, instance, record } = await destructiveFixture()
+            applicationOwners.reclaim.planTeardown = () => ({ kind: 'complete', targets: [] }) as never
+            applicationOwners.runtime.stopRuntime = async () => ({ kind: 'stopped' })
             const observed = Object.freeze({
                 stackId: context.stackId, cockpitId: context.cockpitId, configSha256: context.source.sha256,
-                coordinationRecord: failedRecord, declaredCacheIds: [],
+                coordinationRecord: record, declaredCacheIds: [],
                 discovery: { observedAt: new Date().toISOString(), producer: 'runtime-resource-discovery', resources: resources({
                     'dev.b0dea.cockpit.stack-id': context.stackId,
                     'dev.b0dea.cockpit.config-sha256': context.source.sha256,
@@ -727,89 +327,10 @@ describe('destructive application contracts', () => {
         }] })
         expect(kept.diagnostics[0]!.message).not.toContain('synthetic_data')
     })
-
-    it('plans a recovered failed action from its reservation without recovering it twice', async () => {
-        const { configPath, context, instance } = await destructiveFixture()
-        const failedRecord = persistFailedDestructiveRecord(context, 'reset')
-        const recoveredReservation = decodeCoordinationRecord(failedRecord as never, context.stackId)?.drain
-        if (!recoveredReservation) throw new Error('expected persisted drain reservation')
-        const events: string[] = []
-        let resetCalls = 0
-        const operatorPreview = Object.freeze({
-            kind: 'preview', digest: '5'.repeat(64), coordinationRevision: 11,
-            targets: Object.freeze([{ kind: 'volume', identity: 'synthetic-volume', declaration: 'data' }]),
-            noop: false, consent: Object.freeze({}),
-        })
-        const recoveredPlan = Object.freeze({
-            kind: 'complete', action: Object.freeze({}), remaining: 1,
-            noop: false, digest: '5'.repeat(64), envelope: Object.freeze({}),
-        })
-        const planReset = vi.fn(async (_input: Parameters<typeof import('./reclaim.js').planReset>[0]) => {
-            resetCalls += 1
-            return (resetCalls === 1 ? operatorPreview : recoveredPlan) as never
-        })
-        applicationOwners.reclaim.planReset = planReset
-        const recoveredRequest = persistedDrainRequest(context, failedRecord)
-        const request = { ...recoveredRequest, expectedCoordinationRevision: failedRecord.revision }
-        const planResetLifecycle = vi.fn(() => ({ kind: 'drain', plan: { diagnostics: [] }, request }) as never)
-        applicationOwners.lifecycle.planResetLifecycle = planResetLifecycle
-        applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
-            topology: {}, drainRequest: request, reclaim: { purpose: 'reset' },
-        }) as never
-        const recover = vi.fn(async () => ({ kind: 'complete', reservation: recoveredReservation }) as never)
-        applicationOwners.claims.recoverDrainReservation = recover
-        applicationOwners.claims.reserveDrainAttempt = async () => {
-            events.push('attempt')
-            return { kind: 'complete', reservation: {}, attempt: {}, fence: {} } as never
-        }
-        applicationOwners.reclaim.executeReclaimAction = async ({ execute }) => {
-            events.push('reclaim-action')
-            await execute({ id: 'reclaim' } as never)
-            return { kind: 'executed', executed: { receipt: {}, fence: executionFence('recovered-reset') } } as never
-        }
-        applicationOwners.reclaim.reconcileReclaimAction = () => {
-            events.push('reconcile')
-            return { kind: 'complete', continuation: null, outcome: {} } as never
-        }
-        applicationOwners.claims.commitDrainOutcome = async () => {
-            events.push('publish')
-            return { kind: 'complete', value: {} } as never
-        }
-        const adapters = {
-            load: async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [], result: context }),
-            observe: async () => resetObservation(instance, failedRecord),
-            execute: async () => {
-                events.push('execute')
-                return { kind: 'complete' } as never
-            },
-        }
-
-        const session = await beginOperatorReset({ configPath }, adapters)
-        if (!('decide' in session)) throw new Error('operator reset session was not issued')
-        const result = await session.decide('approve')
-
-        expect(result).toMatchObject({ kind: 'complete', result: { change: 'reset' } })
-        expect(planResetLifecycle).toHaveBeenCalledWith(expect.objectContaining({
-            operationGeneration: '3'.repeat(64), runtimeStopValidForMs: 31_000, reclaimValidForMs: 47_000,
-        }))
-        expect(planReset).toHaveBeenNthCalledWith(2, expect.objectContaining({
-            confirmationDigest: recoveredRequest.planDigest,
-            recoveredReservation,
-            operatorApproval: operatorPreview,
-        }))
-        expect(planReset.mock.calls[1]?.[0].operatorApproval).toBe(operatorPreview)
-        // The drain commits the recovered plan's remaining targets, not the operator preview's.
-        expect(planResetLifecycle).toHaveBeenCalledWith(expect.objectContaining({ reclaim: recoveredPlan.envelope }))
-        expect(recover).toHaveBeenCalledOnce()
-        expect(recover).toHaveBeenCalledWith({ namespace: context.namespace, request: recoveredRequest })
-        expect(events).toEqual(['attempt', 'reclaim-action', 'execute', 'reconcile', 'publish'])
-    })
 })
 afterEach(() => {
     vi.restoreAllMocks()
-    applicationOwners.lifecycle = {}
     applicationOwners.runtime = {}
-    applicationOwners.claims = {}
     applicationOwners.reclaim = {}
     for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true })
 })

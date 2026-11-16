@@ -2,301 +2,25 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { constants, lstatSync } from 'node:fs'
-import { chmod, link, lstat, mkdir, mkdtemp, open, readdir, realpath, rm, unlink } from 'node:fs/promises'
-import { createConnection } from 'node:net'
+import { chmod, lstat, mkdtemp, open, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, normalize } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { readFenceMarkerFile } from '../../libexec/fence-marker.cjs'
 import {
     hasErrorCode,
     ENVIRONMENT_CODES,
-    EXECUTION_FAILURE_CODES,
     sameFilesystemObject,
     snapshotExecutionPlan,
     snapshotExecutionStep,
-    snapshotJson,
     type ConsumedFile,
     type ExecutionFailureCode,
     type ExecutionPlan,
     type ExecutionReceipt,
     type ExecutionStep,
-    type ExecutionFence,
     type FilesystemCheck,
     type EnvironmentDiagnostic,
 } from '../environment/contract.js'
 import { redactSensitiveMessage } from '../environment/sensitive.js'
 import { fileFingerprint, recordVerifiedDigest, verifiedDigest } from './verified-digest.js'
-
-const FENCE_READY_MS = 2_000
-const FENCE_REPAIR_MS = 2_000
-
-interface FenceMarker {
-    readonly format: 'cockpit-executor/v1'
-    readonly attemptId: string
-    readonly supervisorPid?: number
-    readonly groupPid?: number
-    readonly markerDev: string
-    readonly markerIno: string
-    readonly parentDev: string
-    readonly parentIno: string
-    readonly status: 'active' | 'terminating' | 'terminated' | 'cancelled'
-    readonly finishedAt?: string
-}
-
-export interface FencedExecutionTermination { readonly kind: 'fenced-execution-termination' }
-const fencedTerminations = new WeakMap<object, ExecutionFence>()
-
-function validExecutionFence(fence: ExecutionFence): boolean {
-    return /^[a-f0-9]{64}$/.test(fence.attemptId)
-        && [fence.markerPath, fence.socketPath].every(path => isAbsolute(path) && normalize(path) === path && !path.includes('\0'))
-        && fence.markerPath !== fence.socketPath && Buffer.byteLength(fence.socketPath) <= 103
-}
-
-async function secureFenceSocketDirectory(fence: ExecutionFence): Promise<boolean> {
-    const directory = dirname(fence.socketPath)
-    try { await mkdir(directory, { recursive: false, mode: 0o700 }) } catch (error) {
-        if (!hasErrorCode(error, 'EEXIST')) return false
-    }
-    try {
-        const identity = await lstat(directory)
-        return identity.isDirectory() && !identity.isSymbolicLink()
-            && identity.uid === (process.getuid?.() ?? identity.uid) && (identity.mode & 0o077) === 0
-    } catch { /* Any lstat failure means the fence directory is not provably private; the caller refuses the fence. */ return false }
-}
-
-function exactFenceMarker(value: unknown, fence: ExecutionFence, identity: {
-    readonly markerDev: string; readonly markerIno: string; readonly parentDev: string; readonly parentIno: string
-}): FenceMarker | undefined {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
-    const marker = value as Record<string, unknown>
-    const markerKeys = marker.status === 'terminated'
-        ? ['attemptId', 'finishedAt', 'format', 'markerDev', 'markerIno', 'parentDev', 'parentIno', 'status', 'supervisorPid']
-        : marker.status === 'terminating'
-            ? ['attemptId', 'format', 'groupPid', 'markerDev', 'markerIno', 'parentDev', 'parentIno', 'status', 'supervisorPid']
-        : marker.status === 'active'
-            ? ['attemptId', 'format', 'markerDev', 'markerIno', 'parentDev', 'parentIno', 'status', 'supervisorPid']
-            : ['attemptId', 'format', 'markerDev', 'markerIno', 'parentDev', 'parentIno', 'status']
-    if (JSON.stringify(Object.keys(marker).sort()) !== JSON.stringify(markerKeys)
-        || marker.format !== 'cockpit-executor/v1' || marker.attemptId !== fence.attemptId
-        || marker.markerDev !== identity.markerDev || marker.markerIno !== identity.markerIno
-        || marker.parentDev !== identity.parentDev || marker.parentIno !== identity.parentIno
-        || marker.status !== 'cancelled' && (!Number.isSafeInteger(marker.supervisorPid) || (marker.supervisorPid as number) < 1)
-        || marker.status === 'terminating' && (!Number.isSafeInteger(marker.groupPid) || (marker.groupPid as number) < 1)
-        || marker.status !== 'active' && marker.status !== 'terminating' && marker.status !== 'terminated' && marker.status !== 'cancelled'
-        || marker.status === 'terminated' && (typeof marker.finishedAt !== 'string' || !Number.isFinite(Date.parse(marker.finishedAt)))) return undefined
-    return marker as unknown as FenceMarker
-}
-
-function readFenceMarker(fence: ExecutionFence): FenceMarker | undefined {
-    const read = readFenceMarkerFile(fence.markerPath)
-    return read && exactFenceMarker(read.value, fence, read.identity)
-}
-
-async function pathAbsent(path: string): Promise<boolean> {
-    try { await lstat(path); return false } catch (error) { return hasErrorCode(error, 'ENOENT') }
-}
-
-// Lives beside the socket because the state directory's scan refuses any marker no attempt names.
-// libexec/fenced-supervisor.cjs reads the same name.
-const settledFencePath = (fence: ExecutionFence) => `${fence.socketPath}.settled`
-
-function issueFencedTermination(fence: ExecutionFence): FencedExecutionTermination {
-    const evidence = { kind: 'fenced-execution-termination' as const }
-    fencedTerminations.set(evidence, Object.freeze({ ...fence }))
-    return evidence
-}
-
-async function publishFenceMarker(
-    fence: ExecutionFence,
-    status: 'active' | 'cancelled',
-    supervisorPid?: number,
-): Promise<FenceMarker | undefined> {
-    const prepared = `${fence.markerPath}.${status}-${process.pid}.prepared`
-    let handle: Awaited<ReturnType<typeof open>> | undefined
-    try {
-        const parent = await lstat(dirname(fence.markerPath), { bigint: true })
-        if (!parent.isDirectory() || parent.isSymbolicLink()) return undefined
-        handle = await open(prepared, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)
-        const markerIdentity = await handle.stat({ bigint: true })
-        const marker = { format: 'cockpit-executor/v1' as const, attemptId: fence.attemptId,
-            ...(status === 'active' ? { supervisorPid } : {}),
-            markerDev: String(markerIdentity.dev), markerIno: String(markerIdentity.ino),
-            parentDev: String(parent.dev), parentIno: String(parent.ino), status }
-        await handle.writeFile(`${JSON.stringify(marker)}\n`)
-        await handle.sync(); await handle.close(); handle = undefined
-        await link(prepared, fence.markerPath)
-        await unlink(prepared)
-        const directory = await open(dirname(fence.markerPath), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
-        try { await directory.sync() } finally { await directory.close() }
-        const authenticated = readFenceMarker(fence)
-        return authenticated?.status === status && authenticated.supervisorPid === supervisorPid ? authenticated : undefined
-    } catch {
-        try { await handle?.close() } catch { /* incomplete prepared marker */ }
-        try { await unlink(prepared) } catch { /* linked winner or absent preparation */ }
-        return undefined
-    }
-}
-
-const writeActiveFence = (fence: ExecutionFence, supervisorPid: number) =>
-    publishFenceMarker(fence, 'active', supervisorPid)
-const writeCancelledFence = (fence: ExecutionFence) => publishFenceMarker(fence, 'cancelled')
-
-// The supervisor and its group runner are separate programs so a fenced action outlives this
-// process; see libexec/fenced-supervisor.cjs for their protocol.
-const FENCED_SUPERVISOR = fileURLToPath(new URL('../../libexec/fenced-supervisor.cjs', import.meta.url))
-
-async function waitForFenceReady(child: ReturnType<typeof spawn>): Promise<boolean> {
-    const control = child.stdio[3]
-    if (!control || !('on' in control)) return false
-    return new Promise(resolve => {
-        let settled = false, input = ''
-        const settleFenceReady = (value: boolean) => { if (!settled) { settled = true; clearTimeout(timer); resolve(value) } }
-        const timer = setTimeout(() => settleFenceReady(false), FENCE_READY_MS)
-        const readable = control as NodeJS.ReadableStream
-        readable.setEncoding('utf8')
-        readable.on('data', (chunk: string) => { input += chunk; if (input === 'READY\n') settleFenceReady(true); else if (input.length > 6) settleFenceReady(false) })
-        child.once('error', () => settleFenceReady(false)); child.once('close', () => settleFenceReady(false))
-    })
-}
-
-async function spawnFencedSupervisor(step: ExecutionStep, argv: readonly [string, ...string[]]): Promise<{
-    readonly child: ReturnType<typeof spawn>
-    readonly spawnExpired: () => boolean
-} | undefined> {
-    const fence = step.executionFence
-    if (!fence || !validExecutionFence(fence) || !await secureFenceSocketDirectory(fence)) return undefined
-    const [command, ...args] = argv
-    const encoded = Buffer.from(JSON.stringify({ command, args, argv0: step.argv0, cwd: step.cwd, spawnNotAfter: step.spawnNotAfter, fence })).toString('base64url')
-    const supervisor = spawn(process.execPath, ['--', FENCED_SUPERVISOR, encoded], {
-        cwd: step.cwd, env: step.env, detached: true, stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
-    })
-    const ready = supervisor.pid !== undefined && await waitForFenceReady(supervisor)
-    const published = ready ? await writeActiveFence(fence, supervisor.pid!) : undefined
-    // Publishing can report failure after its marker landed, when tidying or fsync fails. That marker
-    // names this supervisor, and only the supervisor can retire it, so it is cancelled rather than killed.
-    const current = ready && !published ? readFenceMarker(fence) : undefined
-    const active = published ?? (current?.status === 'active' && current.supervisorPid === supervisor.pid ? current : undefined)
-    // Checked after the marker is linked, and cleanup writes this before removing a marker, so an
-    // executor that starts late always sees one or the other. An unreadable path counts as present.
-    const alreadyCertified = active !== undefined && !await pathAbsent(settledFencePath(fence))
-    if (!active || alreadyCertified) {
-        supervisor.stdin?.destroy(); try { process.kill(-supervisor.pid!, 'SIGKILL') } catch { /* no released action */ }
-        // SIGKILL leaves the socket file behind, and repair and cleanup both wait for that path to go.
-        if (supervisor.pid !== undefined && supervisor.exitCode === null && supervisor.signalCode === null) {
-            await new Promise(resolve => supervisor.once('exit', resolve))
-        }
-        try { await unlink(fence.socketPath) } catch { /* absent, or still there and repair keeps refusing */ }
-        // The state inventory refuses a marker no attempt names, and this attempt is already settled.
-        if (alreadyCertified) try { await unlink(fence.markerPath) } catch { /* the inventory reports what remains */ }
-        return undefined
-    }
-    // Startup and durable acknowledgement can outlive the evidence that authorized the action.
-    let control = ''
-    const readable = supervisor.stdio[3] as NodeJS.ReadableStream
-    readable.on('data', (chunk: string) => { control += chunk })
-    const release = !published || step.spawnNotAfter !== undefined && Date.now() > Date.parse(step.spawnNotAfter) ? 'CANCEL' : 'GO'
-    supervisor.stdin?.end(`${release} ${fence.attemptId} ${active.markerDev} ${active.markerIno} ${active.parentDev} ${active.parentIno}\n`)
-    return { child: supervisor, spawnExpired: () => control === 'EXPIRED\n' }
-}
-
-function fencedProcessGone(pid: number): boolean {
-    try { process.kill(pid, 0); return false } catch (error) { return hasErrorCode(error, 'ESRCH') }
-}
-
-export async function repairFencedExecution(fence: ExecutionFence): Promise<
-    | { readonly kind: 'complete'; readonly evidence: FencedExecutionTermination }
-    | { readonly kind: 'refusal'; readonly code: typeof ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }
-> {
-    if (!validExecutionFence(fence) || !await secureFenceSocketDirectory(fence)) return { kind: 'refusal', code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }
-    let marker = readFenceMarker(fence)
-    if (!marker) {
-        if (!await pathAbsent(fence.markerPath)) return { kind: 'refusal', code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }
-        // Another recoverer already proved this attempt gone and cleaned up. A second marker would
-        // outlive the attempt, and the state scan refuses a marker no attempt names.
-        if (!await pathAbsent(settledFencePath(fence))) return { kind: 'complete', evidence: issueFencedTermination(fence) }
-        marker = await writeCancelledFence(fence) ?? readFenceMarker(fence)
-        if (!marker) return { kind: 'refusal', code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }
-    }
-    if (marker.status === 'active') {
-        const expectedPid = marker.supervisorPid!
-        const acknowledged = await new Promise<boolean>(resolve => {
-            const socket = createConnection(fence.socketPath); let input = ''
-            const timer = setTimeout(() => { socket.destroy(); resolve(false) }, FENCE_REPAIR_MS)
-            socket.setEncoding('utf8'); socket.once('connect', () => socket.write(`${fence.attemptId}\n`)); socket.on('data', chunk => { input += chunk })
-            socket.once('error', () => { clearTimeout(timer); resolve(false) })
-            socket.once('close', () => { clearTimeout(timer); try { const reply = JSON.parse(input); resolve(reply.attemptId === fence.attemptId && reply.supervisorPid === expectedPid) } catch { /* An unparseable reply is not an acknowledgement from the expected supervisor; repair stays required. */ resolve(false) } })
-        })
-        if (!acknowledged) return { kind: 'refusal', code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }
-    }
-    const deadline = Date.now() + FENCE_REPAIR_MS
-    while (Date.now() <= deadline) {
-        marker = readFenceMarker(fence)
-        if (marker?.status === 'cancelled' && await pathAbsent(fence.socketPath)) return { kind: 'complete', evidence: issueFencedTermination(fence) }
-        if (marker?.status === 'terminated' && fencedProcessGone(marker.supervisorPid!)) return { kind: 'complete', evidence: issueFencedTermination(fence) }
-        if (marker?.status === 'terminating' && fencedProcessGone(marker.supervisorPid!)
-            && fencedProcessGone(-marker.groupPid!) && await pathAbsent(fence.socketPath)) {
-            return { kind: 'complete', evidence: issueFencedTermination(fence) }
-        }
-        await new Promise(resolve => setTimeout(resolve, 10))
-    }
-    return { kind: 'refusal', code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }
-}
-
-// Nothing else removes what a crash leaves in this directory. A settled file only stops a late executor
-// or recoverer, and its attempt's validity, at most minutes, has long expired by this age. Age proves
-// nothing about a socket: a hung action can keep its supervisor running, and its repair needs that path.
-const FENCE_RESIDUE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
-
-function socketRefusesConnection(path: string): Promise<boolean> {
-    return new Promise(resolve => {
-        const socket = createConnection(path)
-        const settle = (refused: boolean) => { clearTimeout(timer); socket.destroy(); resolve(refused) }
-        // A supervisor acts only on what a client writes, so connecting stops nothing.
-        const timer = setTimeout(() => settle(false), 1_000)
-        socket.once('connect', () => settle(false))
-        socket.once('error', error => settle(hasErrorCode(error, 'ECONNREFUSED')))
-    })
-}
-
-async function sweepFenceResidue(directory: string): Promise<void> {
-    const cutoff = Date.now() - FENCE_RESIDUE_MAX_AGE_MS
-    try {
-        for (const name of await readdir(directory)) {
-            if (!/^[a-f0-9]{24}\.sock(\.settled)?$/.test(name)) continue
-            const path = join(directory, name)
-            if ((await lstat(path)).mtimeMs >= cutoff) continue
-            if (name.endsWith('.settled') || await socketRefusesConnection(path)) await unlink(path)
-        }
-    } catch { /* Housekeeping only: the attempt is already cleaned up, and a later sweep retries. */ }
-}
-
-export async function cleanupFencedExecution(fence: ExecutionFence): Promise<boolean> {
-    if (!validExecutionFence(fence) || !await secureFenceSocketDirectory(fence)) return false
-    const marker = readFenceMarker(fence)
-    if (!marker) return await pathAbsent(fence.markerPath) && await pathAbsent(fence.socketPath)
-    if (marker.status === 'active' || marker.status === 'terminated' && !fencedProcessGone(marker.supervisorPid!)
-        || marker.status === 'terminating' && (!fencedProcessGone(marker.supervisorPid!) || !fencedProcessGone(-marker.groupPid!))
-        || !await pathAbsent(fence.socketPath)) return false
-    try {
-        // Once the marker is gone, an executor still starting could publish its own and run, and a
-        // second recoverer could recreate it. sweepFenceResidue removes this once neither can happen.
-        await (await open(settledFencePath(fence), constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)).close()
-        await unlink(fence.markerPath)
-        const directory = await open(dirname(fence.markerPath), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
-        try { await directory.sync() } finally { await directory.close() }
-        await sweepFenceResidue(dirname(fence.socketPath))
-        return true
-    } catch { /* A marker that cannot be removed durably leaves the fence unreleased, which the false result reports. */ return false }
-}
-
-export function consumeFencedExecutionTermination(evidence: FencedExecutionTermination, fence: ExecutionFence): boolean {
-    if (!evidence || typeof evidence !== 'object') return false
-    const issued = fencedTerminations.get(evidence)
-    if (!issued || issued.attemptId !== fence.attemptId || issued.markerPath !== fence.markerPath || issued.socketPath !== fence.socketPath) return false
-    fencedTerminations.delete(evidence)
-    return true
-}
 
 export interface ForegroundProcessInput {
     readonly executable: import('../environment/executable.js').ResolvedExecutable
@@ -663,11 +387,8 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
 
     const [command, ...args] = prepared.argv
     let runningProcess: ReturnType<typeof spawn>
-    let fenced: Awaited<ReturnType<typeof spawnFencedSupervisor>>
     try {
-        fenced = step.executionFence ? await spawnFencedSupervisor(step, prepared.argv) : undefined
-        if (step.executionFence && !fenced) return beforeSpawnFailure(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED)
-        runningProcess = fenced?.child ?? spawn(command, args, {
+        runningProcess = spawn(command, args, {
                 argv0: step.argv0,
                 cwd: step.cwd,
                 env: step.env,
@@ -693,12 +414,11 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
         let killTimer: ReturnType<typeof setTimeout> | undefined
         let terminationPoll: ReturnType<typeof setTimeout> | undefined
         const result = (): InternalStepExecution => {
-            const expired = fenced?.spawnExpired() === true
-            const started = runningProcess.pid !== undefined && !expired
+            const started = runningProcess.pid !== undefined
             const retainedStdout = retainedOutput(stdout, step.stdoutLimitBytes)
             const retainedStderr = retainedOutput(stderr, step.stderrLimitBytes)
             const processSignal = closed?.signal ?? null
-            const processFailure = failure ?? (expired ? ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED : closed?.code === 0 && processSignal === null
+            const processFailure = failure ?? (closed?.code === 0 && processSignal === null
                 ? undefined : ENVIRONMENT_CODES.EXECUTION_STEP_FAILED)
             return {
                 id: step.id,
@@ -768,13 +488,11 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
         const beginTermination = (): void => {
             if (!terminationConfirmed) return
             terminationConfirmed = false
-            terminationDeadline = Date.now() + (step.executionFence ? FENCE_REPAIR_MS : TERMINATION_GRACE_MS)
+            terminationDeadline = Date.now() + TERMINATION_GRACE_MS
             terminate('SIGTERM')
-            if (!step.executionFence) {
-                killTimer = setTimeout(() => {
-                    terminate('SIGKILL')
-                }, TERMINATION_KILL_MS)
-            }
+            killTimer = setTimeout(() => {
+                terminate('SIGKILL')
+            }, TERMINATION_KILL_MS)
             confirmTermination()
         }
         const stop = (code: ExecutionFailureCode): void => {

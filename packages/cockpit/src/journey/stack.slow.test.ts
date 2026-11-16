@@ -39,8 +39,19 @@ it('starts the stack, shows it to every later command, resets only declared data
 
     expect(ok(shop, ['up']).json?.result).toMatchObject({ change: 'started', ports: up.json?.result.ports })
     ok(shop, ['preflight'])
-    ok(shop, ['down'])
+    // sleep stops the stack and keeps its containers; down then retires it without an up first.
+    expect(ok(shop, ['sleep']).json?.result.change).toBe('stopped')
+    expect(shop.docker.state().containers.map((container) => container.State.Status)).toEqual(['exited'])
+    // A down that stops part way, here after removing the container and before the network, is
+    // finished by running it again.
+    shop.docker.failRemovalAfter(1)
+    const interrupted = shop.cockpit(['down'])
+    expect(interrupted.status, explain(interrupted)).toBe(2)
+    expect(interrupted.errors).toContain('RECLAIM_ACCOUNTING_MISMATCH')
     expect(shop.docker.state().containers).toEqual([])
+    expect(shop.docker.state().networks).not.toEqual([])
+    ok(shop, ['down'])
+    expect(shop.docker.state().networks).toEqual([])
     expect(volumes()).toEqual(['cache', 'data'])
     expect(ok(shop, ['up']).json?.result.change).toBe('started')
     ok(shop, ['down'])

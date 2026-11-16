@@ -6,16 +6,10 @@ import { join } from 'node:path'
 import { stringify } from 'smol-toml'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import type { StackId } from './contract.js'
-const executionFence = (id: string) => {
-    const attemptId = createHash('sha256').update(`${process.pid}:${id}`).digest('hex')
-    const socketRoot = process.platform === 'darwin' ? `/private/tmp/cockpit-exec-${process.getuid?.() ?? 0}` : `/tmp/cockpit-exec-${process.getuid?.() ?? 0}`
-    return { attemptId, markerPath: join(tmpdir(), `cockpit-test-${attemptId}.json`), socketPath: join(socketRoot, `${attemptId.slice(0, 24)}.sock`) }
-}
 const applicationOwners = vi.hoisted(() => ({
-    lifecycle: {} as Partial<Pick<typeof import('./lifecycle.js'), 'admitUpProgress' | 'consumeLifecycleIssuance' | 'planAdmittedUp' | 'planSleep'>>,
+    lifecycle: {} as Partial<Pick<typeof import('./lifecycle.js'), 'admitUpProgress' | 'consumeLifecycleIssuance' | 'planAdmittedUp'>>,
     runtime: {} as Partial<Pick<typeof import('./runtime.js'), 'admitRuntimeServiceHealth' | 'observeRuntimeServiceColdStart' | 'resolveRuntimeServiceOrder' | 'revalidateRuntimeService' | 'startRuntimeService' | 'stopRuntime'>>,
     logs: {} as Partial<Pick<typeof import('./logs.js'), 'admitFailureLogs' | 'planFailureLogs'>>,
-    claims: {} as Partial<Pick<typeof import('./claims.js'), 'inspectSleepDrainRecovery' | 'commitDrainOutcome' | 'recoverSleepDrainReservation' | 'reserveDrain' | 'reserveDrainAttempt'>>,
     ports: {} as Partial<Pick<typeof import('./ports.js'), 'compensateAcquiredPortHolder' | 'deriveEntrypoints' | 'observeRetainedPortFamily' | 'projectRetainedPortFamilyResult' | 'releasePortFamily'>>,
 }))
 vi.mock('./lifecycle.js', async (importOriginal) => {
@@ -25,7 +19,6 @@ vi.mock('./lifecycle.js', async (importOriginal) => {
         admitUpProgress: (...args: Parameters<typeof actual.admitUpProgress>) => applicationOwners.lifecycle.admitUpProgress?.(...args) ?? actual.admitUpProgress(...args),
         consumeLifecycleIssuance: (...args: Parameters<typeof actual.consumeLifecycleIssuance>) => applicationOwners.lifecycle.consumeLifecycleIssuance?.(...args) ?? actual.consumeLifecycleIssuance(...args),
         planAdmittedUp: (...args: Parameters<typeof actual.planAdmittedUp>) => applicationOwners.lifecycle.planAdmittedUp?.(...args) ?? actual.planAdmittedUp(...args),
-        planSleep: (...args: Parameters<typeof actual.planSleep>) => applicationOwners.lifecycle.planSleep?.(...args) ?? actual.planSleep(...args),
     }
 })
 vi.mock('./runtime.js', async (importOriginal) => {
@@ -48,17 +41,6 @@ vi.mock('./logs.js', async (importOriginal) => {
         planFailureLogs: (...args: Parameters<typeof actual.planFailureLogs>) => applicationOwners.logs.planFailureLogs?.(...args) ?? actual.planFailureLogs(...args),
     }
 })
-vi.mock('./claims.js', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('./claims.js')>()
-    return {
-        ...actual,
-        inspectSleepDrainRecovery: (...args: Parameters<typeof actual.inspectSleepDrainRecovery>) => applicationOwners.claims.inspectSleepDrainRecovery?.(...args) ?? actual.inspectSleepDrainRecovery(...args),
-        commitDrainOutcome: (...args: Parameters<typeof actual.commitDrainOutcome>) => applicationOwners.claims.commitDrainOutcome?.(...args) ?? actual.commitDrainOutcome(...args),
-        recoverSleepDrainReservation: (...args: Parameters<typeof actual.recoverSleepDrainReservation>) => applicationOwners.claims.recoverSleepDrainReservation?.(...args) ?? actual.recoverSleepDrainReservation(...args),
-        reserveDrain: (...args: Parameters<typeof actual.reserveDrain>) => applicationOwners.claims.reserveDrain?.(...args) ?? actual.reserveDrain(...args),
-        reserveDrainAttempt: (...args: Parameters<typeof actual.reserveDrainAttempt>) => applicationOwners.claims.reserveDrainAttempt?.(...args) ?? actual.reserveDrainAttempt(...args),
-    }
-})
 vi.mock('./ports.js', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./ports.js')>()
     return {
@@ -73,7 +55,7 @@ vi.mock('./ports.js', async (importOriginal) => {
 import { loadCockpitConfig } from '../config/load.js'
 import { collectFailureLogs, runSleep, runUp } from './application/lifecycle.js'
 import { type LifecycleRunContext } from './application/lifecycle-context.js'
-import { readState, transactState } from './state.js'
+import { readState, transactState, type StateRecord } from './state.js'
 import { recordLifecycleStarted } from './lifecycle-stage.js'
 import { createApplicationFixtureSupport } from '../../test-support/application-fixture.js'
 // The digest of each file a fixture stack is started from, as lifecycle readiness reports it.
@@ -144,7 +126,6 @@ describe('lifecycle application contracts', () => {
                     declaration: { step: context.ports.step, count: context.ports.count, bases: { ...context.ports.bases } },
                 },
                 lastReleasedHolder: null,
-                drain: null,
             },
         }))
         stubUpPlanner(() => ({
@@ -156,7 +137,7 @@ describe('lifecycle application contracts', () => {
         } as never))
         applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
             topology: { services: [{ id: 'api' }] }, firstIncompleteServiceIndex: 1,
-            portOwnership: { holderId: context.holderId }, drainRequest: null, reclaim: null,
+            portOwnership: { holderId: context.holderId },
         } as never)
         applicationOwners.runtime.resolveRuntimeServiceOrder = () => ['api']
 
@@ -385,7 +366,7 @@ describe('lifecycle application contracts', () => {
         }
         applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
             topology: { services: [{ id: 'api' }] }, firstIncompleteServiceIndex: 0,
-            portOwnership: { holderId: context.holderId }, drainRequest: null, reclaim: null,
+            portOwnership: { holderId: context.holderId },
         } as never)
         applicationOwners.runtime.revalidateRuntimeService = async () => {
             events.push('revalidate')
@@ -512,7 +493,7 @@ describe('lifecycle application contracts', () => {
         applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
             topology,
             firstIncompleteServiceIndex: 1,
-            portOwnership: { holderId: context.holderId }, drainRequest: null, reclaim: null,
+            portOwnership: { holderId: context.holderId },
         } as never)
         applicationOwners.runtime.resolveRuntimeServiceOrder = () => ['api', 'web']
         applicationOwners.runtime.revalidateRuntimeService = async ({ execute }) => {
@@ -587,7 +568,7 @@ describe('lifecycle application contracts', () => {
         } as never))
         applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
             topology: { services: [{ id: 'api' }] }, firstIncompleteServiceIndex: 0,
-            portOwnership: { holderId: context.holderId }, drainRequest: null, reclaim: null,
+            portOwnership: { holderId: context.holderId },
         } as never)
         applicationOwners.runtime.startRuntimeService = async ({ execute }) => {
             await execute(servicePlan.start as never)
@@ -639,7 +620,7 @@ describe('lifecycle application contracts', () => {
         } as never))
         applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
             topology: { services: [{ id: 'api' }] }, firstIncompleteServiceIndex: 0,
-            portOwnership: { holderId: context.holderId }, drainRequest: null, reclaim: null,
+            portOwnership: { holderId: context.holderId },
         } as never)
         applicationOwners.runtime.startRuntimeService = async ({ execute }) => {
             await execute({ id: 'start' } as never)
@@ -726,7 +707,7 @@ describe('lifecycle application contracts', () => {
         })
         applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
             topology, firstIncompleteServiceIndex: 0,
-            portOwnership: { holderId: firstContext.holderId }, drainRequest: null, reclaim: null,
+            portOwnership: { holderId: firstContext.holderId },
         } as never)
         applicationOwners.runtime.resolveRuntimeServiceOrder = () => ['api']
         let failing = true
@@ -800,22 +781,15 @@ describe('lifecycle application contracts', () => {
                 lease: { offset: 0, ports: { APP_PORT: 4100 }, released: false,
                     declaration: { step: context.ports.step, count: context.ports.count, bases: { ...context.ports.bases } } },
                 lastReleasedHolder: null,
-                drain: null,
             },
         }))
         const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
         const retained = Object.freeze({ kind: 'complete' as const, holderId: context.holderId, recordRevision: 4, lease })
         const entrypointResult = Object.freeze({ kind: 'complete' as const, values: Object.freeze([]), diagnostics: Object.freeze([]) })
         const projection = Object.freeze({ ownership: Object.freeze({ holderId: context.holderId, holderCount: 2 }), entrypoints: Object.freeze([]) })
-        const plan = Object.freeze({ verb: 'sleep' as const })
         applicationOwners.ports.observeRetainedPortFamily = async () => retained
         applicationOwners.ports.deriveEntrypoints = () => entrypointResult
         applicationOwners.ports.projectRetainedPortFamilyResult = async () => projection as never
-        applicationOwners.lifecycle.planSleep = () => ({ kind: 'release-only', plan } as never)
-        applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
-            topology: {}, firstIncompleteServiceIndex: 0,
-            portOwnership: { holderId: context.holderId }, drainRequest: null, reclaim: null,
-        } as never)
         applicationOwners.ports.releasePortFamily = async () => ({ kind: 'complete', change: 'retained' })
         const execute = vi.fn()
 
@@ -829,62 +803,37 @@ describe('lifecycle application contracts', () => {
         expect(result).toMatchObject({ kind: 'complete', result: { stackId: context.stackId, change: 'retained', remainingHolders: remaining } })
     })
 
-    it('stops the final-holder runtime after its drain attempt is durable', async () => {
+    it('stops the final-holder runtime, clears its startup progress, then releases the stack', async () => {
         const { configPath, context } = await lifecycleContextFixture()
         const events: string[] = []
+        const now = new Date().toISOString()
+        await transactState(context.namespace, context.namespace.paths.coordination(context.stackId), { ownerId: context.holderId }, (): StateRecord => ({
+            format: 'cockpit-state/v1', kind: 'coordination', cockpitId: context.cockpitId, subjectId: context.stackId,
+            revision: 0, updatedAt: now, value: {
+                holders: [{ holderId: context.holderId, checkoutId: context.checkoutId, claimedAt: now }],
+                lease: { offset: 0, ports: { APP_PORT: 4100 }, released: false, declaration: { step: 100, count: 1, bases: { APP_PORT: 4100 } } },
+                lastReleasedHolder: null,
+            },
+        }))
         await transactState(context.namespace, context.namespace.paths.lifecycle(context.stackId), { ownerId: context.holderId }, () => ({
             format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId: context.cockpitId, subjectId: context.stackId,
-            revision: 0, updatedAt: new Date().toISOString(), value: { workBasisSha256: 'a'.repeat(64), operationGeneration: 'b'.repeat(64),
+            revision: 0, updatedAt: now, value: { workBasisSha256: 'a'.repeat(64), operationGeneration: 'b'.repeat(64),
                 completedServices: [{ service: 'api', containerId: 'c'.repeat(64) }], holderId: context.holderId },
         }))
         const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
         applicationOwners.ports.observeRetainedPortFamily = async () => ({
-            kind: 'complete', holderId: context.holderId, recordRevision: 4, lease,
+            kind: 'complete', holderId: context.holderId, recordRevision: 0, lease,
         }) as never
         applicationOwners.ports.deriveEntrypoints = () => ({ kind: 'complete', values: [], diagnostics: [] }) as never
         applicationOwners.ports.projectRetainedPortFamilyResult = async () => ({
             lease,
-            ownership: { change: 'unchanged', holderId: context.holderId, recordRevision: 4, holderCount: 1, holderIds: [context.holderId] },
+            ownership: { change: 'unchanged', holderId: context.holderId, recordRevision: 0, holderCount: 1, holderIds: [context.holderId] },
             entrypoints: [],
         }) as never
-        const request = Object.freeze({
-            holderId: context.holderId,
-            operationBasis: '6'.repeat(64),
-            generation: '7'.repeat(64),
-        })
-        const plan = Object.freeze({ diagnostics: Object.freeze([]) })
-        applicationOwners.lifecycle.planSleep = () => ({ kind: 'drain', request, plan } as never)
-        applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
-            topology: {}, firstIncompleteServiceIndex: 0, portOwnership: { holderId: context.holderId },
-            drainRequest: request, reclaim: null,
-        } as never)
-        applicationOwners.claims.reserveDrain = async () => {
-            events.push('reserve')
-            return { kind: 'complete', reservation: {} } as never
-        }
-        applicationOwners.claims.reserveDrainAttempt = async () => {
-            events.push('attempt')
-            return { kind: 'complete', reservation: {}, attempt: {}, fence: {} } as never
-        }
         applicationOwners.runtime.stopRuntime = async ({ execute }) => {
             await execute({ id: 'stop' } as never)
             await execute({ id: 'postcheck' } as never)
-            return { kind: 'stopped', outcome: {}, fence: executionFence('sleep-stop') } as never
-        }
-        applicationOwners.claims.commitDrainOutcome = async () => {
-            expect(await readState(context.namespace.paths.lifecycle(context.stackId))).toMatchObject({
-                kind: 'complete',
-                value: {
-                    value: {
-                        holderId: context.holderId,
-                        workBasisSha256: request.operationBasis,
-                        operationGeneration: request.generation,
-                        completedServices: [],
-                    },
-                },
-            })
-            events.push('publish')
-            return { kind: 'complete', value: {} } as never
+            return { kind: 'stopped' }
         }
 
         const result = await runSleep({ configPath }, {
@@ -896,117 +845,14 @@ describe('lifecycle application contracts', () => {
             },
         })
 
-        expect(events).toEqual(['reserve', 'attempt', 'stop', 'postcheck', 'publish'])
+        expect(events).toEqual(['stop', 'postcheck'])
         expect(result).toMatchObject({ kind: 'complete', result: { stackId: context.stackId, change: 'stopped' } })
-    })
-
-    it('refuses sleep as indeterminate when its drain publication is indeterminate', async () => {
-        const { configPath, context } = await lifecycleContextFixture()
-        const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
-        applicationOwners.ports.observeRetainedPortFamily = async () => ({
-            kind: 'complete', holderId: context.holderId, recordRevision: 4, lease,
-        }) as never
-        applicationOwners.ports.deriveEntrypoints = () => ({ kind: 'complete', values: [], diagnostics: [] }) as never
-        applicationOwners.ports.projectRetainedPortFamilyResult = async () => ({
-            lease,
-            ownership: { change: 'unchanged', holderId: context.holderId, recordRevision: 4, holderCount: 1, holderIds: [context.holderId] },
-            entrypoints: [],
-        }) as never
-        const request = Object.freeze({
-            holderId: context.holderId, operationBasis: '6'.repeat(64), generation: '7'.repeat(64),
+        expect(await readState(context.namespace.paths.lifecycle(context.stackId))).toMatchObject({
+            kind: 'complete', value: { value: { holderId: context.holderId, completedServices: [] } },
         })
-        applicationOwners.lifecycle.planSleep = () => ({ kind: 'drain', request, plan: { diagnostics: [] } } as never)
-        applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
-            topology: {}, firstIncompleteServiceIndex: 0, portOwnership: { holderId: context.holderId },
-            drainRequest: request, reclaim: null,
-        } as never)
-        applicationOwners.claims.reserveDrain = async () => ({ kind: 'complete', reservation: {}, attempt: {}, fence: {} }) as never
-        applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', reservation: {}, attempt: {}, fence: {} }) as never
-        applicationOwners.runtime.stopRuntime = async ({ execute }) => {
-            await execute({ id: 'stop' } as never)
-            await execute({ id: 'postcheck' } as never)
-            return { kind: 'stopped', outcome: {}, fence: executionFence('sleep-indeterminate') } as never
-        }
-        applicationOwners.claims.commitDrainOutcome = async () => ({
-            kind: 'indeterminate', code: 'STATE_DURABILITY_INDETERMINATE',
-            message: 'drain publication durability is indeterminate', target: context.stackId,
-        }) as never
-
-        const result = await runSleep({ configPath }, {
-            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS, activeProfiles: [] } as never),
-            execute: async () => ({}) as never,
+        expect(await readState(context.namespace.paths.coordination(context.stackId))).toMatchObject({
+            kind: 'complete', value: { value: { holders: [], lease: { released: true }, lastReleasedHolder: context.holderId } },
         })
-
-        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'STATE_DURABILITY_INDETERMINATE' }] })
-    })
-
-    it('refuses an active persisted sleep attempt before runtime execution', async () => {
-        const { configPath, context } = await lifecycleContextFixture()
-        applicationOwners.claims.inspectSleepDrainRecovery = async () => ({
-            kind: 'refusal', diagnostics: [{ code: 'DRAIN_ATTEMPT_REPAIR_REQUIRED' }],
-        }) as never
-        const withRuntimeReadiness = vi.fn()
-
-        const result = await runSleep({ configPath }, {
-            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness,
-            execute: vi.fn(),
-        } as never)
-
-        expect(withRuntimeReadiness).not.toHaveBeenCalled()
-        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DRAIN_ATTEMPT_REPAIR_REQUIRED' }] })
-        expect(result.diagnostics[0]?.message).toContain('will not overlap it with another destructive action')
-    })
-
-    it('recovers a failed persisted sleep attempt from its exact reservation', async () => {
-        const { configPath, context } = await lifecycleContextFixture()
-        const events: string[] = []
-        const request = Object.freeze({
-            purpose: 'sleep' as const, stackId: context.stackId, holderId: context.holderId, requesterId: context.holderId,
-            configSha256: '1'.repeat(64), planDigest: '2'.repeat(64), operationBasis: '3'.repeat(64),
-            generation: '4'.repeat(64), targetIds: Object.freeze([context.stackId]),
-            actions: Object.freeze([{ stage: 'runtime-stop' as const, targetId: context.stackId, validForMs: 60_000 }]),
-            expectedCoordinationRevision: 4,
-        })
-        applicationOwners.claims.inspectSleepDrainRecovery = async () => ({
-            kind: 'recoverable', generation: request.generation,
-            runtimeStopValidForMs: request.actions[0].validForMs, record: {},
-        }) as never
-        const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
-        applicationOwners.ports.observeRetainedPortFamily = async () => ({ kind: 'complete', holderId: context.holderId, recordRevision: 7, lease }) as never
-        applicationOwners.ports.deriveEntrypoints = () => ({ kind: 'complete', values: [], diagnostics: [] }) as never
-        applicationOwners.ports.projectRetainedPortFamilyResult = async () => ({
-            lease, ownership: { change: 'unchanged', holderId: context.holderId, recordRevision: 7, holderCount: 1, holderIds: [context.holderId] }, entrypoints: [],
-        }) as never
-        applicationOwners.lifecycle.planSleep = () => ({
-            kind: 'drain', request: { ...request, expectedCoordinationRevision: 7 }, plan: { diagnostics: [] },
-        }) as never
-        applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
-            topology: {}, firstIncompleteServiceIndex: 0, portOwnership: { holderId: context.holderId },
-            drainRequest: request, reclaim: null,
-        } as never)
-        applicationOwners.claims.recoverSleepDrainReservation = async ({ request: recovered }) => {
-            events.push(`recover:${recovered.expectedCoordinationRevision}`)
-            return { kind: 'complete', reservation: {} } as never
-        }
-        applicationOwners.claims.reserveDrain = async () => { events.push('reserve'); return {} as never }
-        applicationOwners.claims.reserveDrainAttempt = async () => ({ kind: 'complete', reservation: {}, attempt: {}, fence: {} }) as never
-        applicationOwners.runtime.stopRuntime = async ({ execute }) => {
-            await execute({ id: 'stop' } as never)
-            await execute({ id: 'postcheck' } as never)
-            return { kind: 'stopped', outcome: {}, fence: executionFence('sleep-recovery') } as never
-        }
-        applicationOwners.claims.commitDrainOutcome = async () => ({ kind: 'complete', value: {} }) as never
-
-        const result = await runSleep({ configPath }, {
-            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS, activeProfiles: [] } as never),
-            execute: async () => ({}) as never,
-        })
-
-        expect(events).toEqual(['recover:7'])
-        expect(result).toMatchObject({ kind: 'complete', result: { change: 'stopped' } })
     })
 })
 
@@ -1015,7 +861,6 @@ afterEach(() => {
     applicationOwners.lifecycle = {}
     applicationOwners.runtime = {}
     applicationOwners.logs = {}
-    applicationOwners.claims = {}
     applicationOwners.ports = {}
     for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true })
 })

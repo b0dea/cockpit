@@ -1,26 +1,22 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
-import { ENVIRONMENT_CODES, type CheckoutId, type CockpitId, type HolderId, type StackId } from './contract.js'
-import { coordinationStateRecord, decodeCoordinationRecord, commitDrainOutcome, recoverDrainReservation, reduceDrainOutcome, reserveDrain, reserveDrainAttempt } from './claims.js'
+import type { CockpitId, StackId } from './contract.js'
 import {
     classifyReclaim,
     discoverMachineStacks,
     discoverReclaim,
-    executeReclaimAction,
     inspectionOverflow,
     planReset,
-    planTeardown,
-    reconcileReclaimAction,
     type ReclaimDiscovery,
     type ReclaimDiscoverySnapshot,
     type ReclaimResource,
 } from './reclaim.js'
 import type { ExecutionStep } from './contract.js'
-import { readState, selectStateRoot, transactState, type StateRecord } from './state.js'
+import type { StateRecord } from './state.js'
 
 const sha = (value: string) => createHash('sha256').update(value).digest('hex')
 const cockpitId = `cockpit:synthetic:${sha('cockpit')}` as CockpitId
@@ -62,18 +58,6 @@ const executable = (path: string) => ({
 })
 
 const canonicalTemp = async (prefix: string) => realpath(await mkdtemp(join(tmpdir(), prefix)))
-
-const writeCoordination = async (root: string, record = stateRecord(root)) => {
-    const stateRoot = join(root, 'state')
-    const cockpitRoot = join(stateRoot, 'cockpits', cockpitId.replaceAll(':', '_'))
-    const path = join(cockpitRoot, 'records', 'coordination', `${stackId.replace(':', '_')}.json`)
-    await mkdir(dirname(path), { recursive: true })
-    await writeFile(path, `${JSON.stringify(record)}\n`)
-    const address = { path, stateRoot, cockpitRoot, kind: 'coordination' as const, cockpitId, subjectId: stackId }
-    const observed = await readState(address)
-    if (observed.kind !== 'complete') throw new Error(JSON.stringify(observed))
-    return address
-}
 
 const dockerRow = ({ id, name, kind, labels: itemLabels, referenced, bytes }: ReclaimResource) => kind === 'build-cache'
     ? { ID: id, Reclaimable: !referenced, Size: bytes === null ? null : String(bytes) }
@@ -199,7 +183,6 @@ const resetInput = (root: string, overrides: Record<string, unknown> = {}) => {
         cockpitId,
         configSha256,
         coordinationRecord: stateRecord(root),
-        expectedCoordinationRevision: 7,
         requesterHolderId: null,
         declaredCacheIds: [],
         resettableVolumes: ['session-data'],
@@ -649,26 +632,20 @@ describe('reset planning', () => {
         const root = await canonicalTemp('cockpit-reset-compose-key-')
         try {
             const otherProject = 'synthetic-ba9876543210'
-            const discovered = () => [
+            const plan = await planReset(resetInput(root, { resettableVolumes: ['data'], generatedHostPaths: [], discovery: await authenticatedDiscovery(root, [
                 resource({ id: `${composeProject}_data`, name: `${composeProject}_data`, kind: 'volume', dataBearing: true,
                     labels: { ...labels, ...composeLabels('data') }, generation: sha('volume-generation') }),
                 // The same key in another checkout's project, and a volume named exactly as declared.
                 resource({ id: `${otherProject}_data`, name: `${otherProject}_data`, kind: 'volume', dataBearing: true,
                     labels: { ...labels, 'dev.b0dea.cockpit.stack-id': foreignStackId, 'com.docker.compose.project': otherProject, 'com.docker.compose.volume': 'data' } }),
                 resource({ id: 'data', name: 'data', kind: 'volume', labels: {}, bytes: null }),
-            ]
-            const declared = { resettableVolumes: ['data'], generatedHostPaths: [] }
-            const preview = await planReset(resetInput(root, { ...declared, discovery: await authenticatedDiscovery(root, discovered()) }))
-            if (preview.kind !== 'preview') throw new Error(JSON.stringify(preview))
-            expect(preview.noop).toBe(false)
-            expect(preview.targets.map(({ kind, identity, declaration }) => ({ kind, identity, declaration }))).toEqual([
+            ]) }))
+            if (plan.kind !== 'complete') throw new Error(JSON.stringify(plan))
+            expect(plan.noop).toBe(false)
+            expect(plan.targets.map(({ kind, identity, declaration }) => ({ kind, identity, declaration }))).toEqual([
                 { kind: 'volume', identity: `${composeProject}_data`, declaration: 'data' },
             ])
-            expect(await planReset(resetInput(root, {
-                ...declared, confirmationDigest: preview.digest, consent: preview.consent,
-                discovery: await authenticatedDiscovery(root, discovered()), coordinationAddress: await writeCoordination(root),
-            }))).toEqual(expect.objectContaining({ kind: 'complete', remaining: 0,
-                action: expect.objectContaining({ step: expect.objectContaining({ id: expect.stringMatching(/^reset:volume:/) }) }) }))
+            expect(plan.removals.map(({ step }) => step.argv.slice(3))).toEqual([['volume', 'rm', '--', `${composeProject}_data`]])
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
@@ -677,549 +654,102 @@ describe('reset planning', () => {
         try {
             // Compose keeps a data volume across cockpit.toml edits and `up` goes on using it.
             const earlier = { ...labels, 'dev.b0dea.cockpit.config-sha256': sha('earlier'), ...composeLabels('session-data') }
-            const preview = await planReset(resetInput(root, { generatedHostPaths: [], discovery: await authenticatedDiscovery(root, [
+            const plan = await planReset(resetInput(root, { generatedHostPaths: [], discovery: await authenticatedDiscovery(root, [
                 resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, labels: earlier, generation: sha('earlier-generation') }),
             ]) }))
-            if (preview.kind !== 'preview') throw new Error(JSON.stringify(preview))
-            expect(preview.targets.map(({ kind, identity }) => ({ kind, identity }))).toEqual([{ kind: 'volume', identity: 'session-data' }])
+            if (plan.kind !== 'complete') throw new Error(JSON.stringify(plan))
+            expect(plan.targets.map(({ kind, identity }) => ({ kind, identity }))).toEqual([{ kind: 'volume', identity: 'session-data' }])
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
     it('refuses to plan a reset from a discovery of another stack', async () => {
         const root = await canonicalTemp('cockpit-reset-other-stack-')
         try {
-            await mkdir(join(root, 'generated', 'session'), { recursive: true })
-            const declared = { resettableVolumes: [] }
-            const preview = await planReset(resetInput(root, { ...declared, discovery: await authenticatedDiscovery(root, []) }))
-            expect(preview.kind).toBe('preview')
-            if (preview.kind !== 'preview') return
-            const coordinationAddress = await writeCoordination(root)
+            const declared = { resettableVolumes: [], generatedHostPaths: [] }
             // A discovery lists only its own stack's resources, so another stack's would make this
             // one look empty and every target absent.
-            const otherStack = await authenticatedDiscovery(root, [], { discoveryStackId: foreignStackId })
-            expect(await planReset(resetInput(root, {
-                ...declared, confirmationDigest: preview.digest, consent: preview.consent, discovery: otherStack, coordinationAddress,
-            }))).toEqual(expect.objectContaining({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'RECLAIM_ACCOUNTING_MISMATCH' })] }))
-            expect(await planReset(resetInput(root, {
-                ...declared, confirmationDigest: preview.digest, consent: preview.consent,
-                discovery: await authenticatedDiscovery(root, []), coordinationAddress,
-            }))).toEqual(expect.objectContaining({ kind: 'complete' }))
+            expect(await planReset(resetInput(root, { ...declared, discovery: await authenticatedDiscovery(root, [], { discoveryStackId: foreignStackId }) })))
+                .toEqual(expect.objectContaining({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'RECLAIM_ACCOUNTING_MISMATCH' })] }))
+            expect(await planReset(resetInput(root, { ...declared, discovery: await authenticatedDiscovery(root, []) })))
+                .toEqual(expect.objectContaining({ kind: 'complete' }))
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
-    it('binds both declared target classes and emits one exact action after consent', async () => {
+    it('lists both declared target classes and removes the stack\'s own containers first, each by id', async () => {
         const root = await canonicalTemp('cockpit-reset-')
         try {
             await mkdir(join(root, 'generated', 'session'), { recursive: true })
             // The stack's own stopped container still references its volume, and Docker refuses
             // to remove a referenced volume, so reset removes that container first. A container
             // another stack owns is never a reset target.
-            const discovered = () => snapshot([
+            const plan = await planReset(resetInput(root, { discovery: await authenticatedDiscovery(root, [
                 resource({ id: 'container-1', name: 'synthetic-api-1' }),
                 resource({ id: 'container-2', name: 'other-api-1', labels: { ...labels, 'dev.b0dea.cockpit.stack-id': `stack:${sha('other stack')}` } }),
                 resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') }),
-            ]).resources
-            const fresh = await authenticatedDiscovery(root, discovered())
-            const preview = await planReset(resetInput(root, { discovery: fresh }))
-            expect(preview).toEqual(expect.objectContaining({ kind: 'preview', coordinationRevision: 7 }))
-            if (preview.kind !== 'preview') return
-            expect(preview.targets.map(({ kind, identity, declaration }) => ({ kind, identity, declaration }))).toEqual([
+            ]) }))
+            if (plan.kind !== 'complete') throw new Error(JSON.stringify(plan))
+            expect(plan.targets.map(({ kind, identity, declaration }) => ({ kind, identity, declaration }))).toEqual([
                 { kind: 'container', identity: 'container-1', declaration: 'synthetic-api-1' },
                 { kind: 'host-path', identity: join(root, 'generated', 'session'), declaration: 'generated/session' },
                 { kind: 'volume', identity: 'session-data', declaration: 'session-data' },
             ])
-
-            const coordinationAddress = await writeCoordination(root)
-            // The preview's own discovery shows the state the person approved, not the state now.
-            expect(await planReset(resetInput(root, {
-                confirmationDigest: preview.digest, consent: preview.consent, discovery: fresh, coordinationAddress,
-            }))).toEqual(expect.objectContaining({ kind: 'refusal', diagnostics: [expect.objectContaining({
-                code: 'RECLAIM_ACCOUNTING_MISMATCH', message: 'reset requires a fresh runtime discovery read after the approved preview',
-            })] }))
-            const actionDiscovery = await authenticatedDiscovery(root, discovered())
-            const accepted = await planReset(resetInput(root, {
-                confirmationDigest: preview.digest, consent: preview.consent, discovery: actionDiscovery, coordinationAddress,
-            }))
-            expect(accepted).toEqual(expect.objectContaining({ kind: 'complete', remaining: 2 }))
-            if (accepted.kind !== 'complete') return
-            expect(accepted.action?.step?.argv.slice(3)).toEqual(['container', 'rm', '--force', '--', 'container-1'])
-            expect(await planReset(resetInput(root, {
-                confirmationDigest: preview.digest,
-                discovery: actionDiscovery,
-                coordinationAddress,
-            }))).toEqual(expect.objectContaining({
-                kind: 'refusal',
-                diagnostics: [expect.objectContaining({ code: 'RECLAIM_ACCOUNTING_MISMATCH' })],
-            }))
-        } finally {
-            await rm(root, { recursive: true, force: true })
-        }
-    })
-
-    it('returns an explicit no-op preview when no target is declared', async () => {
-        const root = await canonicalTemp('cockpit-reset-empty-')
-        try {
-            const empty = await authenticatedDiscovery(root, [])
-            const result = await planReset(resetInput(root, {
-                resettableVolumes: [], generatedHostPaths: [], discovery: empty,
-            }))
-            expect(result).toEqual(expect.objectContaining({ kind: 'preview', noop: true, targets: [] }))
+            expect(plan.removals.map(({ step }) => step.argv.slice(step.argv[0] === removalCanonicalPath ? 1 : 3))).toEqual([
+                ['container', 'rm', '--force', '--', 'container-1'],
+                ['-rf', '--', join(root, 'generated', 'session')],
+                ['volume', 'rm', '--', 'session-data'],
+            ])
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
-    it('refuses consent or coordination mutation and co-tenants', async () => {
-        const root = await canonicalTemp('cockpit-reset-guards-')
+    it('returns an explicit no-op when no target is declared', async () => {
+        const root = await canonicalTemp('cockpit-reset-empty-')
         try {
-            await mkdir(join(root, 'generated', 'session'), { recursive: true })
-            const previewDiscovery = await authenticatedDiscovery(root, [resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') })])
-            const preview = await planReset(resetInput(root, { discovery: previewDiscovery }))
-            if (preview.kind !== 'preview') throw new Error(JSON.stringify(preview))
-            const fresh = await authenticatedDiscovery(root, snapshot([
-                resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') }),
-            ]).resources)
-            // Every request carries valid consent and coordination evidence, so each refusal comes
-            // from the one mutated input; the unmutated request is the control that proceeds.
-            const consented = { confirmationDigest: preview.digest, consent: preview.consent, discovery: fresh, coordinationAddress: await writeCoordination(root) }
-            const refusedWith = (code: string, message: string) => ({ kind: 'refusal', diagnostics: [expect.objectContaining({ code, message })] })
-            expect(await planReset(resetInput(root, { ...consented, confirmationDigest: sha('wrong') })))
-                .toEqual(refusedWith('RESET_CONFIRMATION_MISMATCH', 'reset consent does not match the fresh complete preview'))
-            expect(await planReset(resetInput(root, { ...consented, expectedCoordinationRevision: 6 })))
-                .toEqual(refusedWith('RESET_CONFIRMATION_MISMATCH', 'coordination revision does not match the destructive request'))
-            const coTenantRecord = stateRecord()
-            coTenantRecord.value = {
+            const result = await planReset(resetInput(root, {
+                resettableVolumes: [], generatedHostPaths: [], discovery: await authenticatedDiscovery(root, []),
+            }))
+            expect(result).toEqual(expect.objectContaining({ kind: 'complete', noop: true, targets: [], removals: [] }))
+        } finally { await rm(root, { recursive: true, force: true }) }
+    })
+
+    it('refuses while another session holds the stack', async () => {
+        const root = await canonicalTemp('cockpit-reset-co-tenant-')
+        try {
+            const discovery = await authenticatedDiscovery(root, [])
+            const coTenantRecord = { ...stateRecord(), value: {
                 holders: [{ holderId: `holder:${sha('holder')}:session`, checkoutId: `checkout:${sha('checkout')}`, claimedAt: '2026-09-08T00:00:00.000Z' }],
                 lease: { offset: 0, ports: { WEB: 4100 }, released: false, declaration: { step: 100, count: 1, bases: { WEB: 4100 } } },
                 lastReleasedHolder: null,
+            } }
+            expect(await planReset(resetInput(root, { generatedHostPaths: [], discovery, coordinationRecord: coTenantRecord })))
+                .toEqual({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'RESET_CO_TENANT' })] })
+            expect(await planReset(resetInput(root, { generatedHostPaths: [], discovery })))
+                .toEqual(expect.objectContaining({ kind: 'complete' }))
+        } finally { await rm(root, { recursive: true, force: true }) }
+    })
+
+    it('gives the same targets read twice one digest, and a replaced volume or host path another', async () => {
+        const root = await canonicalTemp('cockpit-reset-digest-')
+        const target = join(root, 'generated', 'session')
+        try {
+            await mkdir(target, { recursive: true })
+            const volume = resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') })
+            const digest = async (resources: readonly ReclaimResource[]) => {
+                const plan = await planReset(resetInput(root, { discovery: await authenticatedDiscovery(root, resources) }))
+                if (plan.kind !== 'complete') throw new Error(JSON.stringify(plan))
+                return plan.digest
             }
-            expect(await planReset(resetInput(root, { ...consented, coordinationRecord: coTenantRecord })))
-                .toEqual(refusedWith('RESET_CO_TENANT', 'reset requires an exact requester claim and zero co-tenants'))
-            expect(await planReset(resetInput(root, consented))).toEqual(expect.objectContaining({ kind: 'complete' }))
+            const approved = await digest([volume])
+            expect(await digest([volume])).toBe(approved)
+            expect(await digest([{ ...volume, generation: sha('replacement-generation') }])).not.toBe(approved)
+            await rm(target, { recursive: true })
+            expect(await digest([volume])).not.toBe(approved)
+            await mkdir(target)
+            expect(await digest([volume])).toBe(approved)
+            await rm(target, { recursive: true })
+            await writeFile(target, 'replaced by a file')
+            expect(await digest([volume])).not.toBe(approved)
         } finally { await rm(root, { recursive: true, force: true }) }
     })
-
-    it('binds consent and discovery to the same Docker identity and daemon context', async () => {
-        const root = await canonicalTemp('cockpit-reset-runtime-')
-        try {
-            const previewDiscovery = await authenticatedDiscovery(root, [resource({ id: 'session-data', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') })])
-            const preview = await planReset(resetInput(root, { generatedHostPaths: [], discovery: previewDiscovery }))
-            if (preview.kind !== 'preview') throw new Error(JSON.stringify(preview))
-            const fresh = await authenticatedDiscovery(root, [resource({ id: 'session-data', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') })])
-            const consented = resetInput(root, {
-                generatedHostPaths: [], confirmationDigest: preview.digest, consent: preview.consent,
-                discovery: fresh, coordinationAddress: await writeCoordination(root),
-            })
-            const consentMismatch = { kind: 'refusal', diagnostics: [expect.objectContaining({
-                code: 'RESET_CONFIRMATION_MISMATCH', message: 'reset consent does not match the fresh complete preview',
-            })] }
-            expect(await planReset({ ...consented, discovery: { ...fresh, selection: { context: dockerContext, endpoint: 'unix:///tmp/rebound.sock' } } })).toEqual(consentMismatch)
-            // The same Docker path holding a different binary is a different runtime identity.
-            expect(await planReset({ ...consented, runtimeExecutable: { ...consented.runtimeExecutable, sha256: sha('replaced docker') } })).toEqual(consentMismatch)
-            expect(await planReset(consented)).toEqual(expect.objectContaining({ kind: 'complete' }))
-        } finally { await rm(root, { recursive: true, force: true }) }
-    })
-
-    it('accepts a stable old coordination record and rejects a replacement volume name', async () => {
-        const root = await canonicalTemp('cockpit-reset-freshness-')
-        try {
-            const first = await authenticatedDiscovery(root, [
-                resource({ id: 'volume-original', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') }),
-            ])
-            const preview = await planReset(resetInput(root, { generatedHostPaths: [], discovery: first }))
-            if (preview.kind !== 'preview') throw new Error(JSON.stringify(preview))
-            const replacement = await authenticatedDiscovery(root, [
-                resource({ id: 'volume-replacement', name: 'session-data-replaced', kind: 'volume', dataBearing: true, generation: sha('volume-generation') }),
-            ])
-            expect(await planReset(resetInput(root, {
-                generatedHostPaths: [], discovery: replacement, confirmationDigest: preview.digest, consent: preview.consent,
-                coordinationAddress: await writeCoordination(root),
-            }))).toEqual({ kind: 'refusal', diagnostics: [expect.objectContaining({
-                code: 'RESET_CONFIRMATION_MISMATCH', message: 'reset consent does not match the fresh complete preview',
-            })] })
-
-            const stale = stateRecord()
-            stale.updatedAt = '2026-09-07T23:58:00.000Z'
-            const stalePreview = await planReset(resetInput(root, {
-                generatedHostPaths: [], discovery: replacement, coordinationRecord: stale,
-            }))
-            expect(stalePreview.kind).toBe('preview')
-            if (stalePreview.kind !== 'preview') return
-            const stableDiscovery = await authenticatedDiscovery(root, replacement.resources)
-            expect(await planReset(resetInput(root, {
-                generatedHostPaths: [], discovery: stableDiscovery, coordinationRecord: stale,
-                confirmationDigest: stalePreview.digest, consent: stalePreview.consent,
-                coordinationAddress: await writeCoordination(root, stale),
-            }))).toEqual(expect.objectContaining({ kind: 'complete' }))
-        } finally { await rm(root, { recursive: true, force: true }) }
-    })
-
-    it('rejects a same-name volume with a different authenticated generation', async () => {
-        const root = await canonicalTemp('cockpit-reset-volume-generation-')
-        try {
-            const original = { ...resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true }), generation: sha('volume-generation') }
-            const replacement = { ...original, generation: sha('replacement-generation') }
-            const first = await authenticatedDiscovery(root, [original])
-            const preview = await planReset(resetInput(root, { generatedHostPaths: [], discovery: first }))
-            expect(preview.kind).toBe('preview')
-            if (preview.kind !== 'preview') return
-            const changed = await authenticatedDiscovery(root, [replacement])
-            expect(await planReset(resetInput(root, {
-                generatedHostPaths: [], discovery: changed, confirmationDigest: preview.digest,
-                consent: preview.consent, coordinationAddress: await writeCoordination(root),
-            }))).toEqual(expect.objectContaining({ kind: 'refusal' }))
-        } finally { await rm(root, { recursive: true, force: true }) }
-    })
-
-    it.each([
-        'remaining-identity-changes', 'completed-cache-reappears', 'remaining-cache-is-replaced',
-        'remaining-bytes-change', 'mixed-kind-order', 'two-action-success', 'completed-target-reappears',
-        'completed-target-is-replaced', 'cold-prestart-retry', 'cold-changed-timeout', 'cold-added-target', 'cold-second-action-retry',
-        'cold-second-completed-replacement', 'cold-second-remaining-replacement', 'cold-second-added-target',
-        'cache-ancestor-replaced-before-redemption', 'redeemed-cache-target-replaced', 'redeemed-cache-ancestor-replaced',
-        'cold-absent-current', 'cold-absent-stale', 'cold-absent-other-stack', 'cold-absent-reappears', 'cold-absent-new-target',
-    ] as const)(
-        '%s stays bound to a committed teardown attempt', async (mode) => {
-            const root = await canonicalTemp('cockpit-teardown-attempt-')
-            try {
-                const holderId = `holder:${sha('teardown-holder')}:session` as HolderId
-                const checkoutId = `checkout:${sha('teardown-checkout')}` as CheckoutId
-                const selected = await selectStateRoot({ platform: 'linux', home: root, cockpitId })
-                if (selected.kind !== 'complete') throw new Error('state namespace unavailable')
-                const seeded = await transactState(selected.value, selected.value.paths.coordination(stackId), { ownerId: holderId }, () => ({
-                    format: 'cockpit-state/v1' as const, kind: 'coordination' as const, cockpitId, subjectId: stackId,
-                    revision: 0, updatedAt: new Date().toISOString(), value: {
-                        holders: [{ holderId, checkoutId, claimedAt: new Date().toISOString() }],
-                        lease: { offset: 0, ports: { WEB: 3000 }, released: false,
-                            declaration: { step: 100, count: 1, bases: { WEB: 3000 } } },
-                        lastReleasedHolder: null, drain: null,
-                    },
-                }))
-                if (seeded.kind !== 'complete') throw new Error('coordination fixture unavailable')
-                const first = mode === 'mixed-kind-order'
-                    ? resource({ id: 'a'.repeat(25), name: 'first-build-cache', kind: 'build-cache', dataBearing: false })
-                    : resource({ id: 'container-1', name: 'first-container' })
-                const remaining = resource({ id: 'container-2', name: 'remaining-container', bytes: 256 })
-                const firstCacheId = sha('first-cache')
-                const secondCacheId = sha('second-cache')
-                const cacheRoot = join(root, 'dependency-caches')
-                const firstCachePath = join(cacheRoot, firstCacheId)
-                const secondCachePath = join(cacheRoot, secondCacheId)
-                const usesCaches = mode === 'completed-cache-reappears' || mode === 'remaining-cache-is-replaced'
-                    || mode === 'cache-ancestor-replaced-before-redemption'
-                    || mode === 'redeemed-cache-target-replaced' || mode === 'redeemed-cache-ancestor-replaced'
-                if (usesCaches) {
-                    await mkdir(firstCachePath, { recursive: true })
-                    await mkdir(secondCachePath)
-                }
-                const dependencyCaches = usesCaches ? [
-                    { cacheId: firstCacheId, root: cacheRoot, path: firstCachePath },
-                    { cacheId: secondCacheId, root: cacheRoot, path: secondCachePath },
-                ] : []
-                const runtimeResources = usesCaches ? [] : [first, remaining]
-                const previewDiscovery = await authenticatedDiscovery(root, runtimeResources)
-                const previewRuntime = runtimeByDiscovery.get(previewDiscovery)
-                if (!previewRuntime) throw new Error('teardown preview runtime unavailable')
-                const common = {
-                    stackId, cockpitId, configSha256, coordinationRecord: seeded.value,
-                    declaredCacheIds: usesCaches ? [firstCacheId, secondCacheId]
-                        : mode === 'mixed-kind-order' ? ['a'.repeat(25)] : [],
-                    dependencyCaches, pathExecutable: executable('/bin/rm'),
-                    executable: previewRuntime, cwd: root, env: { PATH: '/usr/bin:/bin' }, timeoutMs: 30_000,
-                }
-                const preview = await planTeardown({ ...common, discovery: previewDiscovery })
-                if (preview.kind !== 'complete' || !preview.consent) throw new Error('teardown preview unavailable')
-                const projected = preview.envelope
-                expect(projected).toMatchObject({
-                    purpose: 'down', stackId, configSha256, planDigest: preview.discoveryDigest,
-                })
-                const reclaimCommitments = projected?.commitments
-                const reclaimTargets = reclaimCommitments?.map(({ targetId }) => targetId)
-                expect(reclaimTargets).toEqual(usesCaches
-                    ? [`cache:${firstCacheId}`, `cache:${secondCacheId}`].sort()
-                    : mode === 'mixed-kind-order'
-                        ? [`build-cache:${'a'.repeat(25)}`, 'container:container-2']
-                        : ['container:container-1', 'container:container-2'])
-                const cachePathForTarget = (targetId: string) => dependencyCaches.find(({ cacheId }) => `cache:${cacheId}` === targetId)?.path
-                const completedCachePath = usesCaches ? cachePathForTarget(reclaimTargets![0]!) : undefined
-                const remainingCachePath = usesCaches ? cachePathForTarget(reclaimTargets![1]!) : undefined
-                const actionDiscovery = await authenticatedDiscovery(root, runtimeResources)
-                const runtime = runtimeByDiscovery.get(actionDiscovery)
-                if (!runtime) throw new Error('teardown action runtime unavailable')
-                const planned = await planTeardown({
-                    ...common, executable: runtime, discovery: actionDiscovery,
-                    expectedDiscoveryDigest: preview.discoveryDigest, consent: preview.consent,
-                    coordinationAddress: selected.value.paths.coordination(stackId),
-                })
-                if (planned.kind !== 'complete' || !planned.action) throw new Error('teardown action unavailable')
-                const targetIds = [stackId, ...reclaimTargets!].sort()
-                const request = {
-                    purpose: 'down' as const, stackId, holderId, requesterId: holderId, configSha256,
-                    planDigest: preview.discoveryDigest, operationBasis: sha('teardown basis'), generation: sha('teardown generation'),
-                    targetIds, actions: [
-                        { stage: 'runtime-stop' as const, targetId: stackId, validForMs: 30_000 },
-                        ...reclaimCommitments!.map(({ targetId, ...targetCommitment }) => ({
-                            stage: 'reclaim' as const, targetId, validForMs: 30_000, targetCommitment,
-                        })),
-                    ], expectedCoordinationRevision: 0,
-                }
-                const reserved = await reserveDrain({ namespace: selected.value, request })
-                if (reserved.kind !== 'complete') throw new Error('drain reservation unavailable')
-                const runtimeAttempt = await reserveDrainAttempt({ namespace: selected.value, reservation: reserved.reservation })
-                if (runtimeAttempt.kind !== 'complete') throw new Error('runtime attempt unavailable')
-                const runtimeSuccess = { kind: 'success' as const, reservation: runtimeAttempt.reservation, fact: {
-                    purpose: request.purpose, stackId, configSha256, planDigest: runtimeAttempt.reservation.planDigest,
-                    operationBasis: runtimeAttempt.reservation.operationBasis,
-                    coordinationRevision: runtimeAttempt.reservation.coordinationRevision,
-                    reservationId: runtimeAttempt.reservation.reservationId, reservedAt: runtimeAttempt.reservation.reservedAt,
-                    generation: runtimeAttempt.reservation.generation, attemptId: runtimeAttempt.attempt.attemptId,
-                    attemptRevision: runtimeAttempt.attempt.committedRevision, attemptCommittedAt: runtimeAttempt.attempt.committedAt,
-                    validThrough: runtimeAttempt.attempt.validThrough, actionIndex: runtimeAttempt.attempt.actionIndex,
-                    currentTarget: runtimeAttempt.attempt.currentTarget, currentStage: runtimeAttempt.attempt.currentStage,
-                    observedAt: runtimeAttempt.attempt.committedAt,
-                } }
-                const active = await readState(selected.value.paths.coordination(stackId))
-                if (active.kind !== 'complete') throw new Error('active drain unavailable')
-                const progressed = reduceDrainOutcome({ record: active.value, outcome: runtimeSuccess })
-                if (!progressed) throw new Error('runtime progress unavailable')
-                const progressCommit = await commitDrainOutcome({
-                    outcome: runtimeSuccess, namespace: selected.value, stackId,
-                })
-                if (progressCommit.kind !== 'complete') throw new Error('runtime progress commit unavailable')
-                const recovered = await recoverDrainReservation({ namespace: selected.value, request })
-                if (recovered.kind !== 'complete') throw new Error('drain recovery unavailable')
-                const reclaimAttempt = await reserveDrainAttempt({ namespace: selected.value, reservation: recovered.reservation })
-                if (reclaimAttempt.kind !== 'complete') throw new Error('reclaim attempt unavailable')
-                if (mode === 'cache-ancestor-replaced-before-redemption') {
-                    await rename(cacheRoot, join(root, 'held-dependency-caches'))
-                    await mkdir(completedCachePath!, { recursive: true })
-                    await writeFile(join(completedCachePath!, 'replacement'), 'preserved')
-                    const execute = vi.fn(executeProbe)
-                    expect(await executeReclaimAction({ action: planned.action, attempt: reclaimAttempt, execute })).toEqual({ kind: 'unavailable' })
-                    expect(execute).not.toHaveBeenCalled()
-                    expect(await readFile(join(completedCachePath!, 'replacement'), 'utf8')).toBe('preserved')
-                    return
-                }
-                const coldAbsent = mode.startsWith('cold-absent')
-                const coldFirst = mode === 'cold-prestart-retry' || mode === 'cold-changed-timeout' || mode === 'cold-added-target' || coldAbsent
-                let outcome: Awaited<ReturnType<typeof executeProbe>> | undefined
-                // A changed executable is refused before spawn, so the removal provably never started.
-                const ran = await executeReclaimAction({ action: planned.action, attempt: reclaimAttempt, execute: async (step) => {
-                    const executableBytes = coldFirst ? await readFile(step.argv[0]) : undefined
-                    if (coldFirst) await writeFile(step.argv[0], '#!/bin/sh\nexit 1\n', { mode: 0o700 })
-                    if (mode === 'redeemed-cache-target-replaced') {
-                        await rm(completedCachePath!, { recursive: true })
-                        await mkdir(completedCachePath!)
-                        await writeFile(join(completedCachePath!, 'replacement'), 'preserved')
-                    }
-                    if (mode === 'redeemed-cache-ancestor-replaced') {
-                        await rename(cacheRoot, join(root, 'held-dependency-caches'))
-                        await mkdir(completedCachePath!, { recursive: true })
-                        await writeFile(join(completedCachePath!, 'replacement'), 'preserved')
-                    }
-                    outcome = await executeProbe(step)
-                    if (coldFirst) await writeFile(step.argv[0], executableBytes!, { mode: 0o700 })
-                    return outcome
-                } })
-                if (mode === 'redeemed-cache-target-replaced' || mode === 'redeemed-cache-ancestor-replaced') {
-                    expect(outcome).toMatchObject({
-                        kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-                        execution: { started: false },
-                    })
-                    expect(outcome).not.toHaveProperty('receipt')
-                    expect(ran.kind).toBe('not-started')
-                    expect(await readFile(join(completedCachePath!, 'replacement'), 'utf8')).toBe('preserved')
-                    return
-                }
-                if (coldFirst) {
-                    if (ran.kind !== 'not-started') throw new Error('teardown failure unavailable')
-                    const failure = ran.outcome
-                    const active = await readState(selected.value.paths.coordination(stackId))
-                    if (active.kind !== 'complete') throw new Error('active teardown attempt unavailable')
-                    const failedValue = reduceDrainOutcome({ record: active.value, outcome: failure })
-                    if (!failedValue) throw new Error('teardown failure transition unavailable')
-                    const failedCommit = await commitDrainOutcome({
-                        outcome: failure, namespace: selected.value, stackId,
-                    })
-                    if (failedCommit.kind !== 'complete') throw new Error('teardown failure commit unavailable')
-                    vi.resetModules()
-                    const freshReclaim = await import('./reclaim.js')
-                    const freshClaims = await import('./claims.js')
-                    const coldReservation = await freshClaims.recoverDrainReservation({ namespace: selected.value, request })
-                    if (coldReservation.kind !== 'complete') throw new Error('cold teardown recovery unavailable')
-                    const coldProjection = freshClaims.inspectFailedReclaimRecovery({
-                        reservation: coldReservation.reservation, record: failedCommit.value,
-                    })
-                    expect(coldProjection).toMatchObject({
-                        purpose: 'down', planDigest: preview.discoveryDigest, completed: [],
-                        current: { targetId: reclaimTargets![0] }, pending: [{ targetId: reclaimTargets![1] }],
-                    })
-                    const coldResources = coldAbsent ? [remaining] : mode === 'cold-added-target'
-                        ? [resource({ id: 'a-container', name: 'added-container' }), ...runtimeResources]
-                        : runtimeResources
-                    const coldDiscovery = await authenticatedDiscovery(root, coldResources)
-                    expect(Date.parse(coldDiscovery.observedAt)).toBeGreaterThan(Date.parse(coldProjection!.freshAfter))
-                    const coldPlan = await freshReclaim.planTeardown({
-                        ...common, coordinationRecord: failedCommit.value, discovery: coldDiscovery,
-                        executable: runtimeByDiscovery.get(coldDiscovery)!,
-                        expectedDiscoveryDigest: preview.discoveryDigest, recoveredReservation: coldReservation.reservation,
-                        ...(mode === 'cold-changed-timeout' ? { timeoutMs: 29_000 } : {}),
-                        coordinationAddress: selected.value.paths.coordination(stackId),
-                    })
-                    if (mode !== 'cold-prestart-retry' && !coldAbsent) {
-                        expect(coldPlan).toMatchObject({ kind: 'refusal' })
-                        return
-                    }
-                    if (coldPlan.kind !== 'complete' || !coldPlan.action) throw new Error(`cold teardown action unavailable: ${JSON.stringify(coldPlan)}`)
-                    const beforeRetry = coldAbsent ? await authenticatedDiscovery(root, [remaining]) : undefined
-                    const coldAttempt = await freshClaims.reserveDrainAttempt({ namespace: selected.value, reservation: coldReservation.reservation })
-                    if (coldAttempt.kind !== 'complete') throw new Error('cold teardown retry attempt unavailable')
-                    if (coldAbsent) {
-                        // The target is already gone, so recording its removal runs nothing.
-                        const execute = vi.fn(executeProbe)
-                        const absence = await freshReclaim.executeReclaimAction({ action: coldPlan.action, attempt: coldAttempt, execute })
-                        if (absence.kind !== 'executed') throw new Error('absent teardown reconciliation unavailable')
-                        expect(execute).not.toHaveBeenCalled()
-                        const post = mode === 'cold-absent-stale' ? beforeRetry! : await authenticatedDiscovery(root,
-                            mode === 'cold-absent-reappears' ? [first, remaining]
-                                : mode === 'cold-absent-new-target' ? [remaining, resource({ id: 'added-container', name: 'new-container' })] : [remaining])
-                        const reconciled = await freshReclaim.reconcileReclaimAction({ executed: absence.executed,
-                            discovery: mode === 'cold-absent-other-stack' ? { ...post, stackId: foreignStackId } : post })
-                        if (mode !== 'cold-absent-current') {
-                            expect(reconciled).toMatchObject({ kind: 'refusal' })
-                            expect(await readState(selected.value.paths.coordination(stackId))).toMatchObject({ kind: 'complete',
-                                value: { value: { holders: [{ holderId }], drain: { attempt: { status: 'active' } } } } })
-                            return
-                        }
-                        expect(reconciled).toMatchObject({ kind: 'complete', continuation: expect.anything(), outcome: expect.anything() })
-                        if (reconciled.kind !== 'complete' || !reconciled.continuation) throw new Error('absent teardown continuation unavailable')
-                        const success = reconciled.outcome
-                        const published = await freshClaims.commitDrainOutcome({ outcome: success, namespace: selected.value, stackId })
-                        if (published.kind !== 'complete') throw new Error(JSON.stringify(published))
-                        const continued = await freshReclaim.planTeardown({ ...common, coordinationRecord: published.value,
-                            discovery: post, executable: runtimeByDiscovery.get(post)!,
-                            expectedDiscoveryDigest: preview.discoveryDigest, continuation: reconciled.continuation,
-                            coordinationAddress: selected.value.paths.coordination(stackId) })
-                        expect(continued, JSON.stringify(continued)).toMatchObject({ kind: 'complete', action: expect.anything(), noop: false })
-                        return
-                    }
-                    const coldExecution = await freshReclaim.executeReclaimAction({ action: coldPlan.action, attempt: coldAttempt, execute: executeProbe })
-                    if (coldExecution.kind !== 'executed') throw new Error('cold teardown execution unavailable')
-                    const coldPost = await authenticatedDiscovery(root, [remaining])
-                    expect(await freshReclaim.reconcileReclaimAction({ executed: coldExecution.executed, discovery: coldPost }))
-                        .toMatchObject({ kind: 'complete' })
-                    return
-                }
-                expect(outcome?.kind).toBe('complete')
-                if (ran.kind !== 'executed') throw new Error('teardown execution unavailable')
-                const observedRemaining = mode === 'remaining-identity-changes'
-                    ? resource({ ...remaining, name: 'replaced-container', labels: { ...labels, replacement: 'true' } })
-                    : resource({ ...remaining, bytes: 4_096 })
-                if (mode === 'completed-cache-reappears') {
-                    await mkdir(completedCachePath!)
-                }
-                if (mode === 'remaining-cache-is-replaced') {
-                    const staged = `${remainingCachePath!}.staged`
-                    await mkdir(staged)
-                    await rm(remainingCachePath!, { recursive: true })
-                    await rename(staged, remainingCachePath!)
-                }
-                const postDiscovery = await authenticatedDiscovery(root, usesCaches ? [] : [observedRemaining])
-                const reconciled = await reconcileReclaimAction({ executed: ran.executed, discovery: postDiscovery })
-                if (mode === 'two-action-success') expect(reconciled).toMatchObject({ kind: 'complete', continuation: expect.anything() })
-                expect(reconciled).toMatchObject({
-                    kind: mode === 'remaining-identity-changes' || mode === 'completed-cache-reappears'
-                        || mode === 'remaining-cache-is-replaced' ? 'refusal' : 'complete',
-                })
-                if ((mode === 'two-action-success' || mode === 'completed-target-reappears' || mode === 'completed-target-is-replaced'
-                    || mode === 'cold-second-action-retry' || mode === 'cold-second-completed-replacement'
-                    || mode === 'cold-second-remaining-replacement' || mode === 'cold-second-added-target')
-                    && reconciled.kind === 'complete') {
-                    const success = reconciled.outcome
-                    const current = await readState(selected.value.paths.coordination(stackId))
-                    if (current.kind !== 'complete') throw new Error('teardown progress record unavailable')
-                    const nextProgress = reduceDrainOutcome({ record: current.value, outcome: success })
-                    if (!nextProgress) throw new Error('teardown progress unavailable')
-                    const committed = await commitDrainOutcome({
-                        outcome: success, namespace: selected.value, stackId,
-                    })
-                    if (committed.kind !== 'complete') throw new Error('teardown progress commit unavailable')
-                    // The discovery that reconciled the first removal plans the second, as `down` does;
-                    // the other modes plan from a discovery taken after the publication.
-                    const nextDiscovery = mode === 'two-action-success' ? postDiscovery : await authenticatedDiscovery(root, [remaining])
-                    const nextPlan = await planTeardown({
-                        ...common, coordinationRecord: committed.value, discovery: nextDiscovery,
-                        executable: runtimeByDiscovery.get(nextDiscovery)!,
-                        expectedDiscoveryDigest: preview.discoveryDigest, continuation: reconciled.continuation ?? undefined,
-                        coordinationAddress: selected.value.paths.coordination(stackId),
-                    })
-                    if (nextPlan.kind !== 'complete' || !nextPlan.action) throw new Error(`second teardown action unavailable: ${JSON.stringify(nextPlan)}`)
-                    const nextReservation = await recoverDrainReservation({ namespace: selected.value, request })
-                    if (nextReservation.kind !== 'complete') throw new Error('second teardown recovery unavailable')
-                    const nextAttempt = await reserveDrainAttempt({ namespace: selected.value, reservation: nextReservation.reservation })
-                    if (nextAttempt.kind !== 'complete') throw new Error('second teardown attempt unavailable')
-                    const coldSecond = mode === 'cold-second-action-retry' || mode === 'cold-second-completed-replacement'
-                        || mode === 'cold-second-remaining-replacement' || mode === 'cold-second-added-target'
-                    const nextRan = await executeReclaimAction({ action: nextPlan.action, attempt: nextAttempt, execute: async (step) => {
-                        const secondExecutableBytes = coldSecond ? await readFile(step.argv[0]) : undefined
-                        if (coldSecond) await writeFile(step.argv[0], '#!/bin/sh\nexit 1\n', { mode: 0o700 })
-                        const nextOutcome = await executeProbe(step)
-                        if (coldSecond) await writeFile(step.argv[0], secondExecutableBytes!, { mode: 0o700 })
-                        return nextOutcome
-                    } })
-                    if (coldSecond) {
-                        if (nextRan.kind !== 'not-started') throw new Error('second teardown failure unavailable')
-                        const failure = nextRan.outcome
-                        const secondActive = await readState(selected.value.paths.coordination(stackId))
-                        if (secondActive.kind !== 'complete') throw new Error('second active teardown attempt unavailable')
-                        const failedValue = reduceDrainOutcome({ record: secondActive.value, outcome: failure })
-                        if (!failedValue) throw new Error('second teardown failure transition unavailable')
-                        const failedCommit = await commitDrainOutcome({
-                            outcome: failure, namespace: selected.value, stackId,
-                        })
-                        if (failedCommit.kind !== 'complete') throw new Error('second teardown failure commit unavailable')
-                        vi.resetModules()
-                        const freshReclaim = await import('./reclaim.js')
-                        const freshClaims = await import('./claims.js')
-                        const coldReservation = await freshClaims.recoverDrainReservation({ namespace: selected.value, request })
-                        if (coldReservation.kind !== 'complete') throw new Error('second cold teardown recovery unavailable')
-                        const coldResources = mode === 'cold-second-completed-replacement'
-                            ? [resource({ ...first, id: 'container-replacement' }), remaining]
-                            : mode === 'cold-second-remaining-replacement'
-                                ? [resource({ ...remaining, name: 'remaining-replacement' })]
-                                : mode === 'cold-second-added-target'
-                                    ? [resource({ id: 'a-container', name: 'added-container' }), remaining]
-                                : [remaining]
-                        const coldDiscovery = await authenticatedDiscovery(root, coldResources)
-                        const coldPlan = await freshReclaim.planTeardown({
-                            ...common, coordinationRecord: failedCommit.value, discovery: coldDiscovery,
-                            executable: runtimeByDiscovery.get(coldDiscovery)!,
-                            expectedDiscoveryDigest: preview.discoveryDigest, recoveredReservation: coldReservation.reservation,
-                            coordinationAddress: selected.value.paths.coordination(stackId),
-                        })
-                        if (mode !== 'cold-second-action-retry') {
-                            expect(coldPlan).toMatchObject({ kind: 'refusal' })
-                            return
-                        }
-                        if (coldPlan.kind !== 'complete' || !coldPlan.action) throw new Error('second cold teardown action unavailable')
-                        const coldAttempt = await freshClaims.reserveDrainAttempt({ namespace: selected.value, reservation: coldReservation.reservation })
-                        if (coldAttempt.kind !== 'complete') throw new Error('second cold teardown retry attempt unavailable')
-                        const coldExecution = await freshReclaim.executeReclaimAction({ action: coldPlan.action, attempt: coldAttempt, execute: executeProbe })
-                        if (coldExecution.kind !== 'executed') throw new Error('second cold teardown execution unavailable')
-                        const coldPost = await authenticatedDiscovery(root, [])
-                        expect(await freshReclaim.reconcileReclaimAction({ executed: coldExecution.executed, discovery: coldPost }))
-                            .toMatchObject({ kind: 'complete' })
-                        return
-                    }
-                    if (nextRan.kind !== 'executed') throw new Error('second teardown execution unavailable')
-                    const finalDiscovery = await authenticatedDiscovery(root,
-                        mode === 'completed-target-reappears' ? [first]
-                            : mode === 'completed-target-is-replaced' ? [resource({ ...first, id: 'container-replacement' })] : [])
-                    const final = await reconcileReclaimAction({ executed: nextRan.executed, discovery: finalDiscovery })
-                    expect(final).toMatchObject({ kind: mode === 'completed-target-reappears' || mode === 'completed-target-is-replaced' ? 'refusal' : 'complete' })
-                    if (mode === 'two-action-success') expect(final).toMatchObject({ kind: 'complete', continuation: null })
-                }
-            } finally { await rm(root, { recursive: true, force: true }) }
-        },
-    )
 
     it('requires the resolved system removal executable for host reset', async () => {
         const root = await canonicalTemp('cockpit-reset-removal-executable-')
@@ -1235,155 +765,21 @@ describe('reset planning', () => {
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
-    it('preserves non-ASCII target bytes through preview and exact action', async () => {
+    it('preserves non-ASCII target bytes through the plan and its exact removal', async () => {
         const root = await canonicalTemp('cockpit-reset-encoding-')
         const target = join(root, 'generated', 'sessión-東京')
         try {
             await mkdir(target, { recursive: true })
-            const fresh = await authenticatedDiscovery(root, [])
-            const initial = resetInput(root, {
+            const plan = await planReset(resetInput(root, {
                 resettableVolumes: [],
                 generatedHostPaths: [{ root, path: target, declaration: 'generated/sessión-東京' }],
-                discovery: fresh,
-            })
-            const preview = await planReset(initial)
-            expect(preview.kind).toBe('preview')
-            if (preview.kind !== 'preview') return
-            expect(preview.targets).toEqual([expect.objectContaining({ identity: target })])
-            const actionDiscovery = await authenticatedDiscovery(root, [])
-            const accepted = await planReset({
-                ...initial, discovery: actionDiscovery, confirmationDigest: preview.digest, consent: preview.consent,
-                coordinationAddress: await writeCoordination(root),
-            })
-            expect(accepted).toEqual(expect.objectContaining({ kind: 'complete' }))
-            if (accepted.kind !== 'complete') return
-            expect(accepted.action?.step?.argv.slice(1)).toEqual(['-rf', '--', target])
+                discovery: await authenticatedDiscovery(root, []),
+            }))
+            if (plan.kind !== 'complete') throw new Error(JSON.stringify(plan))
+            expect(plan.targets).toEqual([expect.objectContaining({ identity: target })])
+            expect(plan.removals[0]?.step.argv.slice(1)).toEqual(['-rf', '--', target])
         } finally { await rm(root, { recursive: true, force: true }) }
     })
-
-    it.each(['unchanged', 'target-before-redemption', 'ancestor-before-redemption',
-        'target-after-redemption', 'ancestor-after-redemption'] as const)(
-        'binds a nested host reset to its declared root: %s', async (mode) => {
-            const root = await canonicalTemp('cockpit-reset-path-identity-')
-            const ancestor = join(root, 'generated')
-            const target = join(ancestor, 'nested', 'session')
-            const holderId = `holder:${sha('holder')}:session` as HolderId
-            const checkoutId = `checkout:${sha('checkout')}` as CheckoutId
-            try {
-                await mkdir(target, { recursive: true })
-                const selected = await selectStateRoot({ platform: 'linux', home: root, cockpitId })
-                if (selected.kind !== 'complete') throw new Error('state namespace unavailable')
-                const seeded = await transactState(selected.value, selected.value.paths.coordination(stackId), { ownerId: holderId }, () => ({
-                    format: 'cockpit-state/v1' as const, kind: 'coordination' as const, cockpitId, subjectId: stackId,
-                    revision: 0, updatedAt: new Date().toISOString(), value: {
-                        holders: [{ holderId, checkoutId, claimedAt: new Date().toISOString() }],
-                        lease: { offset: 0, ports: { WEB: 3000 }, released: false,
-                            declaration: { step: 100, count: 1, bases: { WEB: 3000 } } },
-                        lastReleasedHolder: null, drain: null,
-                    },
-                }))
-                if (seeded.kind !== 'complete') throw new Error('coordination fixture unavailable')
-                const previewDiscovery = await authenticatedDiscovery(root, [])
-                const base = resetInput(root, {
-                    coordinationRecord: seeded.value, expectedCoordinationRevision: 0, requesterHolderId: holderId,
-                    resettableVolumes: [], generatedHostPaths: [{ root, path: target, declaration: 'generated/nested/session' }],
-                    discovery: previewDiscovery,
-                })
-                const preview = await planReset(base)
-                if (preview.kind !== 'preview') throw new Error(`reset preview unavailable: ${JSON.stringify(preview)}`)
-                const commitments = preview.envelope.commitments
-                if (commitments?.length !== 1) throw new Error('reset target commitment unavailable')
-                const actionDiscovery = await authenticatedDiscovery(root, [])
-                const planned = await planReset({
-                    ...base, discovery: actionDiscovery, confirmationDigest: preview.digest, consent: preview.consent,
-                    coordinationAddress: selected.value.paths.coordination(stackId),
-                })
-                if (planned.kind !== 'complete' || !planned.action) throw new Error('reset action unavailable')
-                const targetId = `host-path:${target}`
-                const { targetId: committedTargetId, ...targetCommitment } = commitments[0]!
-                expect(committedTargetId).toBe(targetId)
-                const request = {
-                    purpose: 'reset' as const, stackId, holderId, requesterId: holderId, configSha256,
-                    planDigest: preview.digest, operationBasis: sha('nested reset basis'), generation: sha('nested reset generation'),
-                    targetIds: [stackId, targetId].sort(),
-                    actions: [
-                        { stage: 'runtime-stop' as const, targetId: stackId, validForMs: 30_000 },
-                        { stage: 'reclaim' as const, targetId, validForMs: 30_000, targetCommitment },
-                    ],
-                    expectedCoordinationRevision: 0,
-                }
-                const reserved = await reserveDrain({ namespace: selected.value, request })
-                if (reserved.kind !== 'complete') throw new Error(`nested reset drain unavailable: ${JSON.stringify(reserved)}`)
-                const runtimeAttempt = await reserveDrainAttempt({ namespace: selected.value, reservation: reserved.reservation })
-                if (runtimeAttempt.kind !== 'complete') throw new Error('runtime attempt unavailable')
-                const runtimeSuccess = {
-                    kind: 'success' as const, reservation: runtimeAttempt.reservation,
-                    fact: {
-                        purpose: request.purpose, stackId, configSha256, planDigest: runtimeAttempt.reservation.planDigest,
-                        operationBasis: runtimeAttempt.reservation.operationBasis,
-                        coordinationRevision: runtimeAttempt.reservation.coordinationRevision,
-                        reservationId: runtimeAttempt.reservation.reservationId, reservedAt: runtimeAttempt.reservation.reservedAt,
-                        generation: runtimeAttempt.reservation.generation, attemptId: runtimeAttempt.attempt.attemptId,
-                        attemptRevision: runtimeAttempt.attempt.committedRevision, attemptCommittedAt: runtimeAttempt.attempt.committedAt,
-                        validThrough: runtimeAttempt.attempt.validThrough, actionIndex: runtimeAttempt.attempt.actionIndex,
-                        currentTarget: runtimeAttempt.attempt.currentTarget, currentStage: runtimeAttempt.attempt.currentStage,
-                        observedAt: runtimeAttempt.attempt.committedAt,
-                    },
-                }
-                const active = await readState(selected.value.paths.coordination(stackId))
-                if (active.kind !== 'complete') throw new Error('active drain unavailable')
-                const progressed = reduceDrainOutcome({ record: active.value, outcome: runtimeSuccess })
-                if (!progressed) throw new Error('runtime progress unavailable')
-                const publication = await commitDrainOutcome({
-                    outcome: runtimeSuccess, namespace: selected.value, stackId,
-                })
-                if (publication.kind !== 'complete') throw new Error('runtime progress commit unavailable')
-                const recovered = await recoverDrainReservation({ namespace: selected.value, request })
-                if (recovered.kind !== 'complete') throw new Error('drain recovery unavailable')
-                const reclaimAttempt = await reserveDrainAttempt({ namespace: selected.value, reservation: recovered.reservation })
-                if (reclaimAttempt.kind !== 'complete') throw new Error('reclaim attempt unavailable')
-                const replace = async (scope: 'target' | 'ancestor') => {
-                    // Staged beside the original rather than recreated in its place: ext4
-                    // reuses the inode a removed directory just freed, which would hand the
-                    // replacement the identity the action is bound to and hide the change.
-                    const staged = join(root, 'staged-session')
-                    await mkdir(staged, { recursive: true })
-                    await writeFile(join(staged, 'replacement'), 'preserved')
-                    if (scope === 'target') await rm(target, { recursive: true })
-                    else await rename(ancestor, join(root, 'held-generated'))
-                    await mkdir(dirname(target), { recursive: true })
-                    await rename(staged, target)
-                }
-                if (mode === 'target-before-redemption' || mode === 'ancestor-before-redemption') {
-                    await replace(mode.startsWith('target') ? 'target' : 'ancestor')
-                    const execute = vi.fn(executeProbe)
-                    expect(await executeReclaimAction({ action: planned.action, attempt: reclaimAttempt, execute })).toEqual({ kind: 'unavailable' })
-                    expect(execute).not.toHaveBeenCalled()
-                    expect(await readFile(join(target, 'replacement'), 'utf8')).toBe('preserved')
-                    return
-                }
-                let outcome: Awaited<ReturnType<typeof executeProbe>> | undefined
-                const ran = await executeReclaimAction({ action: planned.action, attempt: reclaimAttempt, execute: async (step) => {
-                    // Replaced after the identity was bound to the step, before the removal spawns.
-                    if (mode === 'target-after-redemption' || mode === 'ancestor-after-redemption') await replace(mode.startsWith('target') ? 'target' : 'ancestor')
-                    outcome = await executeProbe(step)
-                    return outcome
-                } })
-                if (mode === 'target-after-redemption' || mode === 'ancestor-after-redemption') {
-                    expect(outcome).toMatchObject({
-                        kind: 'refusal', code: ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
-                        execution: { started: false },
-                    })
-                    expect(outcome).not.toHaveProperty('receipt')
-                    expect(ran.kind).toBe('not-started')
-                    expect(await readFile(join(target, 'replacement'), 'utf8')).toBe('preserved')
-                    return
-                }
-                expect(ran.kind).toBe('executed')
-                await expect(readFile(target)).rejects.toMatchObject({ code: 'ENOENT' })
-            } finally { await rm(root, { recursive: true, force: true }) }
-        },
-    )
 
     it.each(['traversal', 'root', 'symlink-parent', 'dangling-link'] as const)('refuses unsafe host path: %s', async (mode) => {
         const root = await canonicalTemp('cockpit-reset-path-')
@@ -1403,494 +799,5 @@ describe('reset planning', () => {
             }))
             expect(result).toEqual(expect.objectContaining({ kind: 'refusal' }))
         } finally { await rm(root, { recursive: true, force: true }) }
-    })
-
-    it.each(['disappears', 'is replaced'] as const)('stops when a confirmed target %s', async (change) => {
-        const root = await canonicalTemp('cockpit-reset-race-')
-        const target = join(root, 'generated', 'session')
-        try {
-            await mkdir(target, { recursive: true })
-            const previewDiscovery = await authenticatedDiscovery(root, [resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') })])
-            const preview = await planReset(resetInput(root, { discovery: previewDiscovery }))
-            expect(preview.kind).toBe('preview')
-            if (preview.kind !== 'preview') return
-            await rm(target, { recursive: true })
-            if (change === 'is replaced') await mkdir(target)
-            const changed = await authenticatedDiscovery(root, snapshot([
-                resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') }),
-            ]).resources)
-            // Consent and fresh coordination evidence are supplied, so only the changed target can refuse.
-            expect(await planReset(resetInput(root, {
-                confirmationDigest: preview.digest, consent: preview.consent, discovery: changed,
-                coordinationAddress: await writeCoordination(root),
-            }))).toEqual(expect.objectContaining({ kind: 'refusal', diagnostics: [expect.objectContaining({
-                code: ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH, message: 'reset consent does not match the fresh complete preview',
-            })] }))
-        } finally { await rm(root, { recursive: true, force: true }) }
-    })
-
-    it('refuses a continuation whose removal no drain attempt ran', async () => {
-        const root = await canonicalTemp('cockpit-reset-continuation-')
-        const target = join(root, 'generated', 'session')
-        try {
-            await mkdir(target, { recursive: true })
-            const volume = resource({ id: 'session-data', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') })
-            const coordinationAddress = await writeCoordination(root)
-            const preview = await planReset(resetInput(root, { discovery: await authenticatedDiscovery(root, [volume]) }))
-            if (preview.kind !== 'preview') throw new Error(JSON.stringify(preview))
-            const consented = resetInput(root, {
-                discovery: await authenticatedDiscovery(root, [volume]), confirmationDigest: preview.digest, consent: preview.consent, coordinationAddress,
-            })
-            const first = await planReset(consented)
-            if (first.kind !== 'complete' || first.action === null) throw new Error(JSON.stringify(first))
-            expect(first.action.continuation.completedTargetId).toBe(`host-path:${target}`)
-            // The planned target is gone and a later discovery agrees, yet no reserved attempt removed it.
-            await rm(target, { recursive: true })
-            expect(await planReset({
-                ...consented, discovery: await authenticatedDiscovery(root, [volume]), continuation: first.action.continuation,
-            })).toEqual({ kind: 'refusal', diagnostics: [expect.objectContaining({
-                code: 'RESET_CONFIRMATION_MISMATCH', message: 'reset continuation no longer matches the remaining consented target set',
-            })] })
-        } finally { await rm(root, { recursive: true, force: true }) }
-    })
-
-    it.each([
-        ['foreign', { ...labels, 'dev.b0dea.cockpit.stack-id': foreignStackId }],
-        ['malformed', { ...labels, 'dev.b0dea.cockpit.owner-id': '../escape' }],
-    ] as const)('refuses a %s volume that carries the declared Compose key in this stack\'s project', async (_name, candidateLabels) => {
-        const root = await canonicalTemp('cockpit-reset-volume-')
-        try {
-            const result = await planReset(resetInput(root, {
-                generatedHostPaths: [],
-                discovery: await authenticatedDiscovery(root, [resource({
-                    id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation'),
-                    labels: { ...candidateLabels, ...composeLabels('session-data') },
-                })]),
-            }))
-            expect(result).toEqual(expect.objectContaining({ kind: 'refusal', diagnostics: [expect.objectContaining({ code: 'RECLAIM_ACCOUNTING_MISMATCH' })] }))
-        } finally { await rm(root, { recursive: true, force: true }) }
-    })
-
-    it.each([
-        'success', 'prestart-failure', 'prestart-retry', 'cold-prestart-retry', 'cold-changed-config',
-        'cold-changed-runtime', 'cold-changed-timeout', 'cold-target-set-change', 'cold-target-identity-change',
-        'cold-added-target', 'cold-absent-current',
-        'expired-before-spawn', 'started-failure', 'same-id-replacement',
-        'remaining-volume-replacement', 'remaining-volume-bytes-change', 'two-action-success',
-        'completed-target-reappears', 'completed-target-is-replaced',
-        'cold-second-action-retry', 'cold-second-completed-replacement', 'cold-second-remaining-replacement',
-        'cold-second-added-target',
-        'wrong-purpose', 'wrong-plan', 'wrong-coordination-revision',
-    ] as const)('%s stays bound to one committed reclaim attempt', async (mode) => {
-        const root = await canonicalTemp('cockpit-reset-attempt-')
-        try {
-            const coldRetryMode = mode === 'cold-prestart-retry' || mode === 'cold-changed-config'
-                || mode === 'cold-changed-runtime' || mode === 'cold-changed-timeout'
-                || mode === 'cold-target-set-change' || mode === 'cold-target-identity-change' || mode === 'cold-added-target' || mode === 'cold-absent-current'
-            const retryMode = mode === 'prestart-retry' || coldRetryMode
-            const holderId = `holder:${sha('holder')}:session` as HolderId
-            const checkoutId = `checkout:${sha('checkout')}` as CheckoutId
-            const selected = await selectStateRoot({ platform: 'linux', home: root, cockpitId })
-            if (selected.kind !== 'complete') throw new Error('state namespace unavailable')
-            const seeded = await transactState(selected.value, selected.value.paths.coordination(stackId), { ownerId: holderId }, () => ({
-                format: 'cockpit-state/v1' as const, kind: 'coordination' as const, cockpitId, subjectId: stackId,
-                revision: 0, updatedAt: new Date().toISOString(), value: {
-                    holders: [{ holderId, checkoutId, claimedAt: new Date().toISOString() }],
-                    lease: { offset: 0, ports: { WEB: 3000 }, released: false,
-                        declaration: { step: 100, count: 1, bases: { WEB: 3000 } } },
-                    lastReleasedHolder: null, drain: null,
-                },
-            }))
-            if (seeded.kind !== 'complete') throw new Error('coordination fixture unavailable')
-            const volume = resource({ id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true, generation: sha('volume-generation') })
-            const hasRemainingVolume = mode === 'remaining-volume-replacement' || mode === 'remaining-volume-bytes-change'
-                || mode === 'two-action-success' || mode === 'completed-target-reappears'
-                || mode === 'completed-target-is-replaced' || mode === 'cold-second-action-retry'
-                || mode === 'cold-second-completed-replacement' || mode === 'cold-second-remaining-replacement'
-                || mode === 'cold-second-added-target'
-            const remainingVolume = resource({
-                id: 'volume-2', name: 'session-logs', kind: 'volume', dataBearing: true,
-                generation: sha('remaining-volume-generation'), bytes: 256,
-            })
-            const resetVolumes = hasRemainingVolume ? [volume, remainingVolume] : [volume]
-            const previewDiscovery = await authenticatedDiscovery(root, resetVolumes)
-            const base = resetInput(root, {
-                coordinationRecord: seeded.value, expectedCoordinationRevision: 0, requesterHolderId: holderId,
-                resettableVolumes: hasRemainingVolume ? ['session-data', 'session-logs'] : ['session-data'],
-                generatedHostPaths: [], discovery: previewDiscovery,
-            })
-            const preview = await planReset(base)
-            if (preview.kind !== 'preview') throw new Error('reset preview unavailable')
-            const projected = preview.envelope
-            expect(projected).toMatchObject({
-                purpose: 'reset', stackId, configSha256, planDigest: preview.digest,
-            })
-            const reclaimCommitments = projected?.commitments
-            const reclaimTargets = reclaimCommitments?.map(({ targetId }) => targetId)
-            expect(reclaimTargets).toEqual(hasRemainingVolume
-                ? ['volume:session-data', 'volume:session-logs'] : ['volume:session-data'])
-            const actionDiscovery = await authenticatedDiscovery(root, resetVolumes)
-            const planned = await planReset({
-                ...base, discovery: actionDiscovery, confirmationDigest: preview.digest, consent: preview.consent,
-                coordinationAddress: selected.value.paths.coordination(stackId),
-            })
-            if (planned.kind !== 'complete' || !planned.action) throw new Error('reset action unavailable')
-            const targetIds = [stackId, ...reclaimTargets!].sort()
-            if (mode === 'wrong-coordination-revision') {
-                const advanced = await transactState(
-                    selected.value, selected.value.paths.coordination(stackId), { ownerId: holderId },
-                    (current) => {
-                        const value = current && decodeCoordinationRecord(current, stackId)
-                        if (!value) throw new Error('coordination advance unavailable')
-                        return coordinationStateRecord(selected.value, stackId, current, new Date().toISOString(), value)
-                    },
-                )
-                if (advanced.kind !== 'complete') throw new Error('coordination advance unavailable')
-            }
-            const drainRequest = {
-                purpose: mode === 'wrong-purpose' ? 'down' as const : 'reset' as const, stackId, holderId, requesterId: holderId, configSha256,
-                planDigest: mode === 'wrong-plan' ? sha('other reset plan') : preview.digest,
-                operationBasis: sha('reset basis'), generation: sha('reset generation'),
-                targetIds, actions: [
-                    { stage: 'runtime-stop' as const, targetId: stackId, validForMs: 30_000 },
-                    ...reclaimCommitments!.map(({ targetId, ...targetCommitment }) => ({
-                        stage: 'reclaim' as const, targetId, validForMs: 30_000, targetCommitment,
-                    })),
-                ], expectedCoordinationRevision: mode === 'wrong-coordination-revision' ? 1 : 0,
-            }
-            const reserved = await reserveDrain({ namespace: selected.value, request: drainRequest })
-            if (reserved.kind !== 'complete') throw new Error('drain reservation unavailable')
-            const runtimeAttempt = await reserveDrainAttempt({ namespace: selected.value, reservation: reserved.reservation })
-            if (runtimeAttempt.kind !== 'complete') throw new Error('runtime attempt unavailable')
-            // The runtime-stop attempt does not admit a reclaim action.
-            const early = vi.fn(executeProbe)
-            expect(await executeReclaimAction({ action: planned.action, attempt: runtimeAttempt, execute: early })).toEqual({ kind: 'unavailable' })
-            expect(early).not.toHaveBeenCalled()
-            const runtimeFact = {
-                purpose: drainRequest.purpose, stackId, configSha256, planDigest: runtimeAttempt.reservation.planDigest,
-                operationBasis: runtimeAttempt.reservation.operationBasis, coordinationRevision: runtimeAttempt.reservation.coordinationRevision,
-                reservationId: runtimeAttempt.reservation.reservationId, reservedAt: runtimeAttempt.reservation.reservedAt,
-                generation: runtimeAttempt.reservation.generation, attemptId: runtimeAttempt.attempt.attemptId,
-                attemptRevision: runtimeAttempt.attempt.committedRevision, attemptCommittedAt: runtimeAttempt.attempt.committedAt,
-                validThrough: runtimeAttempt.attempt.validThrough, actionIndex: runtimeAttempt.attempt.actionIndex,
-                currentTarget: runtimeAttempt.attempt.currentTarget, currentStage: runtimeAttempt.attempt.currentStage,
-                observedAt: runtimeAttempt.attempt.committedAt,
-            }
-            const activeRecord = await readState(selected.value.paths.coordination(stackId))
-            if (activeRecord.kind !== 'complete') throw new Error('active drain unavailable')
-            const runtimeSuccess = { kind: 'success' as const, reservation: runtimeAttempt.reservation, fact: runtimeFact }
-            const progressed = reduceDrainOutcome({ record: activeRecord.value, outcome: runtimeSuccess })
-            if (!progressed) throw new Error('runtime progress unavailable')
-            const progressCommit = await commitDrainOutcome({
-                outcome: runtimeSuccess, namespace: selected.value, stackId,
-            })
-            if (progressCommit.kind !== 'complete') throw new Error('runtime progress commit unavailable')
-            const recovered = await recoverDrainReservation({ namespace: selected.value, request: drainRequest })
-            if (recovered.kind !== 'complete') throw new Error('drain recovery unavailable')
-            const reclaimAttempt = await reserveDrainAttempt({ namespace: selected.value, reservation: recovered.reservation })
-            if (reclaimAttempt.kind !== 'complete') throw new Error('reclaim attempt unavailable')
-            expect(reclaimAttempt.attempt).toMatchObject({ currentStage: 'reclaim', currentTarget: 'volume:session-data', actionIndex: 1 })
-            const recoveredAgain = await recoverDrainReservation({ namespace: selected.value, request: drainRequest })
-            expect(recoveredAgain).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED }] })
-            let outcome: Awaited<ReturnType<typeof executeProbe>> | undefined
-            const ran = await executeReclaimAction({ action: planned.action, attempt: reclaimAttempt, execute: async (step) => {
-                if (mode === 'prestart-failure' || retryMode) await writeFile(step.argv[0], '#!/bin/sh\nexit 1\n', { mode: 0o700 })
-                if (mode === 'started-failure') await rm(join(root, 'docker.volume'))
-                if (mode === 'expired-before-spawn') {
-                    vi.useFakeTimers()
-                    vi.setSystemTime(Date.parse(step.spawnNotAfter!) + 1)
-                }
-                outcome = await executeProbe(step)
-                return outcome
-            } })
-            if (mode === 'expired-before-spawn') vi.useRealTimers()
-            if (mode === 'wrong-purpose' || mode === 'wrong-plan' || mode === 'wrong-coordination-revision') {
-                expect(ran).toEqual({ kind: 'unavailable' })
-                expect(outcome).toBeUndefined()
-                return
-            }
-            if (mode === 'prestart-failure' || retryMode || mode === 'expired-before-spawn' || mode === 'started-failure') {
-                expect(outcome).toMatchObject({ kind: 'refusal', execution: { started: mode === 'started-failure' } })
-                if (mode === 'started-failure') {
-                    expect(ran).toEqual({ kind: 'unavailable' })
-                    return
-                }
-                expect(ran).toMatchObject({ kind: 'not-started', outcome: expect.anything() })
-                if (ran.kind !== 'not-started') return
-                const preCommitDiscovery = retryMode
-                    ? await authenticatedDiscovery(root, resetVolumes) : undefined
-                const failure = ran.outcome
-                if (retryMode && failure) {
-                    const active = await readState(selected.value.paths.coordination(stackId))
-                    if (active.kind !== 'complete') throw new Error('failed attempt record unavailable')
-                    const failedValue = reduceDrainOutcome({ record: active.value, outcome: failure })
-                    if (!failedValue) throw new Error('failed attempt transition unavailable')
-                    const failedCommit = await commitDrainOutcome({
-                        outcome: failure, namespace: selected.value, stackId,
-                    })
-                    if (failedCommit.kind !== 'complete') throw new Error('failed attempt commit unavailable')
-                    expect(reduceDrainOutcome({ record: failedCommit.value, outcome: failure })).toBeUndefined()
-                    if (coldRetryMode) {
-                        vi.resetModules()
-                        const freshReclaim = await import('./reclaim.js')
-                        const freshClaims = await import('./claims.js')
-                        expect(await freshClaims.recoverDrainReservation({ namespace: selected.value, request: {
-                            ...drainRequest, planDigest: sha('changed cold plan'),
-                        } })).toMatchObject({ kind: 'refusal' })
-                        expect(await freshClaims.recoverDrainReservation({ namespace: selected.value, request: {
-                            ...drainRequest, purpose: 'down',
-                        } })).toMatchObject({ kind: 'refusal' })
-                        expect(await freshClaims.recoverDrainReservation({ namespace: selected.value, request: {
-                            ...drainRequest, generation: sha('changed cold generation'),
-                        } })).toMatchObject({ kind: 'refusal' })
-                        expect(await freshClaims.recoverDrainReservation({ namespace: selected.value, request: {
-                            ...drainRequest, expectedCoordinationRevision: drainRequest.expectedCoordinationRevision + 1,
-                        } })).toMatchObject({ kind: 'refusal' })
-                        expect(await freshClaims.recoverDrainReservation({ namespace: selected.value, request: {
-                            ...drainRequest, targetIds: [...drainRequest.targetIds].reverse(),
-                        } })).toMatchObject({ kind: 'refusal' })
-                        const coldReservation = await freshClaims.recoverDrainReservation({ namespace: selected.value, request: drainRequest })
-                        if (coldReservation.kind !== 'complete') throw new Error('cold retry drain recovery unavailable')
-                        expect(freshClaims.inspectFailedReclaimRecovery({
-                            reservation: coldReservation.reservation, record: failedCommit.value,
-                        })).toMatchObject({
-                            purpose: 'reset', current: { targetCommitment: expect.any(Object) },
-                        })
-                        const coldResources = mode === 'cold-target-set-change' || mode === 'cold-absent-current' ? []
-                            : mode === 'cold-target-identity-change'
-                                ? [resource({ ...volume, generation: sha('changed cold identity') })]
-                                : mode === 'cold-added-target'
-                                    ? [resource({ id: 'volume-0', name: 'a-data', kind: 'volume', dataBearing: true,
-                                        generation: sha('added cold target') }), volume]
-                                : resetVolumes
-                        const coldDiscovery = await authenticatedDiscovery(root, coldResources)
-                        const coldInput = {
-                            ...base, coordinationRecord: failedCommit.value,
-                            expectedCoordinationRevision: failedCommit.value.revision,
-                            discovery: coldDiscovery, runtimeExecutable: runtimeByDiscovery.get(coldDiscovery)!,
-                            confirmationDigest: preview.digest,
-                            recoveredReservation: coldReservation.reservation,
-                            ...(mode === 'cold-changed-config' ? { configSha256: sha('changed cold config') } : {}),
-                            ...(mode === 'cold-changed-runtime' ? { cwd: join(root, 'changed-runtime') } : {}),
-                            ...(mode === 'cold-changed-timeout' ? { timeoutMs: 29_000 } : {}),
-                            ...(mode === 'cold-added-target' ? { resettableVolumes: ['a-data', 'session-data'] } : {}),
-                            ...(mode === 'cold-target-set-change' ? { resettableVolumes: [] } : {}),
-                            coordinationAddress: selected.value.paths.coordination(stackId),
-                        }
-                        const approvalDiscovery = await authenticatedDiscovery(root, coldResources)
-                        const operatorApproval = await freshReclaim.planReset({ ...base,
-                            coordinationRecord: failedCommit.value, expectedCoordinationRevision: failedCommit.value.revision,
-                            discovery: approvalDiscovery, runtimeExecutable: runtimeByDiscovery.get(approvalDiscovery)!,
-                            ...(mode === 'cold-added-target' ? { resettableVolumes: ['a-data', 'session-data'] } : {}),
-                            ...(mode === 'cold-target-set-change' ? { resettableVolumes: [] } : {}),
-                        })
-                        if (operatorApproval.kind !== 'preview') throw new Error(JSON.stringify(operatorApproval))
-                        if (mode === 'cold-absent-current') {
-                            expect(operatorApproval).toMatchObject({ noop: true, targets: [] })
-                            expect(await freshReclaim.planReset(coldInput)).toMatchObject({ kind: 'refusal',
-                                diagnostics: [{ code: 'RESET_CONFIRMATION_MISMATCH' }] })
-                            expect(await freshReclaim.planReset({ ...coldInput, operatorApproval: { ...operatorApproval,
-                                envelope: { ...operatorApproval.envelope, stackId: foreignStackId } } }))
-                                .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'RESET_CONFIRMATION_MISMATCH' }] })
-                        }
-                        const coldPlan = await freshReclaim.planReset({ ...coldInput, operatorApproval })
-                        if (mode !== 'cold-prestart-retry' && mode !== 'cold-absent-current') {
-                            expect(coldPlan).toMatchObject({ kind: 'refusal' })
-                            return
-                        }
-                        if (coldPlan.kind !== 'complete' || !coldPlan.action) throw new Error(`cold retry reset action unavailable: ${JSON.stringify(coldPlan)}`)
-                        const coldAttempt = await freshClaims.reserveDrainAttempt({ namespace: selected.value, reservation: coldReservation.reservation })
-                        if (coldAttempt.kind !== 'complete') throw new Error('cold retry drain attempt unavailable')
-                        if (mode === 'cold-absent-current') {
-                            expect(coldPlan.envelope).toMatchObject({ purpose: 'reset', planDigest: preview.digest, commitments: reclaimCommitments })
-                            const execute = vi.fn(executeProbe)
-                            const absent = await freshReclaim.executeReclaimAction({ action: coldPlan.action, attempt: coldAttempt, execute })
-                            if (absent.kind !== 'executed') throw new Error('absent reset reconciliation unavailable')
-                            expect(execute).not.toHaveBeenCalled()
-                            const post = await authenticatedDiscovery(root, [])
-                            const completed = await freshReclaim.reconcileReclaimAction({ executed: absent.executed, discovery: post })
-                            expect(completed).toMatchObject({ kind: 'complete', continuation: null, outcome: expect.anything() })
-                            if (completed.kind !== 'complete') throw new Error('absent reset completion unavailable')
-                            const success = completed.outcome
-                            const publication = await freshClaims.commitDrainOutcome({ outcome: success, namespace: selected.value, stackId })
-                            if (publication.kind !== 'complete') throw new Error(JSON.stringify(publication))
-                            expect(publication.value.value).toMatchObject({ holders: [], lease: { released: true }, drain: null })
-                            expect(await readState(selected.value.paths.lifecycle(stackId))).toMatchObject({ kind: 'missing' })
-                            return
-                        }
-                        // The action planned before the failure was published cannot run under the retry attempt.
-                        const replayed = vi.fn(executeProbe)
-                        expect(await freshReclaim.executeReclaimAction({ action: planned.action, attempt: coldAttempt, execute: replayed }))
-                            .toEqual({ kind: 'unavailable' })
-                        expect(replayed).not.toHaveBeenCalled()
-                        expect(freshClaims.reduceDrainOutcome({
-                            record: failedCommit.value, outcome: failure,
-                        })).toBeUndefined()
-                        const coldExecution = await freshReclaim.executeReclaimAction({ action: coldPlan.action, attempt: coldAttempt, execute: executeProbe })
-                        if (coldExecution.kind !== 'executed') throw new Error('cold retry reclaim execution unavailable')
-                        const coldPost = await authenticatedDiscovery(root, [])
-                        expect(await freshReclaim.reconcileReclaimAction({ executed: coldExecution.executed, discovery: coldPost }))
-                            .toMatchObject({ kind: 'complete' })
-                        return
-                    }
-                    const stalePlan = await planReset({
-                        ...base, coordinationRecord: failedCommit.value, expectedCoordinationRevision: failedCommit.value.revision,
-                        discovery: preCommitDiscovery!,
-                        confirmationDigest: preview.digest, continuation: ran.continuation,
-                        coordinationAddress: selected.value.paths.coordination(stackId),
-                    })
-                    expect(stalePlan).toMatchObject({ kind: 'refusal' })
-                    const retryDiscovery = await authenticatedDiscovery(root, resetVolumes)
-                    const retryPlan = await planReset({
-                        ...base, coordinationRecord: failedCommit.value, expectedCoordinationRevision: failedCommit.value.revision,
-                        discovery: retryDiscovery,
-                        confirmationDigest: preview.digest,
-                        continuation: ran.continuation,
-                        coordinationAddress: selected.value.paths.coordination(stackId),
-                    })
-                    if (retryPlan.kind !== 'complete' || !retryPlan.action) throw new Error(`retry reset action unavailable: ${JSON.stringify(retryPlan)}`)
-                    const retryReservation = await recoverDrainReservation({ namespace: selected.value, request: drainRequest })
-                    if (retryReservation.kind !== 'complete') throw new Error('retry drain recovery unavailable')
-                    const retryAttempt = await reserveDrainAttempt({ namespace: selected.value, reservation: retryReservation.reservation })
-                    if (retryAttempt.kind !== 'complete') throw new Error('retry drain attempt unavailable')
-                    const replayed = vi.fn(executeProbe)
-                    expect(await executeReclaimAction({ action: planned.action, attempt: retryAttempt, execute: replayed })).toEqual({ kind: 'unavailable' })
-                    expect(replayed).not.toHaveBeenCalled()
-                    const retryExecution = await executeReclaimAction({ action: retryPlan.action, attempt: retryAttempt, execute: executeProbe })
-                    if (retryExecution.kind !== 'executed') throw new Error('retry reclaim execution unavailable')
-                    const retryPost = await authenticatedDiscovery(root, [])
-                    expect(await reconcileReclaimAction({ executed: retryExecution.executed, discovery: retryPost }))
-                        .toMatchObject({ kind: 'complete' })
-                }
-                return
-            }
-            expect(outcome?.kind).toBe('complete')
-            if (ran.kind !== 'executed') throw new Error('reclaim execution unavailable')
-            if (mode === 'same-id-replacement') {
-                const replacement = await authenticatedDiscovery(root, [resource({
-                    id: 'volume-1', name: 'session-data', kind: 'volume', dataBearing: true,
-                    generation: sha('replacement-generation'), labels: { ...labels, replacement: 'true' },
-                })])
-                expect(await reconcileReclaimAction({ executed: ran.executed, discovery: replacement }))
-                    .toMatchObject({ kind: 'refusal' })
-                return
-            }
-            const remainingAfterAction = mode === 'remaining-volume-replacement'
-                ? [resource({
-                    ...remainingVolume, generation: sha('replacement-generation'),
-                    labels: { ...labels, replacement: 'true' },
-                })]
-                : mode === 'remaining-volume-bytes-change'
-                    ? [resource({ ...remainingVolume, bytes: 4_096 })]
-                    : hasRemainingVolume ? [remainingVolume] : []
-            const postDiscovery = await authenticatedDiscovery(root, remainingAfterAction)
-            const reconciled = await reconcileReclaimAction({ executed: ran.executed, discovery: postDiscovery })
-            if (mode === 'remaining-volume-replacement') {
-                expect(reconciled).toMatchObject({ kind: 'refusal' })
-                return
-            }
-            expect(reconciled).toMatchObject({ kind: 'complete', outcome: expect.anything() })
-            if (mode === 'two-action-success') expect(reconciled).toMatchObject({ continuation: expect.anything() })
-            if (reconciled.kind !== 'complete') return
-            const reclaimSuccess = reconciled.outcome
-            if ((mode === 'two-action-success' || mode === 'completed-target-reappears' || mode === 'completed-target-is-replaced'
-                || mode === 'cold-second-action-retry' || mode === 'cold-second-completed-replacement'
-                || mode === 'cold-second-remaining-replacement' || mode === 'cold-second-added-target') && reclaimSuccess) {
-                const current = await readState(selected.value.paths.coordination(stackId))
-                if (current.kind !== 'complete') throw new Error('reclaim progress record unavailable')
-                const nextProgress = reduceDrainOutcome({ record: current.value, outcome: reclaimSuccess })
-                if (!nextProgress) throw new Error('reclaim progress unavailable')
-                const committed = await commitDrainOutcome({
-                    outcome: reclaimSuccess, namespace: selected.value, stackId,
-                })
-                if (committed.kind !== 'complete') throw new Error('reclaim progress commit unavailable')
-                const nextDiscovery = await authenticatedDiscovery(root, [remainingVolume])
-                const nextPlan = await planReset({
-                    ...base, coordinationRecord: committed.value, expectedCoordinationRevision: committed.value.revision,
-                    discovery: nextDiscovery,
-                    confirmationDigest: preview.digest, continuation: reconciled.continuation ?? undefined,
-                    coordinationAddress: selected.value.paths.coordination(stackId),
-                })
-                if (nextPlan.kind !== 'complete' || !nextPlan.action) throw new Error(`second reset action unavailable: ${JSON.stringify(nextPlan)}`)
-                const nextReservation = await recoverDrainReservation({ namespace: selected.value, request: drainRequest })
-                if (nextReservation.kind !== 'complete') throw new Error('second drain recovery unavailable')
-                const nextAttempt = await reserveDrainAttempt({ namespace: selected.value, reservation: nextReservation.reservation })
-                if (nextAttempt.kind !== 'complete') throw new Error('second reclaim attempt unavailable')
-                const coldSecond = mode === 'cold-second-action-retry' || mode === 'cold-second-completed-replacement'
-                    || mode === 'cold-second-remaining-replacement' || mode === 'cold-second-added-target'
-                const nextRan = await executeReclaimAction({ action: nextPlan.action, attempt: nextAttempt, execute: async (step) => {
-                    const secondExecutableBytes = coldSecond ? await readFile(step.argv[0]) : undefined
-                    if (coldSecond) await writeFile(step.argv[0], '#!/bin/sh\nexit 1\n', { mode: 0o700 })
-                    const nextOutcome = await executeProbe(step)
-                    if (coldSecond) await writeFile(step.argv[0], secondExecutableBytes!, { mode: 0o700 })
-                    return nextOutcome
-                } })
-                if (coldSecond) {
-                    if (nextRan.kind !== 'not-started') throw new Error('second reset failure unavailable')
-                    const failure = nextRan.outcome
-                    const secondActive = await readState(selected.value.paths.coordination(stackId))
-                    if (secondActive.kind !== 'complete') throw new Error('second active reset attempt unavailable')
-                    const failedValue = reduceDrainOutcome({ record: secondActive.value, outcome: failure })
-                    if (!failedValue) throw new Error('second reset failure transition unavailable')
-                    const failedCommit = await commitDrainOutcome({
-                        outcome: failure, namespace: selected.value, stackId,
-                    })
-                    if (failedCommit.kind !== 'complete') throw new Error('second reset failure commit unavailable')
-                    vi.resetModules()
-                    const freshReclaim = await import('./reclaim.js')
-                    const freshClaims = await import('./claims.js')
-                    const coldReservation = await freshClaims.recoverDrainReservation({ namespace: selected.value, request: drainRequest })
-                    if (coldReservation.kind !== 'complete') throw new Error('second cold reset recovery unavailable')
-                    const coldResources = mode === 'cold-second-completed-replacement'
-                        ? [resource({ ...volume, id: 'volume-replacement' }), remainingVolume]
-                        : mode === 'cold-second-remaining-replacement'
-                            ? [resource({ ...remainingVolume, generation: sha('replacement-generation') })]
-                            : mode === 'cold-second-added-target'
-                                ? [resource({ id: 'volume-0', name: 'a-data', kind: 'volume', dataBearing: true,
-                                    generation: sha('added cold second target') }), remainingVolume]
-                            : [remainingVolume]
-                    const approvalDiscovery = await authenticatedDiscovery(root, coldResources)
-                    const operatorApproval = await freshReclaim.planReset({ ...base,
-                        coordinationRecord: failedCommit.value, expectedCoordinationRevision: failedCommit.value.revision,
-                        discovery: approvalDiscovery, runtimeExecutable: runtimeByDiscovery.get(approvalDiscovery)!,
-                        ...(mode === 'cold-second-added-target' ? { resettableVolumes: ['a-data', 'session-data', 'session-logs'] } : {}),
-                    })
-                    if (operatorApproval.kind !== 'preview') throw new Error(JSON.stringify(operatorApproval))
-                    const coldDiscovery = await authenticatedDiscovery(root, coldResources)
-                    const coldPlan = await freshReclaim.planReset({
-                        ...base, coordinationRecord: failedCommit.value,
-                        expectedCoordinationRevision: failedCommit.value.revision,
-                        discovery: coldDiscovery, runtimeExecutable: runtimeByDiscovery.get(coldDiscovery)!,
-                        confirmationDigest: preview.digest,
-                        recoveredReservation: coldReservation.reservation, operatorApproval,
-                        ...(mode === 'cold-second-added-target' ? { resettableVolumes: ['a-data', 'session-data', 'session-logs'] } : {}),
-                        coordinationAddress: selected.value.paths.coordination(stackId),
-                    })
-                    if (mode !== 'cold-second-action-retry') {
-                        expect(coldPlan).toMatchObject({ kind: 'refusal' })
-                        return
-                    }
-                    if (coldPlan.kind !== 'complete' || !coldPlan.action) throw new Error('second cold reset action unavailable')
-                    const coldAttempt = await freshClaims.reserveDrainAttempt({ namespace: selected.value, reservation: coldReservation.reservation })
-                    if (coldAttempt.kind !== 'complete') throw new Error('second cold reset retry attempt unavailable')
-                    const coldExecution = await freshReclaim.executeReclaimAction({ action: coldPlan.action, attempt: coldAttempt, execute: executeProbe })
-                    if (coldExecution.kind !== 'executed') throw new Error('second cold reset execution unavailable')
-                    const coldPost = await authenticatedDiscovery(root, [])
-                    expect(await freshReclaim.reconcileReclaimAction({ executed: coldExecution.executed, discovery: coldPost }))
-                        .toMatchObject({ kind: 'complete' })
-                    return
-                }
-                if (nextRan.kind !== 'executed') throw new Error('second reclaim execution unavailable')
-                const finalDiscovery = await authenticatedDiscovery(root,
-                    mode === 'completed-target-reappears' ? [volume]
-                        : mode === 'completed-target-is-replaced' ? [resource({ ...volume, id: 'volume-replacement' })] : [])
-                const final = await reconcileReclaimAction({ executed: nextRan.executed, discovery: finalDiscovery })
-                expect(final).toMatchObject({ kind: mode === 'completed-target-reappears' || mode === 'completed-target-is-replaced' ? 'refusal' : 'complete' })
-                if (mode === 'two-action-success') expect(final).toMatchObject({ kind: 'complete', continuation: null })
-            }
-        } finally {
-            vi.useRealTimers()
-            await rm(root, { recursive: true, force: true })
-        }
     })
 })

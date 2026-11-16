@@ -22,7 +22,7 @@ import { createHealthCommandAdapters } from './health-composition.js'
 import { createReadCommandAdapters } from './read-composition.js'
 import { runServiceExec, runServicePs, runServiceRestart } from './application/services.js'
 import { readState } from './state.js'
-import { decodeCoordinationRecord, inspectDestructiveDrainRecovery, readActiveStackInventory } from './claims.js'
+import { decodeCoordinationRecord, readActiveStackInventory } from './claims.js'
 import { checkGeneratedEnvironment } from './generated-application/check.js'
 import { syncGeneratedEnvironment } from './generated-application/sync.js'
 import { checkoutId, composeProjectName, holderId } from './identity.js'
@@ -789,7 +789,6 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         if (held.kind !== 'complete') throw new Error(JSON.stringify(held))
         expect(decodeCoordinationRecord(held.value, first.context.stackId)).toMatchObject({
             holders: [{ holderId: first.context.holderId }], lease: { released: false },
-            drain: { purpose: 'down', attempt: { status: 'active' } },
         })
         await rm(path, { recursive: true })
         await rename(backup, path)
@@ -799,29 +798,13 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(retained.value.value).not.toHaveProperty('teardownComplete')
         const inventory = await readActiveStackInventory(first.context.namespace)
         expect(inventory, JSON.stringify(inventory)).toMatchObject({ kind: 'complete', value: [{ stackId: first.context.stackId }] })
-        const repair = await inspectDestructiveDrainRecovery({ namespace: first.context.namespace,
-            stackId: first.context.stackId, holderId: first.context.holderId, purpose: 'down' })
-        if (repair.kind !== 'repairable') throw new Error(JSON.stringify(repair))
-        const savedMarker = join(first.candidate.root, 'saved-executor-marker')
-        await rename(repair.fence.markerPath, savedMarker)
-        await writeFile(repair.fence.markerPath, '{}', { mode: 0o600 })
-        const malformed = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters(input, executeProbe))
-        expect(malformed).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DRAIN_ATTEMPT_REPAIR_REQUIRED' }] })
-        const unreleased = await readState(first.context.namespace.paths.coordination(first.context.stackId))
-        if (unreleased.kind !== 'complete') throw new Error(JSON.stringify(unreleased))
-        expect(decodeCoordinationRecord(unreleased.value, first.context.stackId)).toMatchObject({
-            holders: [{ holderId: first.context.holderId }], lease: { released: false }, drain: { attempt: { status: 'active' } },
-        })
-        await rm(repair.fence.markerPath)
-        await rename(savedMarker, repair.fence.markerPath)
-
         await writeFile(join(first.candidate.root, 'docker-failure-needle'), 'volume ls\n')
         const unavailable = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters(input, executeProbe))
         expect(unavailable).toMatchObject({ kind: 'refusal', status: 2 })
         const retryable = await readState(first.context.namespace.paths.coordination(first.context.stackId))
         if (retryable.kind !== 'complete') throw new Error(JSON.stringify(retryable))
         expect(decodeCoordinationRecord(retryable.value, first.context.stackId)).toMatchObject({
-            holders: [{ holderId: first.context.holderId }], lease: { released: false }, drain: { attempt: { status: 'failed' } },
+            holders: [{ holderId: first.context.holderId }], lease: { released: false },
         })
         await writeFile(join(first.candidate.root, 'docker-failure-needle'), '\n')
 
@@ -833,7 +816,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(decodeLifecycleRecord(saved.value, first.context)?.value).toMatchObject({ teardownComplete: true, completedServices: [] })
     })
 
-    it('keeps interrupted reset previews read-only and reconciles an absent target only after approval', async () => {
+    it('keeps reset previews read-only and finishes an interrupted reset once it is approved again', async () => {
         const candidate = await stackFixture()
         await writeFile(candidate.configPath, (await readFile(candidate.configPath, 'utf8'))
             .replace('[environment]\n', '[environment]\ngenerated_host_paths = ["reset-cache"]\n'))
@@ -870,7 +853,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const before = await readState(address)
         if (before.kind !== 'complete') throw new Error(JSON.stringify(before))
         expect(decodeCoordinationRecord(before.value, loaded.result.stackId)).toMatchObject({
-            holders: [{ holderId: loaded.result.holderId }], drain: { purpose: 'reset', attempt: { status: 'active' } },
+            holders: [{ holderId: loaded.result.holderId }],
         })
         const retry = createDestructiveCommandAdapters(input, executeProbe)
         expect(await runReset({ configPath: input.configPath }, retry)).toMatchObject({ kind: 'preview', result: {

@@ -231,9 +231,7 @@ describe('destructive command composition', () => {
             instance: { launcher: { stackId: loaded.result.stackId, checkoutId: loaded.result.checkoutId } },
             down: {
                 stackId: loaded.result.stackId,
-                coordinationAddress: loaded.result.namespace.paths.coordination(loaded.result.stackId),
                 declaredCacheIds: [],
-                dependencyCaches: [],
                 discovery: { resources: expect.arrayContaining([
                     expect.objectContaining({ id: 'synthetic-volume-00', kind: 'volume' }),
                     expect.objectContaining({ id: 'synthetic-volume-11', kind: 'volume' }),
@@ -241,7 +239,6 @@ describe('destructive command composition', () => {
             },
             reset: {
                 stackId: loaded.result.stackId,
-                coordinationAddress: loaded.result.namespace.paths.coordination(loaded.result.stackId),
                 requesterHolderId: loaded.result.holderId,
                 resettableVolumes: [],
                 generatedHostPaths: [],
@@ -254,8 +251,8 @@ describe('destructive command composition', () => {
         expect(inspectionCalls).toBe(1)
         expect(maximumActiveInspections).toBeLessThanOrEqual(4)
 
-        // A drain step re-reads reclaim evidence for the checkout root readiness measured, without
-        // measuring the runtime again.
+        // The re-read after removals reads reclaim evidence for the checkout root readiness measured,
+        // without measuring the runtime again.
         const topologyReads = () => readFile(join(root, 'topology-reads'), 'utf8').then((text) => text.length, () => 0)
         const readsBefore = await topologyReads()
         const reclaimOnly = await adapters.observeReclaim!(destructive.result)
@@ -283,7 +280,6 @@ describe('destructive command composition', () => {
         const stoppedDown = await runDown({ configPath }, adapters)
         await rm(join(root, 'daemon-stopped'))
         expect(stoppedDown).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'RUNTIME_UNAVAILABLE' }] })
-        expect(JSON.stringify(stoppedDown)).not.toContain('DRAIN_ATTEMPT_REPAIR_REQUIRED')
 
         const preview = await runReset({ configPath }, adapters)
         expect(preview).toMatchObject({

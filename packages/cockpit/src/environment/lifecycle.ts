@@ -8,7 +8,6 @@ import {
 } from './contract.js'
 import { consumeLifecycleStageProjection, type LifecycleStageProjection } from './lifecycle-stage.js'
 import { consumePortLeaseProjection, type PortLeaseProjection } from './ports.js'
-import type { ReclaimTargetEnvelope } from './reclaim.js'
 import {
     isRuntimeTopologyEvidence,
     isRuntimeServiceEvidence,
@@ -18,14 +17,12 @@ import {
     type RuntimeServiceEvidence,
     type RuntimeTopologyEvidence,
 } from './runtime.js'
-import type { DrainReservationRequest } from './claims.js'
 
 const SHA256 = /^[a-f0-9]{64}$/
 const SERVICE_ID = /^[a-z0-9][a-z0-9_.-]*$/
 const MAX_BASIS_BYTES = 1_048_576
 const MAX_SERVICES = 4_096
 const MAX_EDGES = 16_384
-const MAX_VALIDITY_MS = 300_000
 const DOMAIN = 'cockpit-lifecycle-work-basis/v1'
 
 type PortOwnership = PortLeaseProjection['ownership']
@@ -34,8 +31,6 @@ export interface LifecycleIssuance {
     readonly topology: RuntimeTopologyEvidence
     readonly firstIncompleteServiceIndex: number
     readonly portOwnership: PortOwnership
-    readonly drainRequest: DrainReservationRequest | null
-    readonly reclaim: ReclaimTargetEnvelope | null
 }
 
 export type UpLifecycleResult =
@@ -43,24 +38,11 @@ export type UpLifecycleResult =
     | { readonly kind: 'noop'; readonly plan: LifecyclePlan }
     | LifecycleRefusal
 
-export type SleepLifecycleResult =
-    | { readonly kind: 'release-only'; readonly plan: LifecyclePlan }
-    | { readonly kind: 'drain'; readonly plan: LifecyclePlan; readonly request: DrainReservationRequest }
-    | LifecycleRefusal
-
-export type DestructiveLifecycleResult =
-    | { readonly kind: 'drain'; readonly plan: LifecyclePlan; readonly request: DrainReservationRequest }
-    | LifecycleRefusal
-
 type LifecycleRefusal = { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
 
 interface PlannerEvidence {
     readonly runtime: RuntimeLifecycleProjection
     readonly ports: PortLeaseProjection
-}
-
-interface WorkBasisContext {
-    readonly reclaim?: ReclaimTargetEnvelope
 }
 
 declare const upPlanningAuthorityBrand: unique symbol
@@ -133,7 +115,6 @@ function workBasis(
     verb: LifecyclePlan['verb'],
     semantics: RuntimeLifecycleSemantics,
     ports: PortLeaseProjection,
-    context: WorkBasisContext = {},
 ): string | undefined {
     const order = [...semantics.topology.order]
     if (order.length > MAX_SERVICES || !unique(order, String) || order.some((service) => !SERVICE_ID.test(service))
@@ -178,14 +159,6 @@ function workBasis(
         runtimeChecks: { expectedMountSources },
         topology: { order, services: topologyServices }, services: serviceSemantics,
         ports: { ...ports.lease.ports },
-        ...(context.reclaim === undefined ? {} : {
-            reclaim: {
-                planDigest: context.reclaim.planDigest,
-                commitments: context.reclaim.commitments.map(({ targetId, format, sha256, body }) => ({
-                    targetId, format, sha256, body,
-                })),
-            },
-        }),
     })
     const serialized = JSON.stringify(basis)
     if (Buffer.byteLength(serialized, 'utf8') > MAX_BASIS_BYTES) return undefined
@@ -346,132 +319,8 @@ export function planAdmittedUp(input: {
     if (!plan) return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'lifecycle plan could not be represented', 'up')
     issue(plan, {
         topology: evidence.runtime.topology, firstIncompleteServiceIndex: completed.length,
-        portOwnership: evidence.ports.ownership, drainRequest: null, reclaim: null,
+        portOwnership: evidence.ports.ownership,
     })
     if (complete) return { kind: 'noop', plan }
     return { kind: 'execute', mode: evidence.mode, plan }
-}
-
-function validDrainInputs(generation: string, runtimeStopValidForMs: number, reclaimValidForMs?: number): boolean {
-    const validity = (ms: number) => Number.isSafeInteger(ms) && ms >= 1 && ms <= MAX_VALIDITY_MS
-    return SHA256.test(generation) && validity(runtimeStopValidForMs)
-        && (reclaimValidForMs === undefined || validity(reclaimValidForMs))
-}
-
-function drainRequest(
-    purpose: 'sleep' | 'down' | 'reset',
-    evidence: PlannerEvidence,
-    generation: string,
-    runtimeStopValidForMs: number,
-    reclaimValidForMs?: number,
-    reclaim?: ReclaimTargetEnvelope,
-): DrainReservationRequest {
-    const operationBasis = workBasis(purpose, evidence.runtime.semantics, evidence.ports,
-        reclaim === undefined ? {} : { reclaim })!
-    const targetIds = [
-        evidence.runtime.semantics.stackId,
-        ...(reclaim?.commitments.map(({ targetId }) => targetId) ?? []),
-    ].sort()
-    const actions = [
-        { stage: 'runtime-stop' as const, targetId: evidence.runtime.semantics.stackId, validForMs: runtimeStopValidForMs },
-        ...(reclaim?.commitments.map(({ targetId, ...targetCommitment }) => ({
-            stage: 'reclaim' as const, targetId, validForMs: reclaimValidForMs!, targetCommitment: { ...targetCommitment },
-        })) ?? []),
-    ]
-    return {
-        purpose, stackId: evidence.runtime.semantics.stackId,
-        holderId: evidence.ports.ownership.holderId, requesterId: evidence.ports.ownership.holderId,
-        configSha256: evidence.runtime.semantics.configSha256,
-        planDigest: reclaim?.planDigest ?? operationBasis,
-        operationBasis, generation,
-        targetIds, actions, expectedCoordinationRevision: evidence.ports.ownership.recordRevision,
-    }
-}
-
-function passivePlan(
-    verb: 'sleep' | 'down' | 'reset', evidence: PlannerEvidence, generation: string,
-    steps: LifecyclePlan['steps'], request: DrainReservationRequest | null, reclaim: ReclaimTargetEnvelope | null,
-): LifecyclePlan | undefined {
-    const basis = workBasis(verb, evidence.runtime.semantics, evidence.ports,
-        reclaim === null ? {} : { reclaim })
-    if (!basis) return undefined
-    const plan = lifecyclePlan(verb, basis, generation, [], steps, 0, [])
-    if (!plan) return undefined
-    return issue(plan, {
-        topology: evidence.runtime.topology, firstIncompleteServiceIndex: 0,
-        portOwnership: evidence.ports.ownership, drainRequest: request, reclaim,
-    })
-}
-
-export function planSleep(input: {
-    readonly runtime: RuntimeLifecycleProjection
-    readonly ports: PortLeaseProjection
-    readonly operationGeneration: string
-    readonly runtimeStopValidForMs: number
-}): SleepLifecycleResult {
-    if (!validDrainInputs(input.operationGeneration, input.runtimeStopValidForMs)) {
-        return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'sleep planning evidence is invalid', 'sleep')
-    }
-    const evidence = consumePlannerEvidence(input.runtime, input.ports)
-    if (!evidence) return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'sleep planning evidence is invalid', 'sleep')
-    if (evidence.ports.ownership.holderCount > 1) {
-        const steps = [{ id: 'lifecycle:claim:release', kind: 'claim' as const, action: 'release' as const }]
-        const plan = passivePlan('sleep', evidence, input.operationGeneration, steps, null, null)
-        return plan ? { kind: 'release-only', plan }
-            : refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'sleep plan could not be represented', 'sleep')
-    }
-    const request = drainRequest('sleep', evidence, input.operationGeneration, input.runtimeStopValidForMs)
-    const plan = passivePlan('sleep', evidence, input.operationGeneration,
-        [{ id: 'lifecycle:preflight', kind: 'preflight' as const }], request, null)
-    return plan ? { kind: 'drain', plan, request }
-        : refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, 'sleep plan could not be represented', 'sleep')
-}
-
-function planDestructive(
-    verb: 'down' | 'reset',
-    input: DestructivePlanningInput,
-): DestructiveLifecycleResult {
-    if (!validDrainInputs(input.operationGeneration, input.runtimeStopValidForMs, input.reclaimValidForMs)) {
-        return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, `${verb} planning evidence is invalid`, verb)
-    }
-    const evidence = consumePlannerEvidence(input.runtime, input.ports)
-    const reclaim = input.reclaim
-    if (!evidence || reclaim.purpose !== verb || reclaim.stackId !== evidence.runtime.semantics.stackId
-        || reclaim.configSha256 !== evidence.runtime.semantics.configSha256
-        || verb === 'reset' && reclaim.commitments.length === 0
-        || !unique(reclaim.commitments, ({ targetId }) => targetId)
-        || reclaim.commitments.some(({ targetId }, index) => index > 0
-            && reclaim.commitments[index - 1]!.targetId >= targetId)
-        || reclaim.commitments.some(({ targetId }) => targetId === evidence.runtime.semantics.stackId)) {
-        return refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
-            `${verb} requires valid runtime, port, and reclaim evidence`, verb)
-    }
-    if (evidence.ports.ownership.holderCount !== 1) {
-        return refusal(ENVIRONMENT_CODES.CLAIM_CO_TENANT, `${verb} requires exact exclusive ownership`, verb)
-    }
-    const request = drainRequest(
-        verb, evidence, input.operationGeneration, input.runtimeStopValidForMs,
-        input.reclaimValidForMs, reclaim,
-    )
-    const plan = passivePlan(verb, evidence, input.operationGeneration,
-        [{ id: 'lifecycle:preflight', kind: 'preflight' as const }], request, reclaim)
-    return plan ? { kind: 'drain', plan, request }
-        : refusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, `${verb} plan could not be represented`, verb)
-}
-
-interface DestructivePlanningInput {
-    readonly runtime: RuntimeLifecycleProjection
-    readonly ports: PortLeaseProjection
-    readonly reclaim: ReclaimTargetEnvelope
-    readonly operationGeneration: string
-    readonly runtimeStopValidForMs: number
-    readonly reclaimValidForMs: number
-}
-
-export function planDown(input: DestructivePlanningInput): DestructiveLifecycleResult {
-    return planDestructive('down', input)
-}
-
-export function planResetLifecycle(input: DestructivePlanningInput): DestructiveLifecycleResult {
-    return planDestructive('reset', input)
 }

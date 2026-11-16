@@ -6,10 +6,10 @@ import {
     addCoordinationHolder,
     coordinationStateRecord,
     decodeCoordinationRecord,
-    isDrainActive,
     removeExactCoordinationHolder,
     releaseClaim,
     readRootPortInventory,
+    withStackTeardown,
     type CoordinationRecord,
     type HolderProcess,
     type PortLeaseRecord,
@@ -1048,7 +1048,6 @@ export async function leasePortFamily(supplied: {
     if (priorResult.kind !== 'complete' && priorResult.kind !== 'missing') return stateRefusal(priorResult)
     const prior = decodeCoordinationRecord(priorResult.kind === 'complete' ? priorResult.value : null, input.stackId)
     if (!prior) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId)
-    if (isDrainActive(prior)) return refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'port leasing is blocked while the stack is draining', input.stackId)
     const observed = observePortFamilies({
         config: input.config,
         requestedAt: input.now,
@@ -1066,7 +1065,6 @@ export async function leasePortFamily(supplied: {
     const allocateFamily = () => transactLease<PortRefusal | LeaseTransactionComplete>(input.namespace, input.stackId, input.holderId, async (current) => {
         const currentValue = decodeCoordinationRecord(current, input.stackId)
         if (!currentValue) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination record is malformed', input.stackId))
-        if (isDrainActive(currentValue)) return abortStateTransaction(refuse(ENVIRONMENT_CODES.CLAIM_CO_TENANT, 'port leasing is blocked while the stack is draining', input.stackId))
         const added = addCoordinationHolder(currentValue, { holderId: input.holderId, checkoutId: input.checkoutId, ...input.holderProcess }, input.now)
         if (!added) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination holder set cannot accept the requested holder', input.holderId))
         const currentLease = currentValue.lease
@@ -1159,7 +1157,10 @@ export async function leasePortFamily(supplied: {
             'release an inactive stack, stop the named host listener, or extend the declared candidate range',
         ))
     })
-    const locked = await withStateRootPortLock(input.namespace, { ownerId: input.holderId, contentionTimeoutMs: 2_000 }, allocateFamily)
+    // A sleep, down or reset of this stack holds its teardown lock while it stops and removes it;
+    // leasing its ports then would start the stack under a teardown, so up refuses instead of waiting.
+    const locked = await withStateRootPortLock(input.namespace, { ownerId: input.holderId, contentionTimeoutMs: 2_000 },
+        () => withStackTeardown(input.namespace, input.stackId, input.holderId, allocateFamily, 0))
     if (locked.kind === 'missing') return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'root port transaction returned no result', locked.path)
     if (locked.kind !== 'complete') return stateRefusal(locked)
     const transaction = locked.value

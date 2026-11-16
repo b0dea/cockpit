@@ -428,13 +428,13 @@ declared volume has, and an `external` volume, because cockpit cannot label it. 
 that does not exist yet is left out of the preview. A volume an earlier `cockpit.toml` created is
 still this stack's data, and `reset` deletes it.
 
-Every destructive action is recorded durably before it starts. If cockpit is interrupted, a detached
-supervisor keeps track of that attempt; the next `sleep`, `down` or approved `reset` has it stop the
-action's process group, confirms the group is gone, and retries the saved action. If the target was
-already removed, cockpit checks again and marks the action complete. `DRAIN_ATTEMPT_REPAIR_REQUIRED`
-means the attempt marker, supervisor identity, control socket or stop confirmation did not match;
-cockpit then keeps the attempt and refuses any overlapping cleanup. Do not remove its state or
-runtime resources by hand: that destroys the records it needs to repair safely.
+`sleep`, `down` and `reset` each take a lock on the stack, then stop it, read what Docker reports
+now, and remove what the ownership labels show is this stack's, one resource at a time by its id.
+They read Docker again after the removals and refuse when a removed resource is still listed. If
+one is interrupted, run the same command again: stopping is a no-op on a stopped stack, and it
+removes only what is still there. A lock left by a command that was killed is taken over by the
+next one. While one of them runs, another refuses with `STATE_LOCKED`, and `up` refuses to lease
+the stack's ports.
 
 ### List and prune stacks across the machine
 
@@ -460,11 +460,10 @@ like that. Once it is really gone, `git worktree prune` in its main checkout (af
 `git worktree unlock` for a locked one) lets `stacks prune` remove its stack.
 
 A stack is `orphaned` only when its checkout is proven `missing`. Every other stack is kept: one
-whose checkout exists or cannot be found, one a `down` or `reset` is still draining, the current
-checkout's own, and one whose state this version cannot read, because a newer version may still use
-it. A state folder this version cannot read is listed; one in the colon spelling an earlier build
-used is orphaned once none of its stacks is kept, and one named as current versions name their state
-is kept.
+whose checkout exists or cannot be found, the current checkout's own, and one whose state this
+version cannot read, because a newer version may still use it. A state folder this version cannot
+read is listed; one in the colon spelling an earlier build used is orphaned once none of its stacks
+is kept, and one named as current versions name their state is kept.
 
 `stacks prune` shows exactly what it would remove and a digest of it, and removes nothing:
 

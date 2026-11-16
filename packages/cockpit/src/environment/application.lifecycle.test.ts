@@ -572,7 +572,7 @@ describe('lifecycle application contracts', () => {
         const observation = Object.freeze({ service: 'api', containerId })
         const evidence = Object.freeze({ service: 'api', containerId })
         stubUpPlanner(() => ({ kind: 'execute', mode: 'start', plan } as never))
-        applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({ topology, firstIncompleteServiceIndex: 0, portOwnership: {}, drainRequest: null, reclaim: null } as never)
+        applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({ topology, firstIncompleteServiceIndex: 0, portOwnership: {} } as never)
         applicationOwners.runtime.startRuntimeService = async ({ execute }) => {
             for (const step of [steps.start, steps.status, steps.identity, steps.inspect]) await execute(step as never)
             return { kind: 'observed', observation } as never

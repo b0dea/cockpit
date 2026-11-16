@@ -349,6 +349,13 @@ switch (`${command} ${sub}`) {
         break
     }
     case 'container rm': case 'volume rm': case 'network rm':
+        // A journey arms `fail-removal` with how many removals still succeed; the next one fails
+        // before it removes anything, as a daemon error or a killed command leaves a teardown half done.
+        if (existsSync(join(stateDir, 'fail-removal'))) {
+            const left = Number(readFileSync(join(stateDir, 'fail-removal'), 'utf8'))
+            if (left > 0) writeFileSync(join(stateDir, 'fail-removal'), String(left - 1))
+            else { rmSync(join(stateDir, 'fail-removal')); fail(`Error response from daemon: could not remove ${operands(rest, []).join(' ')}`) }
+        }
         kinds[command].remove(operands(rest, []))
         save()
         out(operands(rest, []).join('\n'))

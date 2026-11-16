@@ -279,25 +279,13 @@ describe('clean-checkout controls', () => {
 // silence is correct; a new one carries the cause, narrows to the error it expects, or earns an entry.
 // The site is the module and the enclosing function, so the list survives edits that move lines.
 const CLOSE_AFTER_DECISION = 'closing a descriptor after the read or write whose result is already decided'
-const CLEANUP_AFTER_REPORTED_FAILURE = 'removing a temporary file after a failure that is already returned'
 const SIGNAL_RACES_EXIT = 'signalling a process that may already have exited; the caller authenticates that it is gone'
 const PARSE_REFUSED_NEXT = 'a parse failure leaves the value unset, and the next statement refuses it'
 const JUSTIFIED_EMPTY_CATCHES: readonly (readonly [site: string, why: string])[] = [
-    ['packages/cockpit/libexec/fence-marker.cjs#readFenceMarkerFile', CLOSE_AFTER_DECISION],
-    ['packages/cockpit/libexec/fence-marker.cjs#replaceApprovedActiveMarker', CLOSE_AFTER_DECISION],
-    ['packages/cockpit/libexec/fence-marker.cjs#replaceApprovedActiveMarker', CLEANUP_AFTER_REPORTED_FAILURE],
-    ['packages/cockpit/libexec/fenced-supervisor.cjs#<module>', 'a marker that cannot be removed stays visible, and the state scan refuses it'],
-    ['packages/cockpit/libexec/fenced-supervisor.cjs#removeSocket', 'an absent socket is the goal, and repair checks absence itself'],
     ['packages/cockpit/src/environment-exec/execute.ts#checkFilesystem', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/environment-exec/execute.ts#consumedFileMatches', CLOSE_AFTER_DECISION],
-    ['packages/cockpit/src/environment-exec/execute.ts#publishFenceMarker', CLOSE_AFTER_DECISION],
-    ['packages/cockpit/src/environment-exec/execute.ts#publishFenceMarker', 'the prepared marker is either the linked winner or absent'],
-    ['packages/cockpit/src/environment-exec/execute.ts#spawnFencedSupervisor', SIGNAL_RACES_EXIT],
-    ['packages/cockpit/src/environment-exec/execute.ts#spawnFencedSupervisor', 'a socket that cannot be removed stays visible, and repair keeps refusing while it exists'],
-    ['packages/cockpit/src/environment-exec/execute.ts#spawnFencedSupervisor', 'a marker that cannot be removed stays visible, and the state scan refuses it'],
     ['packages/cockpit/src/environment-exec/execute.ts#stageVerifiedFile', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/environment-exec/execute.ts#stageVerifiedFile', CLOSE_AFTER_DECISION],
-    ['packages/cockpit/src/environment-exec/execute.ts#sweepFenceResidue', 'housekeeping after the attempt is cleaned up, and a later sweep retries'],
     ['packages/cockpit/src/environment-exec/execute.ts#terminate', SIGNAL_RACES_EXIT],
     ['packages/cockpit/src/environment-exec/execute.ts#terminate', SIGNAL_RACES_EXIT],
     ['packages/cockpit/src/environment-exec/execute.ts#terminate', SIGNAL_RACES_EXIT],
@@ -361,7 +349,6 @@ const SIDE_TABLE = 'a side table one composition keeps for the run contexts it r
 const PATH_TRACKING = 'tracks the objects on the path being copied, so a cyclic value is refused'
 const ENVIRONMENT_IDENTITY_TABLES: readonly (readonly [site: string, why: string])[] = [
     [`${ENV}claims.ts#issuedListenerHosts`, ISSUED],
-    [`${ENV}claims.ts#seen`, PATH_TRACKING],
     [`${ENV}contract.ts#ancestors`, PATH_TRACKING],
     [`${ENV}contract.ts#ancestors`, PATH_TRACKING],
     [`${ENV}destructive-composition.ts#issued`, SIDE_TABLE],
