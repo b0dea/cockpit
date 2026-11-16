@@ -1,6 +1,6 @@
 // Owns the machine-local guard identity file: its path, its bytes and how `sync` writes it.
 // Tracked guard bytes must be identical on every clone, so everything that names this machine
-// (Node, the installed cockpit module, root and configuration inode numbers) lives here,
+// (the Node path, the installed cockpit module, root and configuration inode numbers) lives here,
 // in a directory that ignores itself. It decides nothing: the guard application authenticates the
 // file against the running process and the published surfaces before any policy is resolved.
 import { exactKeys } from '../exact-keys.js'
@@ -19,9 +19,15 @@ export interface GuardHandlerIdentity {
     readonly configPath: string
     readonly configSha256: string
     readonly configInode: string
+    /**
+     * The Node the hook runs, by the path the search path of the sync that wrote this names it. Any Node
+     * found there runs the guard: a terminal and an agent tool on different Node installs, or a Node
+     * upgraded in place, held every guarded call until a person ran sync, and an agent able to replace
+     * Node could as well replace the unhashed modules the handler imports.
+     */
     readonly node: string
+    /** The digest of the Node file sync ran, only to spare the guard re-hashing it while its fingerprint holds. */
     readonly nodeSha256: string
-    /** The stat fingerprint of the Node file `sync` hashed; while it holds, the guard skips re-hashing. */
     readonly nodeFingerprint: string
     readonly module: string
     readonly moduleSha256: string

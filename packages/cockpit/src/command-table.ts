@@ -1,11 +1,8 @@
 import { SURFACE_TARGETS } from './surfaces/contract.js'
-import type { ParseArgsConfig } from 'node:util'
-import { isAbsolute, normalize, resolve } from 'node:path'
-import { WORK_ORDER_ID } from './work-orders/contract.js'
-import { snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from './environment/contract.js'
-import { innerCommand, isSensitiveGuardName, WRAPPING_COMMANDS, type GuardInvocationProfile } from './guards/evaluator.js'
+import { parseArgs, type ParseArgsConfig } from 'node:util'
+import { resolve } from 'node:path'
+import { isSensitiveGuardName, WRAPPING_COMMANDS } from './guards/evaluator.js'
 import { GUARD_HANDLER_ARGV } from './guards/harness-adapter.js'
-import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
 
 export function isRecordedAnswerField(value: string): boolean {
     return value.length <= 256 && /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/.test(value)
@@ -88,7 +85,7 @@ export interface CommandDefinition {
     handler: HandlerIdentifier
     options: NonNullable<ParseArgsConfig['options']>
     visibility: 'public'
-    ordinary: OrdinaryCommandMetadata
+    agent?: AgentLimits
 }
 
 const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
@@ -156,67 +153,38 @@ export function describePublicOption(name: string): string {
     return description
 }
 
-type OrdinaryValueRole = 'confined-path' | 'resolved-config' | 'declared-service' | 'declared-gate' | 'gate-mode' | 'gate-selector'
-    | 'identifier' | 'route' | 'label' | 'schema-reference' | 'schema-draft' | 'field' | 'tail' | 'since' | 'sha256' | 'surface-target' | 'evaluator-tool' | 'compose-profile'
-interface OrdinaryOption {
-    readonly kind: 'flag' | 'value'
-    readonly role: 'boolean' | OrdinaryValueRole
-    readonly repetition: 'singleton' | 'repeated'
-    readonly required?: true
-}
-type OrdinaryCommandMetadata = Readonly<{ availability: 'unavailable'; reason: string }> | Readonly<{
-    availability: 'available'
-    executableRole: 'installed-cockpit'
-    command: HandlerIdentifier
-    // An `operation` positional must be one of `operations`, the exact subcommand words.
-    positional: Readonly<{ min: number; max: number; roles: readonly ['confined-root'] | readonly ['operation'] | readonly ['version'] | readonly ['slug', 'confined-root'] | readonly ['operation', 'surface-target'] | readonly []; operations?: readonly string[] }>
-    options: Readonly<Record<string, OrdinaryOption>>
-    cwdRole: 'canonical-root'
-    configuration: 'resolved' | 'none'
-    forbidden: Readonly<{ presence: readonly string[] }>
+/**
+ * What keeps an agent from running a command unprompted: it changes what agents may do, or it waits for
+ * a person. The guard asks a person for such a spelling; it treats every other cockpit command as an
+ * ordinary program, judged by the words it spells.
+ */
+type AgentLimits = Readonly<{
+    /** Why the command is never an agent's. */
+    person?: string
+    /** The only subcommand words an agent may run; another is a person's. */
+    operations?: readonly string[]
+    /** Flags only a person passes. */
+    personFlags?: readonly string[]
+    /** The positional, by index, that names a directory an agent may name only inside the allowed roots. */
+    confined?: number
     // Admitted only where cockpit.toml grants it: browser preapproval, on by default for and allowed
-    // only on isolated data that cannot reach production, or an [autonomy] field set to agent.
+    // only on isolated data that cannot reach production, or an [autonomy] field set to agent. A dry
+    // run writes nothing, so no grant gates it.
     requires?: OrdinaryGrant
-    // These flags, which the command otherwise refuses an agent, are admitted where cockpit.toml grants it.
+    // These flags, which the command otherwise lets an agent run, are admitted where cockpit.toml grants it.
     flagGrant?: Readonly<{ flags: readonly string[]; grant: OrdinaryGrant }>
 }>
 
-// Mirrors EvaluatorTool in schema.ts, which this data table may not import.
-const EVALUATOR_TOOLS: readonly string[] = ['codexcli', 'claudecode', 'opencode']
-// Mirrors UNCONFIRMABLE_ANSWERS in schema.ts. Every answer is admitted, so confirm itself names the
-// person an answer needs instead of the guard refusing it unexplained.
-const UNCONFIRMED_ANSWER_WORDS: readonly string[] = Object.freeze(['cockpit.name', 'sibling', 'estate.runnable', 'ports.bases',
-    'environment.install_policies', 'environment.test_data', 'environment.compose_files', 'environment.machine', 'environment.posture',
-    'testing', 'guards', 'work.grading'])
-// A declared route's name or its path; the command checks it against the declared routes.
-const ROUTE_SELECTOR = /^(?:[a-z0-9][a-z0-9_-]{0,63}|\/(?!\/)[^\s#\x00-\x1f\x7f]{0,511})$/
-const EXACT_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
-const flag: OrdinaryOption = Object.freeze({ kind: 'flag', role: 'boolean', repetition: 'singleton' })
-function value(role: OrdinaryValueRole, required = false): OrdinaryOption {
-    return { kind: 'value', role, repetition: 'singleton', ...(required ? { required: true as const } : {}) }
-}
-/**
- * One row per CLI flag: how the parser reads it and, when an agent may pass it, the role its value
- * must satisfy. A flag with no `agent` role is never admitted in an ordinary agent invocation.
- */
-type Flag = Readonly<{ type: 'string' | 'boolean'; default?: string | boolean; multiple?: true; agent?: OrdinaryOption }>
-const str = (agent?: OrdinaryOption, fallback?: string): Flag => ({ type: 'string', ...fallback === undefined ? {} : { default: fallback }, ...agent ? { agent } : {} })
-const bool = (agent?: OrdinaryOption): Flag => ({ type: 'boolean', default: false, ...agent ? { agent } : {} })
-const configFlag = str(value('resolved-config', true))
-const jsonFlag = bool(flag)
+/** One row per CLI flag: how the parser reads it. */
+type Flag = Readonly<{ type: 'string' | 'boolean'; default?: string | boolean; multiple?: true }>
+const str = (fallback?: string): Flag => ({ type: 'string', ...fallback === undefined ? {} : { default: fallback } })
+const bool = (): Flag => ({ type: 'boolean', default: false })
+const configFlag = str()
+const jsonFlag = bool()
 const configured = { config: configFlag, json: jsonFlag } as const
-const workOrderFlag = str(value('identifier', true))
-const profileFlag: Flag = { type: 'string', multiple: true, agent: { kind: 'value', role: 'compose-profile', repetition: 'repeated' } }
-const serviceFlag = str(value('declared-service', true))
-
-// The flags and their roles are filled in from `flags` when the table is built.
-function ordinary(command: HandlerIdentifier, extra: Partial<Extract<OrdinaryCommandMetadata, { availability: 'available' }>> = {}): OrdinaryCommandMetadata {
-    return { availability: 'available', executableRole: 'installed-cockpit', command,
-        positional: { min: 0, max: 0, roles: [] as const }, options: {},
-        cwdRole: 'canonical-root', configuration: 'resolved',
-        forbidden: { presence: [] }, ...extra }
-}
-function unavailable(reason: string): OrdinaryCommandMetadata { return { availability: 'unavailable', reason } }
+const workOrderFlag = str()
+const profileFlag: Flag = { type: 'string', multiple: true }
+const serviceFlag = str()
 
 // `<slug>:` and plain directories, ending in exactly this name: no `.` or `..` segment can climb out.
 const SCHEMA_REFERENCE = /^(?:[a-z0-9][a-z0-9-]{0,63}:)?(?:(?!\.\.?\/)[A-Za-z0-9._@+-]+\/)*\.env\.schema$/
@@ -236,9 +204,9 @@ export function schemaFileReference(text: string): string | undefined {
     return SCHEMA_REFERENCE.test(file) ? file : undefined
 }
 
-const browserAdmission = Object.freeze({ requires: 'browser-preapproval' as const })
+const browserAdmission: AgentLimits = Object.freeze({ requires: 'browser-preapproval' })
 // --interactive asks for a person at a terminal, so an agent invocation never carries it.
-const personFlag = Object.freeze({ forbidden: Object.freeze({ presence: Object.freeze(['interactive']) }) })
+const personFlag: AgentLimits = Object.freeze({ personFlags: Object.freeze(['interactive']) })
 
 
 export function isWorkHandler(value: HandlerIdentifier): value is WorkHandlerIdentifier {
@@ -255,15 +223,11 @@ const sources = [
         usage: '[<root>] [options]',
         handler: 'init',
         visibility: 'public',
-        ordinary: ordinary('init', {
-            configuration: 'none',
-            positional: Object.freeze({ min: 1, max: 1, roles: Object.freeze(['confined-root'] as const) }),
-            forbidden: Object.freeze({ presence: Object.freeze(['interactive', 'answers', 'accept-preview', 'accept-defaults']) }),
-        }),
-        flags: { target: str(value('surface-target', true)),
+        agent: { personFlags: ['interactive', 'answers', 'accept-preview', 'accept-defaults', 'scaffold-compose', 'command', 'port', 'with'] },
+        flags: { target: str(),
             interactive: bool(), json: jsonFlag,
             answers: str(), 'accept-preview': str(), 'accept-defaults': str(),
-            'reset-answer': str(value('field')), 'accept-reset': str(value('sha256')),
+            'reset-answer': str(), 'accept-reset': str(),
             'scaffold-compose': str(), command: str(), port: str(), with: str() },
     },
     {
@@ -272,8 +236,8 @@ const sources = [
         summary: 'Clone or locate the declared sibling repositories and link them',
         handler: 'setup',
         visibility: 'public',
-        ordinary: ordinary('setup', { flagGrant: Object.freeze({ flags: Object.freeze(['write-instruction-pointers', 'write-instruction-files']), grant: 'autonomy-instruction-files' as const }) }),
-        flags: { config: configFlag, 'write-instruction-pointers': bool(flag), 'write-instruction-files': bool(flag), json: jsonFlag },
+        agent: { flagGrant: { flags: ['write-instruction-pointers', 'write-instruction-files'], grant: 'autonomy-instruction-files' } },
+        flags: { config: configFlag, 'write-instruction-pointers': bool(), 'write-instruction-files': bool(), json: jsonFlag },
     },
     {
         name: 'use',
@@ -284,8 +248,8 @@ const sources = [
         visibility: 'public',
         // The checkout must already lie inside a directory the guard lets the agent write, so an agent
         // can point the stack at its own worktree but never widen its reach to a new directory.
-        ordinary: ordinary('use', { positional: Object.freeze({ min: 1, max: 2, roles: Object.freeze(['slug', 'confined-root'] as const) }) }),
-        flags: { config: configFlag, clear: bool(flag), json: jsonFlag },
+        agent: { confined: 1 },
+        flags: { config: configFlag, clear: bool(), json: jsonFlag },
     },
     {
         name: 'pull',
@@ -293,8 +257,6 @@ const sources = [
         summary: 'Fast-forward the cockpit and its siblings to their upstreams',
         handler: 'pull',
         visibility: 'public',
-        // Fetch and a fast-forward only: it never merges, rebases, stashes or touches a modified checkout.
-        ordinary: ordinary('pull'),
         flags: configured,
     },
     {
@@ -304,7 +266,7 @@ const sources = [
         usage: 'add|remove <slug> [options]',
         handler: 'sibling',
         visibility: 'public',
-        ordinary: unavailable('sibling add and remove rewrite cockpit.toml'),
+        agent: { person: 'sibling add and remove rewrite cockpit.toml' },
         flags: { config: str(), create: bool(), from: str(), remote: str(), dir: str(), var: str(), purpose: str(), mount: str(),
             'instruction-pointer': bool(), json: bool() },
     },
@@ -317,9 +279,8 @@ const sources = [
         visibility: 'public',
         // tool add edits only [surfaces] tools, and an added tool never widens what agents may do, so the
         // agent syncs it as [autonomy] sync allows. tool remove deletes that tool's guard, so it is a person's.
-        ordinary: ordinary('tool', { positional: Object.freeze({ min: 2, max: 2, roles: Object.freeze(['operation', 'surface-target'] as const),
-            operations: Object.freeze(['add']) }) }),
-        flags: { config: configFlag, 'dry-run': bool(flag), json: jsonFlag },
+        agent: { operations: ['add'] },
+        flags: { config: configFlag, 'dry-run': bool(), json: jsonFlag },
     },
     {
         name: 'confirm',
@@ -328,12 +289,6 @@ const sources = [
         usage: '<answer> [options]',
         handler: 'confirm',
         visibility: 'public',
-        // It removes an entry from unconfirmed only after an observation of this machine and the running
-        // stack passes, or as the agent's decision where [autonomy] confirm_answers delegates it, and
-        // records which where only cockpit writes; the guard then treats the removal as non-widening. It
-        // refuses the answers a person must confirm.
-        ordinary: ordinary('confirm', { positional: Object.freeze({ min: 1, max: 1, roles: Object.freeze(['operation'] as const),
-            operations: UNCONFIRMED_ANSWER_WORDS }) }),
         flags: configured,
     },
     {
@@ -344,10 +299,9 @@ const sources = [
         handler: 'upgrade',
         visibility: 'public',
         // The install is exact and its sync child decides as sync does, so an agent runs the real upgrade
-        // exactly where [autonomy] sync lets it sync; the version is the one positional.
-        ordinary: ordinary('upgrade', {
-            positional: Object.freeze({ min: 0, max: 1, roles: Object.freeze(['version'] as const) }), requires: 'autonomy-sync' }),
-        flags: { config: configFlag, 'dry-run': bool(flag), json: jsonFlag },
+        // exactly where [autonomy] sync lets it sync.
+        agent: { requires: 'autonomy-sync' },
+        flags: { config: configFlag, 'dry-run': bool(), json: jsonFlag },
     },
     {
         name: 'sync',
@@ -358,8 +312,8 @@ const sources = [
         // A real sync rewrites the guard's own files from a configuration the guard already pins, and
         // applies an edit that widens it only once a person confirms it, so it is an agent's only where
         // [autonomy] sync = "agent".
-        ordinary: ordinary('sync', { forbidden: Object.freeze({ presence: Object.freeze(['interactive']) }), requires: 'autonomy-sync' }),
-        flags: { config: configFlag, 'dry-run': bool(flag), interactive: bool(), json: jsonFlag },
+        agent: { personFlags: ['interactive'], requires: 'autonomy-sync' },
+        flags: { config: configFlag, 'dry-run': bool(), interactive: bool(), json: jsonFlag },
     },
     {
         name: 'check',
@@ -367,7 +321,6 @@ const sources = [
         summary: 'Report generated files that no longer match cockpit.toml',
         handler: 'check',
         visibility: 'public',
-        ordinary: ordinary('check'),
         flags: configured,
     },
     {
@@ -376,7 +329,6 @@ const sources = [
         summary: 'Start or resume the declared environment',
         handler: 'up',
         visibility: 'public',
-        ordinary: ordinary('up'),
         flags: { ...configured, profile: profileFlag },
     },
     {
@@ -385,7 +337,6 @@ const sources = [
         summary: 'Check that the environment is healthy and ready for work',
         handler: 'preflight',
         visibility: 'public',
-        ordinary: ordinary('preflight'),
         flags: configured,
     },
     {
@@ -395,9 +346,7 @@ const sources = [
         usage: '[options] -- <command> [args...]',
         handler: 'session',
         visibility: 'public',
-        // The guard admits `session --config <file> [--profile <name>]... -- <command>` only when it
-        // admits the inner command.
-        ordinary: unavailable('session wraps an arbitrary foreground command'),
+        // The guard judges the command after `--` as one more invocation.
         flags: { config: str(), profile: { type: 'string', multiple: true } },
     },
     {
@@ -406,9 +355,8 @@ const sources = [
         summary: 'Show recent logs for one declared service',
         handler: 'logs',
         visibility: 'public',
-        ordinary: ordinary('logs'),
-        flags: { config: configFlag, service: serviceFlag, tail: str(value('tail'), '100'), since: str(value('since'), '15m'),
-            follow: bool(flag), json: jsonFlag },
+        flags: { config: configFlag, service: serviceFlag, tail: str('100'), since: str('15m'),
+            follow: bool(), json: jsonFlag },
     },
     {
         name: 'ps',
@@ -416,7 +364,6 @@ const sources = [
         summary: 'Show the state and health of each service in this checkout\'s stack',
         handler: 'ps',
         visibility: 'public',
-        ordinary: ordinary('ps'),
         flags: configured,
     },
     // The service verbs act only on this checkout's own leased stack, as up does, so an agent runs
@@ -427,7 +374,6 @@ const sources = [
         summary: 'Restart one service of this checkout\'s stack and wait until it is healthy',
         handler: 'restart',
         visibility: 'public',
-        ordinary: ordinary('restart'),
         flags: { ...configured, service: serviceFlag },
     },
     {
@@ -436,7 +382,6 @@ const sources = [
         summary: 'Rebuild one service\'s image, replace its container and wait until it is healthy',
         handler: 'rebuild',
         visibility: 'public',
-        ordinary: ordinary('rebuild'),
         flags: { ...configured, service: serviceFlag },
     },
     {
@@ -446,8 +391,7 @@ const sources = [
         usage: '--service <name> [options] -- <command> [args...]',
         handler: 'exec',
         visibility: 'public',
-        // The grammar admits the spelling; the evaluator judges the container command.
-        ordinary: ordinary('exec'),
+        // The guard judges the container command as one more invocation.
         flags: { config: configFlag, service: serviceFlag },
     },
     {
@@ -456,7 +400,6 @@ const sources = [
         summary: 'Release this checkout and stop the stack if no other holder remains',
         handler: 'sleep',
         visibility: 'public',
-        ordinary: ordinary('sleep'),
         flags: configured,
     },
     {
@@ -465,8 +408,6 @@ const sources = [
         summary: 'Stop and remove the stack (on the active local Docker context)',
         handler: 'down',
         visibility: 'public',
-        // down removes only the containers and networks cockpit created; reset, which deletes data, stays out.
-        ordinary: ordinary('down'),
         flags: configured,
     },
     {
@@ -476,8 +417,8 @@ const sources = [
         handler: 'reset',
         visibility: 'public',
         // Reset deletes stack data, so an agent applies one only where [autonomy] reset = "agent".
-        ordinary: ordinary('reset', { requires: 'autonomy-reset' }),
-        flags: { config: configFlag, interactive: bool(), apply: bool(Object.freeze({ ...flag, required: true as const })), json: jsonFlag },
+        agent: { personFlags: ['interactive'], requires: 'autonomy-reset' },
+        flags: { config: configFlag, interactive: bool(), apply: bool(), json: jsonFlag },
     },
     {
         name: 'stacks',
@@ -486,13 +427,10 @@ const sources = [
         usage: '[prune] [options]',
         handler: 'stacks',
         visibility: 'public',
-        // Listing and the prune preview change nothing. --apply removes only stacks whose checkout is
-        // gone; the command itself refuses one that deletes volumes unless [autonomy] reset allows it.
-        ordinary: ordinary('stacks', {
-            positional: Object.freeze({ min: 0, max: 1, roles: Object.freeze(['operation'] as const), operations: Object.freeze(['prune']) }),
-            ...personFlag,
-        }),
-        flags: { config: configFlag, apply: bool(flag), interactive: bool(), json: jsonFlag },
+        // --apply removes only stacks whose checkout is gone; the command itself refuses one that
+        // deletes volumes unless [autonomy] reset allows it.
+        agent: personFlag,
+        flags: { config: configFlag, apply: bool(), interactive: bool(), json: jsonFlag },
     },
     {
         name: 'doctor',
@@ -500,13 +438,11 @@ const sources = [
         summary: 'Report environment problems without changing anything',
         handler: 'doctor',
         visibility: 'public',
-        ordinary: ordinary('doctor'),
         flags: configured,
     },
     // Reads four documentation file names statically and runs read-only Git, so an agent gets the names
     // a native read rule refuses without resolving anything.
     { name: 'env keys', handler: 'env-keys', stage: 'diagnose', summary: 'List the variable names env schemas and templates declare, with no value and nothing resolved', visibility: 'public',
-        ordinary: ordinary('env-keys'),
         flags: configured },
     // Verbatim on purpose: the guard treats this one name as documentation and Git already reaches a
     // committed copy. The role admits nothing but that exact name; the command proves the directory.
@@ -514,246 +450,110 @@ const sources = [
     // secret laundered through a draft and printed back, so a draft is a read the guard proves, and it
     // is admitted only as the whole call.
     { name: 'env schema', handler: 'env-schema', stage: 'diagnose', summary: 'Print one .env.schema a sibling or the cockpit root holds, verbatim and with nothing resolved, or replace it from a draft', visibility: 'public',
-        ordinary: ordinary('env-schema'),
-        flags: { ...configured, path: str(value('schema-reference', true)), 'replace-from': str(value('schema-draft')) } },
+        flags: { ...configured, path: str(), 'replace-from': str() } },
     // A gate runs only the stages a person declared in the reviewed cockpit.toml, which is the trust
     // `up` already has; a selector reaches a stage only through the arguments that stage declares.
     { name: 'test-run', handler: 'test-run', stage: 'test-and-grade', summary: 'Run a declared product test gate and report which tests it selected', visibility: 'public',
-        ordinary: ordinary('test-run'),
-        flags: { ...configured, gate: str(value('declared-gate', true)), mode: str(value('gate-mode'), 'canonical'), select: str(value('gate-selector')) } },
+        flags: { ...configured, gate: str(), mode: str('canonical'), select: str() } },
     // A gated step passes for the agent only where [work.gates] says agent; under person the command
     // waits for the digest a person types after --interactive, which no agent invocation carries.
     { name: 'work status', handler: 'work-status', stage: 'test-and-grade', summary: 'Report each work order, its state and how it closed', visibility: 'public',
-        ordinary: ordinary('work-status'),
-        flags: { ...configured, 'work-order': str(value('identifier')) } },
+        flags: { ...configured, 'work-order': str() } },
     { name: 'work accept', handler: 'work-accept', stage: 'test-and-grade', summary: 'Accept a work order, or a change to an accepted one, as [work.gates] allows', visibility: 'public',
-        ordinary: ordinary('work-accept', personFlag),
+        agent: personFlag,
         flags: { ...configured, 'work-order': workOrderFlag, interactive: bool() } },
     { name: 'work check', handler: 'work-check', stage: 'test-and-grade', summary: "Run every criterion's check and the order's gates", visibility: 'public',
-        ordinary: ordinary('work-check'),
         flags: { ...configured, 'work-order': workOrderFlag } },
     { name: 'work note', handler: 'work-note', stage: 'test-and-grade', summary: 'Record a note on an order, an open question with --ask, or a decision with --decision', visibility: 'public',
-        ordinary: ordinary('work-note'),
-        flags: { ...configured, 'work-order': workOrderFlag, text: str(value('label', true)), ask: bool(flag), decision: bool(flag) } },
+        flags: { ...configured, 'work-order': workOrderFlag, text: str(), ask: bool(), decision: bool() } },
     // Resolving a decision passes no gate of its own: a --none resolution is shown in the signoff prompt, which the signoff gate covers.
     { name: 'work decide', handler: 'work-decide', stage: 'test-and-grade', summary: 'Resolve a recorded decision: write or cite its decision record, or say it is not lasting', visibility: 'public',
-        ordinary: ordinary('work-decide'),
-        flags: { ...configured, 'work-order': workOrderFlag, decision: str(value('tail', true)), record: bool(flag), 'record-file': str(value('label')),
-            supersedes: str(value('label')), none: bool(flag), reason: str(value('label')) } },
+        flags: { ...configured, 'work-order': workOrderFlag, decision: str(), record: bool(), 'record-file': str(),
+            supersedes: str(), none: bool(), reason: str() } },
     { name: 'work answer', handler: 'work-answer', stage: 'test-and-grade', summary: 'Answer an open question on an order, as [work.gates] allows', visibility: 'public',
-        ordinary: ordinary('work-answer', personFlag),
-        flags: { ...configured, 'work-order': workOrderFlag, question: str(value('tail', true)), text: str(value('label', true)), interactive: bool() } },
+        agent: personFlag,
+        flags: { ...configured, 'work-order': workOrderFlag, question: str(), text: str(), interactive: bool() } },
     { name: 'work acknowledge', handler: 'work-acknowledge', stage: 'test-and-grade', summary: 'Acknowledge that an order weakened tests, as [work.gates] allows', visibility: 'public',
-        ordinary: ordinary('work-acknowledge', personFlag),
-        flags: { ...configured, 'work-order': workOrderFlag, note: str(value('label', true)), interactive: bool() } },
+        agent: personFlag,
+        flags: { ...configured, 'work-order': workOrderFlag, note: str(), interactive: bool() } },
     // Grading hands the order to an evaluator running apart from the agent that did the work, unless
     // [work] grading names checks or self, or the agent submits its subagent's verdict under subagent.
     { name: 'work grade', handler: 'work-grade', stage: 'test-and-grade', summary: 'Grade an accepted order the way [work] grading says', visibility: 'public',
-        ordinary: ordinary('work-grade'),
-        flags: { ...configured, 'work-order': workOrderFlag, verdict: str(value('label')), note: str(value('label')), 'from-subagent': bool(flag), evaluator: str(value('evaluator-tool')) } },
+        flags: { ...configured, 'work-order': workOrderFlag, verdict: str(), note: str(), 'from-subagent': bool(), evaluator: str() } },
     { name: 'work signoff', handler: 'work-signoff', stage: 'test-and-grade', summary: 'Close a graded order as done, or any open one as partial or abandoned', visibility: 'public',
-        ordinary: ordinary('work-signoff', personFlag),
-        flags: { ...configured, 'work-order': workOrderFlag, partial: bool(flag), abandon: bool(flag), note: str(value('label')), interactive: bool() } },
+        agent: personFlag,
+        flags: { ...configured, 'work-order': workOrderFlag, partial: bool(), abandon: bool(), note: str(), interactive: bool() } },
     // The attempt cap stops an agent retrying its own failed work, so fresh attempts at an unchanged contract are always a person's.
     { name: 'work retry', handler: 'work-retry', stage: 'test-and-grade', summary: 'Grant an order at its attempt cap fresh attempts, as a person at a terminal', visibility: 'public',
-        ordinary: ordinary('work-retry', personFlag),
-        flags: { ...configured, 'work-order': workOrderFlag, note: str(value('label', true)), interactive: bool() } },
+        agent: personFlag,
+        flags: { ...configured, 'work-order': workOrderFlag, note: str(), interactive: bool() } },
     // Inspection only reports the holder. --apply removes the lock only once the command has shown its
     // holder gone where a pid probe cannot see: the lock's host and the containers cockpit labels.
     { name: 'work recover', handler: 'work-recover', stage: 'test-and-grade', summary: "Inspect or remove a crashed command's work-order lock", visibility: 'public',
-        ordinary: ordinary('work-recover'),
-        flags: { ...configured, 'work-order': workOrderFlag, apply: bool(flag) } },
+        flags: { ...configured, 'work-order': workOrderFlag, apply: bool() } },
     { name: 'work verify', handler: 'work-verify', stage: 'test-and-grade', summary: 'Check every record against its order; in CI, pass the steps gated on ci', visibility: 'public',
-        ordinary: ordinary('work-verify'),
         flags: configured },
     { name: 'grade', handler: 'grade-criteria', stage: 'test-and-grade', summary: 'Independently grade uncommitted work against a criteria file, with no work order', visibility: 'public',
-        ordinary: ordinary('grade-criteria'),
-        flags: { ...configured, criteria: str(value('confined-path', true)), evaluator: str(value('evaluator-tool')) } },
+        flags: { ...configured, criteria: str(), evaluator: str() } },
     // Driving signs in and captures the application, so it runs unprompted only on the data posture a
     // person wrote down as safe for that.
     { name: 'browser drive', handler: 'browser-drive', stage: 'test-and-grade', summary: 'Drive the declared application browser surfaces', visibility: 'public',
-        ordinary: ordinary('browser-drive', browserAdmission),
+        agent: browserAdmission,
         // Findings are evidence by default; this makes them fail the command, for a criterion that wants a clean route.
-        flags: { ...configured, role: str(value('identifier')), route: str(value('route')), 'fail-on-findings': bool(flag) } },
+        flags: { ...configured, role: str(), route: str(), 'fail-on-findings': bool() } },
     { name: 'browser screenshot', handler: 'browser-screenshot', stage: 'test-and-grade', summary: 'Capture the declared application surfaces', visibility: 'public',
-        ordinary: ordinary('browser-screenshot', browserAdmission),
-        flags: { ...configured, role: str(value('identifier')), route: str(value('route')) } },
+        agent: browserAdmission,
+        flags: { ...configured, role: str(), route: str() } },
     // Reads documents and runs read-only Git, like check; it writes nothing, so an agent runs it freely.
     { name: 'docs check', handler: 'docs-check', stage: 'test-and-grade', summary: 'Report removed paths and make targets living docs still cite, and broken decision records', visibility: 'public',
-        ordinary: ordinary('docs-check'),
         flags: configured },
 ] as const satisfies readonly CommandSource[]
 
-export const commands: readonly CommandDefinition[] = sources.map(({ flags, ...command }): CommandDefinition => {
-    const entries = Object.entries(flags as Readonly<Record<string, Flag>>)
-    return { ...command,
-        options: Object.fromEntries(entries.map(([name, { agent: _agent, ...option }]) => [name, option])),
-        ordinary: command.ordinary.availability === 'available'
-            ? { ...command.ordinary, options: Object.fromEntries(entries.flatMap(([name, { agent }]) => agent ? [[name, agent]] : [])) }
-            : command.ordinary }
-})
+export const commands: readonly CommandDefinition[] = sources.map(({ flags, ...command }): CommandDefinition => ({ ...command, options: flags }))
 
 interface InternalCommandDefinition {
     readonly name: 'guard-evaluate'
     readonly handler: 'guard-evaluate'
     readonly visibility: 'internal'
-    readonly ordinary: Readonly<{ availability: 'unavailable'; reason: string }>
+    readonly agent: AgentLimits
     readonly argv: typeof GUARD_HANDLER_ARGV
     readonly options: Readonly<{ harness: { readonly type: 'string' } }>
 }
 export const internalCommands: readonly InternalCommandDefinition[] = Object.freeze([Object.freeze({
     name: 'guard-evaluate', handler: 'guard-evaluate', visibility: 'internal',
-    ordinary: Object.freeze({ availability: 'unavailable', reason: 'the guard hook calls this internally; it is not a user command' }),
+    agent: Object.freeze({ person: 'the guard hook calls this internally; it is not a user command' }),
     argv: GUARD_HANDLER_ARGV, options: Object.freeze({ harness: Object.freeze({ type: 'string' }) }),
 })])
 
-interface OrdinaryInvocationAuthority {
-    readonly executable: string
-    readonly canonicalRoot: string
-    readonly allowedRoots: readonly string[]
-    readonly configPath: string
-    readonly services: readonly string[]
-    /** Test gate ids the configuration declares. */
-    readonly gates: readonly string[]
-    /** What the configuration grants an agent: browser preapproval, and the [autonomy] decisions set to agent. */
-    readonly grants: readonly OrdinaryGrant[]
-    /** Compose profiles an agent may name with --profile; any other starts services no person declared for it. */
-    readonly profiles: readonly string[]
-}
 export type OrdinaryGrant = 'browser-preapproval' | 'autonomy-sync' | 'autonomy-reset' | 'autonomy-instruction-files'
-const ORDINARY_GRANTS: readonly OrdinaryGrant[] = ['browser-preapproval', 'autonomy-sync', 'autonomy-reset', 'autonomy-instruction-files']
-
-// The spelling environment.profiles accepts.
-const COMPOSE_PROFILE = /^[a-z0-9][a-z0-9_.-]{0,63}$/
-// A selected value that starts with `-` would reach the product's tool as an option of its own.
-const GATE_SELECTOR = /^(?:spec|file|test|route):[^-]/
-
-function canonicalPath(path: unknown): path is string {
-    return typeof path === 'string' && path !== '/' && isAbsolute(path) && normalize(path) === path
-        && !path.endsWith('/') && !/[\x00-\x1f\x7f-\x9f\\\uD800-\uDFFF]/u.test(path)
-        && Buffer.byteLength(path) <= GUARD_INPUT_LIMITS.pathBytes
-}
-
-function record(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
-    return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
 
 /**
- * The inner command of an exact `session --config <configured file> -- <command…>` run from the
- * cockpit root, or undefined. The guard admits the session only when it admits the inner command,
- * so a session never runs what the agent could not run directly.
+ * Whether an agent may run the cockpit command `args` spell (the words after the launcher) in `cwd`
+ * without a person. `grants` is what cockpit.toml grants an agent; `profiles` the Compose profiles an
+ * agent may name with --profile, since any other starts services no person declared for it; `roots`
+ * the allowed roots. A spelling the table does not know is an ordinary program, which the CLI refuses itself.
  */
-export function ordinarySessionCommand(argv: readonly string[], cwd: string,
-    authority: Readonly<{ canonicalRoot: string; configPath: string; profiles: readonly string[] }>): readonly string[] | undefined {
-    const inner = innerCommand(argv)
-    if (argv[0] !== 'session' || !inner || cwd !== authority.canonicalRoot) return undefined
-    const options = argv.slice(1, argv.length - inner.words.length - 1)
-    let config: string | undefined
-    for (let index = 0; index < options.length; index++) {
-        const [name, inline] = options[index]!.startsWith('--') && options[index]!.includes('=')
-            ? [options[index]!.slice(0, options[index]!.indexOf('=')), options[index]!.slice(options[index]!.indexOf('=') + 1)]
-            : [options[index]!, options[++index]]
-        if (name === '--config' && config === undefined && inline !== undefined) config = inline
-        else if (name !== '--profile' || inline === undefined || !authority.profiles.includes(inline)) return undefined
-    }
-    return config && resolve(cwd, config) === authority.configPath ? inner.words : undefined
-}
-
-/** Classify one exact candidate; the caller authenticates filesystem and executable authority. */
-export function resolveOrdinaryInvocation(input: GuardInvocationProfile, authority: OrdinaryInvocationAuthority,
-    inspectPath: (path: string) => boolean): GuardInvocationProfile | undefined {
-    const candidate = snapshotJson(input)
-    const captured = snapshotJson(authority)
-    if (!record(candidate)
-        || Object.keys(candidate).sort().join(',') !== 'argv,cwd,executable'
-        || !record(captured)
-        || Object.keys(captured).sort().join(',') !== 'allowedRoots,canonicalRoot,configPath,executable,gates,grants,profiles,services') return undefined
-    const source = captured as unknown as OrdinaryInvocationAuthority
-    if (!canonicalPath(source.executable) || !canonicalPath(source.canonicalRoot) || !canonicalPath(source.configPath)
-        || !Array.isArray(source.allowedRoots) || source.allowedRoots.length > GUARD_INPUT_LIMITS.paths
-        || !source.allowedRoots.every(canonicalPath) || !source.allowedRoots.includes(source.canonicalRoot)
-        || !Array.isArray(source.services) || !source.services.every(service => typeof service === 'string' && /^[a-z0-9][a-z0-9_.-]{0,127}$/.test(service))
-        || !Array.isArray(source.gates) || !source.gates.every(gate => typeof gate === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(gate))
-        || !Array.isArray(source.grants) || !source.grants.every(grant => ORDINARY_GRANTS.includes(grant))
-        || !Array.isArray(source.profiles) || !source.profiles.every(profile => typeof profile === 'string' && COMPOSE_PROFILE.test(profile))
-        || candidate.executable !== source.executable || candidate.cwd !== source.canonicalRoot
-        || !Array.isArray(candidate.argv) || candidate.argv.length === 0 || candidate.argv.length > GUARD_INPUT_LIMITS.words
-        || !candidate.argv.every(arg => typeof arg === 'string' && arg.length > 0
-            && Buffer.byteLength(arg) <= GUARD_INPUT_LIMITS.wordBytes && !/[\x00-\x1f\x7f-\x9f\uD800-\uDFFF]/u.test(arg))) return undefined
-    const args = candidate.argv as readonly string[]
-    // A group member is named by its first two words; its options follow both.
+export function agentMayRun(args: readonly string[], authority: Readonly<{ grants: readonly OrdinaryGrant[]; profiles: readonly string[];
+    roots: readonly string[]; cwd: string }>): boolean {
     const spelling = commandSpelling(args)
-    const definition = commands.find(row => row.name === spelling.name)
-    const available: OrdinaryCommandMetadata | undefined = definition?.ordinary
-    if (!definition || definition.visibility !== 'public' || available?.availability !== 'available') return undefined
-    const grammar = available
-    const paths = new Set<string>()
-    const confined = (path: string) => {
-        if (!path || path.includes('\\') || path.split('/').includes('..') || /[*?\[\]]/.test(path)) return false
-        const absolute = resolve(source.canonicalRoot, path)
-        if (!canonicalPath(absolute) || !source.allowedRoots.some(root => absolute === root || absolute.startsWith(root + '/'))) return false
-        paths.add(absolute)
-        return true
-    }
-    if (grammar.configuration === 'resolved' && !confined(source.configPath)) return undefined
-    const reads: string[] = []
-    const positionals: string[] = []
-    const options = new Map<string, string | true>()
-    const wraps = WRAPPING_COMMANDS.has(definition.name)
-    const separator = wraps ? spelling.rest.indexOf('--') : -1
-    // The wrapped command is required and is the only thing after `--`.
-    if (wraps && (separator < 0 || separator === spelling.rest.length - 1)) return undefined
-    const words = separator < 0 ? spelling.rest : spelling.rest.slice(0, separator)
-    for (let index = 0; index < words.length; index++) {
-        const arg = words[index]!
-        if (!arg.startsWith('-')) { positionals.push(arg); continue }
-        if (!arg.startsWith('--') || arg === '--') return undefined
-        const equal = arg.indexOf('=')
-        const name = arg.slice(2, equal < 0 ? undefined : equal)
-        const option = grammar.options[name]
-        if (!option || options.has(name) && option.repetition !== 'repeated' || grammar.forbidden.presence.includes(name)) return undefined
-        if (option.kind === 'flag') {
-            if (equal >= 0) return undefined
-            options.set(name, true)
-            continue
-        }
-        const text = equal < 0 ? words[++index] : arg.slice(equal + 1)
-        if (!text || text.startsWith('-')) return undefined
-        if (option.role === 'confined-path' || option.role === 'schema-draft') reads.push(resolve(source.canonicalRoot, text))
-        const valid = option.role === 'confined-path' ? confined(text)
-            : option.role === 'resolved-config' ? confined(text) && resolve(source.canonicalRoot, text) === source.configPath
-            : option.role === 'declared-service' ? source.services.includes(text)
-            : option.role === 'declared-gate' ? source.gates.includes(text)
-            : option.role === 'gate-mode' ? ['canonical', 'full', 'staged'].includes(text)
-            : option.role === 'gate-selector' ? GATE_SELECTOR.test(text)
-            : option.role === 'identifier' ? WORK_ORDER_ID.test(text)
-            : option.role === 'route' ? ROUTE_SELECTOR.test(text)
-            : option.role === 'label' ? true
-            : option.role === 'schema-reference' ? schemaFileReference(text) !== undefined
-            : option.role === 'schema-draft' ? !text.split('/').some(isSensitiveGuardName) && confined(text)
-            : option.role === 'field' ? isRecordedAnswerField(text)
-            : option.role === 'tail' ? /^[1-9]\d{0,4}$/.test(text) && Number(text) <= 10_000
-            : option.role === 'since' ? text.length <= 64 && (/^\d+(?:\.\d+)?[smhd]$/.test(text)
-                || /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)$/.test(text) && Number.isFinite(Date.parse(text)))
-            : option.role === 'surface-target' ? text.split(',').every(tool => SURFACE_TARGETS.some(target => target === tool))
-            : option.role === 'evaluator-tool' ? EVALUATOR_TOOLS.includes(text)
-            : option.role === 'compose-profile' ? source.profiles.includes(text)
-            : option.role === 'sha256' && /^[a-f0-9]{64}$/.test(text)
-        if (!valid) return undefined
-        options.set(name, text)
-    }
-    if (positionals.length < grammar.positional.min || positionals.length > grammar.positional.max
-        || positionals.some((word, index) => grammar.positional.roles[index] === 'operation'
-            ? !grammar.positional.operations?.includes(word)
-            : grammar.positional.roles[index] === 'version' ? !EXACT_VERSION.test(word)
-            : grammar.positional.roles[index] === 'slug' ? !/^[a-z0-9][a-z0-9-]{0,62}$/.test(word)
-            : grammar.positional.roles[index] === 'surface-target' ? !SURFACE_TARGETS.some(target => target === word)
-            : grammar.positional.roles[index] !== 'confined-root' || !confined(word))
-        || Object.entries(grammar.options).some(([name, option]) => option.required && !options.has(name))
-        // A dry run writes nothing, so no grant gates it.
-        || grammar.requires !== undefined && !options.has('dry-run') && !source.grants.includes(grammar.requires)
-        || grammar.flagGrant !== undefined && grammar.flagGrant.flags.some(name => options.has(name)) && !source.grants.includes(grammar.flagGrant.grant)
-        || typeof inspectPath !== 'function' || [...paths].some(path => !inspectPath(path))) return undefined
-    return { executable: source.executable, cwd: source.canonicalRoot, argv: [...args],
-        ...(reads.length ? { reads } : {}), ...options.has('replace-from') ? { alone: true as const } : {} }
+    const definition = [...commands, ...internalCommands].find(row => row.name === spelling.name)
+    if (!definition) return true
+    // Only cockpit's own words count: what a session or exec runs after `--` is judged as its own invocation.
+    // The CLI runs every positional of one as the command, so one before `--` would run unjudged.
+    const separator = spelling.rest.indexOf('--')
+    const own = separator < 0 ? spelling.rest : spelling.rest.slice(0, separator)
+    const { values, positionals } = parseArgs({ args: [...own], options: definition.options, strict: false, allowPositionals: true })
+    const limits = definition.agent ?? {}
+    const profiles = values.profile === undefined ? [] : [values.profile].flat()
+    const confined = limits.confined === undefined ? undefined : positionals[limits.confined]
+    return limits.person === undefined
+        && (!WRAPPING_COMMANDS.has(definition.name) || separator >= 0 && positionals.length === 0)
+        && (limits.operations === undefined || limits.operations.includes(String(positionals[0])))
+        && !(limits.personFlags ?? []).some(name => values[name] !== undefined && values[name] !== false)
+        && (limits.requires === undefined || values['dry-run'] === true || authority.grants.includes(limits.requires))
+        && (limits.flagGrant === undefined || !limits.flagGrant.flags.some(name => values[name] !== undefined && values[name] !== false)
+            || authority.grants.includes(limits.flagGrant.grant))
+        && (!('profile' in definition.options) || profiles.every(profile => typeof profile === 'string' && authority.profiles.includes(profile)))
+        && (confined === undefined || !confined.split('/').includes('..')
+            && authority.roots.some(root => resolve(authority.cwd, confined) === root || resolve(authority.cwd, confined).startsWith(`${root}/`)))
 }

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { constants, copyFileSync, mkdirSync } from 'node:fs'
+import { constants, copyFileSync, mkdirSync, rmSync, symlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { afterAll, expect, it } from 'vitest'
 import { createProduct, explain, JOURNEY_TIMEOUT, type Product, removeScratch, type Run } from '../test-support/journey/harness.js'
@@ -25,6 +25,19 @@ function guardDecision(product: Product, command: string, path: string): string 
 
 it('behaves the same through every documented launcher, any Node binary and under the guard', () => {
     const shop = createProduct('npm')
+    // The terminal finds Node through a package manager's link, which an upgrade points at a new
+    // install before it removes the old one.
+    const brew = join(shop.root, '..', 'brew')
+    const installNode = (version: string) => {
+        const path = join(brew, 'Cellar', version, 'bin', 'node')
+        mkdirSync(dirname(path), { recursive: true })
+        copyFileSync(process.execPath, path, constants.COPYFILE_FICLONE)
+        return path
+    }
+    const linkedNode = join(brew, 'bin', 'node')
+    mkdirSync(dirname(linkedNode), { recursive: true })
+    symlinkSync(installNode('a'), linkedNode)
+    shop.env.PATH = `${dirname(linkedNode)}:${shop.env.PATH}`
     const sync = shop.cockpit(['sync'])
     expect(sync.status, explain(sync)).toBe(0)
     // A second Node binary first on the agent tool's PATH, as when the terminal that ran sync uses one
@@ -49,6 +62,24 @@ it('behaves the same through every documented launcher, any Node binary and unde
         expect(guardDecision(shop, `${launcher.join(' ')} sync --config cockpit.toml --dry-run`, agentPath), launcher.join(' ')).toBe('allow')
     }
     // The control: the same hook refuses what it must, so `allow` above is a judgement, not silence.
+    expect(guardDecision(shop, 'git push --force origin main', agentPath)).toBe('deny')
+    // A package manager's spelling is refused with the spelling to use, whatever the command; changing the
+    // installed package asks.
+    for (const spelling of ['pnpm exec cockpit', 'npx cockpit', 'yarn cockpit', 'npm exec cockpit --', 'npm run cockpit:sync --']) {
+        expect(guardDecision(shop, `${spelling} check --config cockpit.toml`, agentPath), spelling).toBe('deny')
+    }
+    for (const install of ['npm i -D @b00dea/cockpit@9.9.9', 'npm uninstall @b00dea/cockpit']) expect(guardDecision(shop, install, agentPath), install).toBe('ask')
+    // Process substitution stands a descriptor where a file name goes; no file is behind it to inspect.
+    mkdirSync(join(shop.root, 'src'), { recursive: true })
+    expect(guardDecision(shop, 'diff <(ls) <(ls src)', agentPath)).toBe('allow')
+    // A stash made and popped in one call does not exist yet when the hook looks.
+    expect(guardDecision(shop, 'git stash && git stash pop', agentPath)).toBe('allow')
+    // After the Node upgrade the hook runs the new Node through the same link, with no sync in between.
+    const upgraded = installNode('b')
+    rmSync(join(brew, 'Cellar', 'a'), { recursive: true })
+    rmSync(linkedNode)
+    symlinkSync(upgraded, linkedNode)
+    expect(guardDecision(shop, `${PACKAGE_LAUNCHER} sync --config cockpit.toml --dry-run`, agentPath)).toBe('allow')
     expect(guardDecision(shop, 'git push --force origin main', agentPath)).toBe('deny')
 }, JOURNEY_TIMEOUT)
 

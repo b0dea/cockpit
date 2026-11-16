@@ -183,7 +183,7 @@ Limits, stated plainly:
 admits a command the guard would otherwise ask about, and
 never overrides a hard denial, nor these asks: a push whose destination Git cannot resolve, a push or
 rewrite after a command that may move the branch, a staging walk past its bound, a steering
-assignment, a cockpit command its table does not admit, an unproven cockpit launcher, Git run with
+assignment, a cockpit command its table does not admit, Git run with
 `--git-dir` or `--work-tree`, a push option the guard does not know, a Git verb that would write guard
 files or that rests on a patch whose targets it cannot read, a `gh` merge or repository edit, a
 tool-configuration write to the project's `.npmrc`, and an install from a URL or Git source.
@@ -865,72 +865,42 @@ while each tool was asked to use the feature for real:
 
 ### Cockpit commands an agent can run
 
+The guard treats a cockpit command as it treats any program, by the words it spells, except the
+commands below, which change what agents may do or wait for a person. Every other one runs: `check`,
+`doctor`, `up`, `down`, `logs`, `test-run`, `work`, `grade`, `tool add`, `pull` and the rest. A
+word in it that names a blocked item is refused as anywhere else, and the command `session` or `exec`
+runs after `--` is judged as a call of its own.
+
 | Command | Decision | Why |
 | --- | --- | --- |
-| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml`, and likewise `doctor`, `preflight`, `ps`, `logs --service <service>`, `stacks`, `stacks prune`, `docs check`, `env keys`, `env schema --path <schema reference>` and `sync --dry-run` | allowed | They read and report; nothing they do changes a file the guard relies on. A `--path` that names anything but `.env.schema`, or that climbs, is a prompt. |
-| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs --help`, `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --help`, and the version | allowed | They print and exit before any command runs. |
-| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml`, and likewise `sleep`, `down`, `restart --service <service>` and `rebuild --service <service>` | allowed | They act only on the stack cockpit declared and owns; `down` keeps data volumes, and deletes only from the local Docker daemon it fixes at the start of the run. |
-| `up --profile <profile>` | allowed for a profile in `environment.profiles` that mounts no sibling with `gate = "operator"`, otherwise a prompt | Another profile starts services no person declared for agents, and an operator-gated sibling touches live data or local hardware. |
-| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs env schema --config cockpit.toml --path <schema reference> --replace-from <draft>` | allowed only as the whole command, for a draft the guard can prove safe to read; otherwise a prompt | A schema that is not committed is never run, and a draft that could hold a secret is refused, so a replacement cannot launder one back out through `env schema`. |
-| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs exec --config cockpit.toml --service <service> -- <command>` | allowed when a `[guards] allow` rule or a declared build or test command admits `<command>`, otherwise a prompt | The command runs in a container whose files the guard cannot see, so it is never proven read-only, and the name-based denials still apply to it. |
-| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs pull --config cockpit.toml` | allowed | It only fetches and fast-forwards, and leaves a modified or diverged checkout as it was. |
-| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs use <slug> <checkout> --config cockpit.toml`, and `use <slug> --clear` | allowed for a checkout inside a directory the agent may already write, otherwise a prompt | The choice is recorded for this checkout of the cockpit only, so it never widens what the agent can reach. |
-| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs session --config cockpit.toml -- <command>`, with a `--profile` that `up` admits | the decision for `<command>` | A session runs its command as the agent could run it directly, so it never admits more. |
-| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs test-run --config cockpit.toml --gate <gate>`, with an optional `--mode` and a `--select <kind>:<value>` whose value does not start with `-` | allowed for a gate `cockpit.toml` declares | The gate runs only the stages a person declared in the reviewed configuration, the trust `up` already has. |
-| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work status --config cockpit.toml`, `work accept`, `work check`, `work note`, `work decide`, `work answer`, `work acknowledge`, `work grade`, `work signoff`, `work retry`, `work recover` (with or without `--apply`), `work verify` and `cockpit grade --criteria <file>`, each with its own options | allowed | They report, or take a step [`[work.gates]`](#who-decides) gives the agent; a step it gives a person waits for the digest typed after `--interactive`, which no agent invocation carries. Grading runs in a separate evaluator. `work recover --apply` removes a lock only once it has shown the holder gone on the lock's own host and among the containers cockpit labels. |
-| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`, and `upgrade`, whose sync child writes | allowed where `[autonomy] sync = "agent"`, otherwise a prompt | It regenerates the files the configuration declares; after `cockpit.toml` changes, the guard admits it only when the edit [does not widen](#edits-the-guard-has-not-applied) what agents may do, so an agent's sync never publishes a widening of its own. |
-| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs tool add <tool> --config cockpit.toml`, with an optional `--dry-run` | allowed | It edits only `[surfaces] tools`, and an added tool [does not widen](#edits-the-guard-has-not-applied) what agents may do, so the agent's sync applies it. |
-| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs reset --config cockpit.toml --apply` | allowed where `[autonomy] reset = "agent"`, otherwise a prompt | It deletes stack data. |
-| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs stacks prune --config cockpit.toml --apply` | allowed; the command itself refuses a prune that deletes volumes unless `[autonomy] reset = "agent"` | It removes only stacks whose checkout is gone, which bringing the stack up again recreates, and their data only where a reset could delete it. |
-| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs browser drive --config cockpit.toml`, and likewise `screenshot`, with an optional `--role` | allowed where `browser.request_preapproval` is on, otherwise a prompt | They sign in and capture the declared application, so they run unprompted only on the isolated, non-production data the configuration declares. Preapproval is on by default exactly when `browser.data` is isolated, not restored and not reaching production, and off otherwise; an explicit `request_preapproval` wins, and `true` on a posture that does not qualify is refused. `drive` also accepts `--fail-on-findings`. |
-| `work accept`, `work answer`, `work acknowledge`, `work signoff` and `work retry` with `--interactive` | a prompt, which Codex and OpenCode turn into a denial | `--interactive` asks for a person at a terminal to type the digest of what it shows. |
-| `./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config cockpit.toml --write-instruction-files`, and likewise `--write-instruction-pointers` | allowed where `[autonomy] instruction_files = "agent"`, otherwise a prompt | They write the sibling `AGENTS.md`, `CLAUDE.md` and guide links `setup` proposes, which the agent could write with its own tools. |
-| `sync --interactive`, `reset --interactive`, `stacks prune --interactive`, `sibling add`, `sibling remove`, `tool remove` and every other command | a prompt, which Codex and OpenCode turn into a denial | They widen what agents may do through `cockpit.toml`, rewrite a team's own settings, ask for a person, or delete data. |
+| `sync`, and `upgrade`, whose sync child writes | allowed with `--dry-run`, or where `[autonomy] sync = "agent"`; otherwise a prompt | It regenerates the files the configuration declares; after `cockpit.toml` changes, the guard admits it only when the edit [does not widen](#edits-the-guard-has-not-applied) what agents may do, so an agent's sync never publishes a widening of its own. |
+| `reset` | allowed where `[autonomy] reset = "agent"`, otherwise a prompt | It deletes stack data. |
+| `up --profile <profile>`, and `session --profile <profile>` | allowed for a profile in `environment.profiles` that mounts no sibling with `gate = "operator"`, otherwise a prompt | Another profile starts services no person declared for agents, and an operator-gated sibling touches live data or local hardware. |
+| `browser drive` and `browser screenshot` | allowed where `browser.request_preapproval` is on, otherwise a prompt | They sign in and capture the declared application, so they run unprompted only on the isolated, non-production data the configuration declares. Preapproval is on by default exactly when `browser.data` is isolated, not restored and not reaching production, and off otherwise; an explicit `request_preapproval` wins, and `true` on a posture that does not qualify is refused. |
+| `use <slug> <checkout>` | allowed for a checkout inside the configured roots, named without `..`; otherwise a prompt | It records the checkout and grants agents its directory, so a checkout elsewhere would widen what they reach. |
+| `session` and `exec` with words before `--` | a prompt | The CLI runs those words as the command, which the guard judges only after `--`. |
+| `setup --write-instruction-files`, and likewise `--write-instruction-pointers` | allowed where `[autonomy] instruction_files = "agent"`, otherwise a prompt | They write the sibling `AGENTS.md`, `CLAUDE.md` and guide links `setup` proposes. |
+| any command with `--interactive`; `init` with `--answers`, `--accept-preview`, `--accept-defaults`, `--scaffold-compose`, `--command`, `--port` or `--with`; `sibling add`, `sibling remove` and `tool remove` | a prompt, which Codex and OpenCode turn into a denial | They ask for a person at a terminal, record a person's setup answers, or rewrite `cockpit.toml` and the guard. |
+
+A command counts as cockpit when the program it runs names cockpit: `cockpit`, a path to `cockpit` or
+`cockpit.mjs` such as `./node_modules/@b00dea/cockpit/bin/cockpit.mjs`, `node` (or a path to `node`)
+given such a path, or `npx --no cockpit`. Whichever Node runs it, it counts. A package manager's
+spelling, such as `pnpm exec cockpit check` or `npm run cockpit:sync`, is refused with the spelling to
+use: the launcher takes options of its own, so its words do not say which command runs. A command
+that changes the installed package, such as an install of another version, prompts.
 
 `sync` and `upgrade` bind the guard to the cockpit module that runs them, and an agent can edit a copy
 of cockpit. So sync refuses unless the running module is the installed
 `<root>/node_modules/@b00dea/cockpit/dist/cli.js`, compared by real path. In a root with no installed
 package, such as cockpit's own development checkout, it refuses only when it would rebind the guard
 from a different module than the one already bound. The guard refuses `node <copy>/dist/cli.js sync`
-and `upgrade` from a copy of cockpit inside the roots, and asks for any other run of such a copy.
-
-A file such a command names, like `--criteria`, is checked as a read: a declared instance, a file
-below `.secrets` or a `.env` or `.env.*` file that is not documentation is denied, and a symlink or
-a path outside the configured roots prompts.
+and `upgrade` from a copy of cockpit inside the roots.
 
 "Allowed" means the guard does not object. Claude Code also needs its own allow rule, which the
 generated settings carry for the commands the shipped skills use
 ([Claude Code command rules](harness-surfaces.md#claude-code-command-rules)); in Codex's sandbox
 most of these commands must run outside it
 ([Run cockpit outside the Codex sandbox](harness-surfaces.md#run-cockpit-outside-the-codex-sandbox)).
-
-Run these exactly as shown. A prefix such as `env -u NAME` or `nohup` makes any of them a wrapped
-invocation, which prompts, and none needs one. They count from the cockpit root with `--config`
-naming the configured `cockpit.toml`; `check`, `doctor` and help also count from any directory. Each
-spelling counts only where the guard proves it starts its own installed package:
-
-- the installed entrypoint `./node_modules/@b00dea/cockpit/bin/cockpit.mjs`, a `.bin` symlink, or a
-  path given to `node` must resolve to it. `node` is bare, or the absolute path of the `node` in a
-  directory the agent's command search path names, spelled as that entry spells it, such as
-  `/opt/homebrew/bin/node` when `/opt/homebrew/bin` is on its `PATH`;
-- bare `cockpit` must be what the command search path finds first;
-- the npx spellings must run from the cockpit root with no root `.npmrc` and no `bin` or
-  `directories.bin` in the root `package.json`, because npm would otherwise run that program or
-  apply that configuration first. Writing an `.npmrc` anywhere inside the configured roots is
-  denied. Any other npx option, or npx without `--no` (which may download a package), is not the
-  installed cockpit.
-
-Where npx cannot be proven, every npx spelling prompts, and Codex and OpenCode refuse it, while the
-path spelling still counts from the cockpit root. pnpm writes `node_modules/.bin/cockpit` as a shell
-shim neither can follow, so there the provable spelling is
-`./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml`. Everything cockpit
-prints, the `cockpit:*` package scripts included, uses that spelling, so `doctor` reports
-`COCKPIT_LAUNCHER_UNPROVEN` only where a person can make npx provable, as by removing a root `.npmrc`,
-or where no spelling is provable. Generated skills and the
-launcher refusal recommend the direct package entrypoint; replacing it with another executable
-still requires approval. The guard does not check which
-`npx` the search path finds: it assumes that program behaves as npm's own, as the version-manager
-and package-firewall shims that hand over to npm do.
 
 ### Reading secrets and instances
 
@@ -1273,13 +1243,10 @@ shared guard file may still be generated. What each harness is confirmed to enfo
 ## Evidence
 
 Static configuration, source inspection, synthetic fixtures, model self-report and silence do not
-prove native enforcement. The
-[native evidence validator](../packages/cockpit/libexec/validate-harness-evidence.mjs) binds exact
-current executable and wiring identities, generated-manifest and candidate digests, version, bounded
-transcripts and validation results, and each record carries candidate and deliberately
-broken-control evidence.
+prove native enforcement. Each cell of the [capability matrix](capability-matrix.md) is measured by
+driving the agent tool with a deliberately broken control file beside the real one, and is dated.
 
-Missing evidence keeps a cell `instructed` or `unavailable`, with `human_needed` judgments still
-pending. It never relaxes a hard denial or grants a permission. Switching defaults, deleting
+Missing evidence keeps a cell `instructed` or `unavailable`. It never relaxes a hard denial or
+grants a permission. Switching defaults, deleting
 fallbacks and publishing stay human decisions; a green source check or a generated reference does
 not make them.

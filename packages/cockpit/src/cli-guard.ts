@@ -6,7 +6,7 @@ import { renderJsonResponse } from './diagnostics.js'
 import { RefusalError, errorCause } from './environment/contract.js'
 import { runGuardEvaluationApplication } from './environment/application/guard.js'
 import { observeSetupCheckout } from './environment/setup-observation.js'
-import { GUARD_EXECUTABLE_SEARCH_PATH, resolveDockerExecutable, resolveGitExecutable } from './environment/executable.js'
+import { GUARD_EXECUTABLE_SEARCH_PATH, resolveGitExecutable } from './environment/executable.js'
 import { executeProbe, runUntilDeadline } from './environment-exec/execute.js'
 import { loadCockpitConfig } from './config/load.js'
 import { GUARD_AGENT_VARIABLES } from './guards/agent-workspaces.js'
@@ -74,7 +74,6 @@ export async function runGuardCommand(
                 ...guardEnvironment.HOME ? { home: guardEnvironment.HOME } : {}, ...guardEnvironment.XDG_CONFIG_HOME ? { xdgConfigHome: guardEnvironment.XDG_CONFIG_HOME } : {} }, {
                 loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
                 resolveGit: () => resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }),
-                resolveDocker: () => resolveDockerExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }),
                 execute: executeProbe,
             })
         } catch (error) {

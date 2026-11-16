@@ -13,9 +13,9 @@ import { loadCockpitConfig } from './config/load.js'
 import { renderHumanDiagnostics } from './diagnostics.js'
 import { RefusalError, type EnvironmentCommandOutcome, type ExecutionStep } from './environment/contract.js'
 import type { SetupResult } from './environment/setup.js'
-import { commands, describePublicOption, internalCommands, resolveOrdinaryInvocation } from './command-table.js'
+import { agentMayRun, commands, describePublicOption, internalCommands } from './command-table.js'
 import { effectivePolicy } from './autonomy.js'
-import { Autonomy, UNCONFIRMABLE_ANSWERS, Work } from './schema.js'
+import { Autonomy, Work } from './schema.js'
 import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS, SURFACE_TARGETS } from './surfaces/harness-registry.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { cockpitPackageVersion } from './test-support/package-version.js'
@@ -124,206 +124,49 @@ describe('invocation publication', () => {
     })
 })
 
-describe('closed ordinary invocation metadata', () => {
-    const authority = { executable: '/workspace/bin/cockpit', canonicalRoot: '/workspace/product',
-        allowedRoots: ['/workspace/product', '/workspace/app'], configPath: '/workspace/product/cockpit.toml', services: ['app'], gates: ['quick'],
-        grants: ['browser-preapproval', 'autonomy-sync', 'autonomy-reset', 'autonomy-instruction-files'] as const, profiles: ['jobs', 'mail.v2'] }
-    const ordinary = (argv: string[], patch = {}) => resolveOrdinaryInvocation({ executable: authority.executable, cwd: authority.canonicalRoot, argv, ...patch }, authority, () => true)
-    // The words each available config-bearing row needs besides --config.
-    const requiredWords: Readonly<Record<string, readonly string[]>> = {
-        logs: ['--service', 'app'],
-        restart: ['--service', 'app'], rebuild: ['--service', 'app'], exec: ['--service', 'app'], 'env schema': ['--path', 'api:services/web/.env.schema'],
-        'test-run': ['--gate', 'quick'], reset: ['--apply'], grade: ['--criteria', 'criteria.md'], use: ['app'], tool: ['add', 'codexcli'], confirm: ['ports.bases'],
-        ...Object.fromEntries(['accept', 'check', 'acknowledge', 'grade', 'signoff', 'recover'].map(sub => [`work ${sub}`, ['--work-order', 'WO-1']])),
-        'work note': ['--work-order', 'WO-1', '--text', 'why'], 'work decide': ['--work-order', 'WO-1', '--decision', '1', '--record'], 'work answer': ['--work-order', 'WO-1', '--question', '1', '--text', 'because'],
-        'work acknowledge': ['--work-order', 'WO-1', '--note', 'the deleted test is replaced'], 'work retry': ['--work-order', 'WO-1', '--note', 'the grader saw no change'],
-    }
-    // The container command follows `--` at the very end, after every option.
-    const trailingWords = (name: string): readonly string[] => name === 'exec' ? ['--', 'psql', '-c', 'select 1'] : []
-    it('keeps public rows compatible and internal transport separately typed and closed', async () => {
-        expect(commands.every(row => row.visibility === 'public' && row.ordinary !== undefined)).toBe(true)
-        expect(internalCommands).toMatchObject([{ name: 'guard-evaluate', visibility: 'internal', ordinary: { availability: 'unavailable' } }])
+describe('agent admission', () => {
+    const authority = { grants: ['browser-preapproval', 'autonomy-sync', 'autonomy-reset', 'autonomy-instruction-files'] as const, profiles: ['jobs'],
+        roots: ['/workspace/product', '/workspace/app'], cwd: '/workspace/product' }
+
+    it('keeps the guard-only command out of the public table', () => {
+        expect(internalCommands).toMatchObject([{ name: 'guard-evaluate', visibility: 'internal' }])
         expect(commands.some(row => String(row.name) === 'guard-evaluate')).toBe(false)
-        const help = run(['--help'])
-        expect(help.stdout).not.toContain('guard-evaluate')
-        // Each row declares its options twice, once for parseArgs and once for the guard: an option the
-        // guard admits must be one the CLI parses with the same arity, or the admitted run is refused.
-        for (const row of commands) {
-            if (row.ordinary.availability !== 'available') continue
-            const { options, forbidden } = row.ordinary
-            for (const [name, option] of Object.entries(options)) {
-                const parsed = row.options[name]
-                expect(parsed && { type: parsed.type, multiple: parsed.multiple === true }, `${row.name} --${name}`)
-                    .toEqual({ type: option.kind === 'flag' ? 'boolean' : 'string', multiple: option.repetition === 'repeated' })
-            }
-            for (const name of forbidden.presence) {
-                expect(Object.keys(row.options), `${row.name} forbidden --${name}`).toContain(name)
-            }
-        }
+        expect(run(['--help']).stdout).not.toContain('guard-evaluate')
     })
 
-    it('admits exactly the public ordinary profiles with bounded roles', () => {
-        const cases = [
-            ['setup'], ['sync', '--dry-run'], ['sync'], ['reset', '--apply'], ['check'],
-            ['up'], ['up', '--profile', 'jobs', '--profile=mail.v2'], ['sleep'], ['down'], ['preflight'], ['doctor'],
-            ['ps'], ['ps', '--json'], ['restart', '--service', 'app'], ['rebuild', '--service=app', '--json'],
-            ['logs', '--service', 'app'], ['logs', '--service', 'app', '--tail', '1', '--since', '15m', '--follow'],
-            ['logs', '--service=app', '--tail=10000', '--since=2026-10-22T10:00:00Z', '--json'],
-            // The inventory and the prune preview change nothing; an applied prune that deletes volumes is gated by the command.
-            ['stacks'], ['stacks', '--json'], ['stacks', 'prune'], ['stacks', 'prune', '--apply', '--json'],
-            // The documented agent steps of the test, work-order and browser loops.
-            ['test-run', '--gate', 'quick', '--json'], ['test-run', '--gate=quick', '--mode', 'staged', '--select', 'file:src/cache.test.ts'],
-            ['work', 'status', '--json'], ['work', 'status', '--work-order', 'WO-1'], ['work', 'accept', '--work-order', 'WO-1'],
-            ['work', 'check', '--work-order', 'WO-1', '--json'], ['work', 'note', '--work-order', 'WO-1', '--ask', '--text', 'Which origin is canonical?'],
-            ['work', 'answer', '--work-order', 'WO-1', '--question', '2', '--text', 'The first one'],
-            ['work', 'note', '--work-order', 'WO-1', '--decision', '--text', 'Cache by tenant'], ['work', 'decide', '--work-order', 'WO-1', '--decision', '1', '--record'],
-            ['work', 'decide', '--work-order', 'WO-1', '--decision', '1', '--none', '--reason', 'reverted before close'],
-            ['work', 'grade', '--work-order', 'WO-1', '--evaluator', 'codexcli'], ['grade', '--criteria', 'criteria.md', '--evaluator=claudecode'],
-            ['work', 'grade', '--work-order', 'WO-1'], ['work', 'grade', '--work-order', 'WO-1', '--verdict', 'met', '--note', 'ran the suite'],
-            ['work', 'signoff', '--work-order', 'WO-1'], ['work', 'signoff', '--work-order', 'WO-1', '--partial', '--note', 'AC3 left'],
-            ['work', 'recover', '--work-order', 'WO-1'], ['work', 'recover', '--work-order', 'WO-1', '--apply'], ['work', 'verify'], ['grade', '--criteria', 'criteria.md', '--json'],
-            ['browser', 'drive', '--json'], ['browser', 'drive', '--role', 'admin'], ['browser', 'drive', '--route', 'home', '--fail-on-findings'], ['browser', 'screenshot', '--role', 'admin', '--json'],
-            // An agent points a sibling at its own worktree inside a root it may already write, and pulls.
-            ['use', 'app', '/workspace/app/.worktrees/feature'], ['use', 'app', '--clear', '--json'], ['pull'], ['pull', '--json'],
-            // An added tool never widens what agents may do; the hold after it waits only for a sync.
-            ['tool', 'add', 'opencode'], ['tool', 'add', 'codexcli', '--dry-run', '--json'],
-            // confirm itself names the person a trust decision needs, so every answer reaches it.
-            ...UNCONFIRMABLE_ANSWERS.map(answer => ['confirm', answer]), ['confirm', 'ports.bases', '--json'],
-        ]
-        for (const args of cases) {
-            const argv = [...args, '--config', authority.configPath]
-            const { reads: _reads, ...profile } = ordinary(argv) ?? {}
-            expect(profile, argv.join(' ')).toEqual({ executable: authority.executable, cwd: authority.canonicalRoot, argv })
+    // The guard asks a person only for a cockpit command that changes what agents may do or waits for a
+    // person; every other spelling, malformed ones included, is an ordinary program the CLI judges itself.
+    it('holds exactly the commands that change what agents may do or wait for a person', () => {
+        for (const args of [['check'], ['up', '--profile', 'jobs'], ['session', '--profile=jobs', '--', 'npm', 'test'], ['logs', '--service', 'undeclared'],
+            ['stacks', 'prune', '--apply'], ['tool', 'add', 'opencode'], ['tool', '--dry-run', 'add', 'opencode'], ['confirm', 'ports.bases'],
+            ['use', 'app', '/workspace/app/.worktrees/feature'], ['use', 'app', 'app/feature'], ['use', 'app', '--clear'], ['exec', '--service', 'api', '--', 'psql'],
+            ['init', '.', '--target', 'codexcli'], ['work', 'signoff', '--work-order', 'WO-1'], ['work'], ['unknown'], ['sync'], ['upgrade', '1.2.3'], ['reset', '--apply'],
+            ['browser', 'drive'], ['setup', '--write-instruction-files']]) {
+            expect(agentMayRun(args, authority), args.join(' ')).toBe(true)
         }
-        // The grammar admits exec's spelling with any command after `--`; the evaluator then judges
-        // that command as a host invocation.
-        for (const command of [['psql', '-c', 'select 1'], ['--version']]) {
-            const argv = ['exec', '--config', authority.configPath, '--service', 'app', '--', ...command]
-            expect(ordinary(argv), argv.join(' ')).toEqual({ executable: authority.executable, cwd: authority.canonicalRoot, argv })
-        }
-        // The files a command parses are carried for the evaluator to check as reads.
-        expect(ordinary(['grade', '--config', authority.configPath, '--criteria', 'criteria.md'])?.reads).toEqual(['/workspace/product/criteria.md'])
-        expect(ordinary(['work', 'status', '--config', authority.configPath])).not.toHaveProperty('reads')
-        for (const field of ['environment.install_policies', 'environment.test_data']) {
-            const argv = ['init', '.', '--target', 'codexcli', '--reset-answer', field, '--json']
-            expect(ordinary(argv), field).toEqual({ executable: authority.executable, cwd: authority.canonicalRoot, argv })
-        }
-    })
-
-    it('admits env schema only for the exact file name, at a path that cannot climb', () => {
-        const words = (path: string) => ['env', 'schema', '--config', authority.configPath, '--path', path]
-        for (const path of ['.env.schema', 'api:.env.schema', 'api:services/web/.env.schema']) expect(ordinary(words(path)), path).toBeDefined()
-        // The directory alone names the same file, so an agent's secret guard that refuses any word
-        // containing `.env` does not refuse the documented route for writing a schema.
-        for (const path of ['.', 'api:', 'api:.', 'api:services/web', 'services']) expect(ordinary(words(path)), path).toBeDefined()
-        for (const path of ['.env', '.env.local', '.env.schema.private', '.ENV.SCHEMA', 'api:.env', '../.env.schema', 'api:../.env.schema', 'services/../.env.schema',
-            '/workspace/product/.env.schema', 'api:/etc/.env.schema', '..', 'api:..', 'services/', 'api:services/.secrets', 'api:.env-drafts', '',
-            '.secrets/.env.schema', 'api:.ENV/.env.schema', 'api:.env.production/.env.schema']) expect(ordinary(words(path)), path).toBeUndefined()
-    })
-
-    it('admits env schema --replace-from only with a draft the guard can prove, and marks it as the whole call', () => {
-        const words = (draft: string) => ['env', 'schema', '--config', authority.configPath, '--path', 'api:.env.schema', '--replace-from', draft]
-        expect(ordinary(words('drafts/schema.txt'))).toEqual({ executable: authority.executable, cwd: authority.canonicalRoot, argv: words('drafts/schema.txt'),
-            reads: ['/workspace/product/drafts/schema.txt'], alone: true })
-        for (const draft of ['.env', '.ENV', '.env.local', '.env.example', '.env.schema', 'drafts/.env', '.env-drafts/schema.txt', '.secrets/schema.txt', 'env/.SECRETS/schema.txt',
-            '../schema.txt', 'drafts/../.env', '/elsewhere/schema.txt']) expect(ordinary(words(draft)), draft).toBeUndefined()
-        expect(ordinary(['env', 'schema', '--config', authority.configPath, '--replace-from', 'drafts/schema.txt'])).toBeUndefined()
-        expect(ordinary(['env', 'keys', '--config', authority.configPath, '--replace-from', 'drafts/schema.txt'])).toBeUndefined()
-    })
-
-    it('requires the exact resolved config for every available config-bearing row', () => {
-        const rows = commands.filter(row => row.ordinary.availability === 'available' && row.ordinary.configuration !== 'none')
-        expect(rows.map(row => row.name)).toEqual(['setup', 'use', 'pull', 'tool', 'confirm', 'upgrade', 'sync', 'check', 'up', 'preflight', 'logs', 'ps', 'restart', 'rebuild', 'exec',
-            'sleep', 'down', 'reset', 'stacks', 'doctor', 'env keys', 'env schema',
-            'test-run', 'work status', 'work accept', 'work check', 'work note', 'work decide', 'work answer', 'work acknowledge', 'work grade', 'work signoff', 'work retry', 'work recover', 'work verify', 'grade',
-            'browser drive', 'browser screenshot', 'docs check'])
-        for (const row of rows) {
-            const argv = [...row.name.split(' '), ...(requiredWords[row.name] ?? [])]
-            const tail = trailingWords(row.name)
-            expect(ordinary([...argv, ...tail]), `${row.name} missing config`).toBeUndefined()
-            expect(ordinary([...argv, '--config', authority.configPath, ...tail]), row.name).toBeDefined()
-            expect(ordinary([...argv, '--config', 'other.toml', ...tail]), `${row.name} wrong config`).toBeUndefined()
-        }
-    })
-
-    // The install is exact and its sync child decides as sync does, so an agent with the sync grant may run the real upgrade.
-    it('admits the real upgrade, with or without one exact version', () => {
-        for (const extra of [[], ['1.2.3'], ['--dry-run'], ['1.2.3', '--dry-run'], ['--dry-run', '--json']]) {
-            expect(ordinary(['upgrade', ...extra, '--config', authority.configPath]), extra.join(' ')).toBeDefined()
-        }
-    })
-
-    it('refuses all ambiguous, repeated, escaping, unavailable or differently spelled forms', () => {
-        const cases = [
-            ['sync', '--interactive'], ['sync', '--interactive=false'],
-            ['logs'], ['logs', '--service', 'other'], ['logs', '--service', 'app', '--tail', '0'], ['logs', '--service', 'app', '--tail', '10001'],
-            ['logs', '--service', 'app', '--tail', '1.5'], ['logs', '--service', 'app', '--since', '1m;id'], ['logs', '--service', 'app', '--since', 'x'.repeat(65)],
-            ['up', '--profile', 'Jobs'], ['up', '--profile', '-jobs'], ['up', '--profile', 'x'.repeat(65)], ['ps', 'app'],
-            // A profile beyond the ones the guard was handed starts services no person declared for an agent.
-            ['up', '--profile', 'ops'], ['up', '--profile', 'jobs', '--profile', 'ops'],
-            ['restart'], ['restart', '--service', 'other'], ['rebuild', 'app'], ['rebuild', '--service', 'app', '--profile', 'jobs'],
-            // exec needs its command after `--`, and nothing of cockpit's own after it.
-            ['exec', '--service', 'app'], ['exec', '--service', 'app', '--config', authority.configPath, '--'],
-            ['exec', '--service', 'app', '--config', authority.configPath, 'psql'], ['exec', '--service', 'other', '--config', authority.configPath, '--', 'psql'],
-            ['exec', '--config', authority.configPath, '--', 'psql'],
-            ['upgrade', '^1.2.3'], ['upgrade', '1.2.3', '1.2.4'], ['upgrade', '--dry-run', '--dry-run'],
-            ['reset'], ['reset', '--interactive'], ['guard-evaluate', '--harness', 'claudecode'],
-            ['stacks', 'prune', '--interactive'], ['stacks', 'remove'], ['stacks', 'prune', 'extra'],
-            ['check', 'extra'], ['check', '--unknown'], ['check', '--config', '/outside/cockpit.toml'], ['check', '--config', 'other.toml'],
-            ['check', '--json=false'], ['check', '--'], ['check', '--config'], ['check', '-c', 'cockpit.toml'],
-            // A person confirms the displayed preview.
-            ['work', 'accept', '--work-order', 'WO-1', '--interactive'], ['work', 'answer', '--work-order', 'WO-1', '--question', '1', '--text', 'yes', '--interactive'],
-            ['work', 'signoff', '--work-order', 'WO-1', '--interactive'],
-            ['test-run'], ['test-run', '--gate', 'undeclared'], ['test-run', '--gate', 'quick', '--mode', 'all'],
-            ['test-run', '--gate', 'quick', '--select', 'file:--config=evil.ts'], ['test-run', '--gate', 'quick', '--select', 'src/cache.test.ts'],
-            ['work', 'note', '--work-order', 'WO-1'], ['work', 'answer', '--work-order', 'WO-1', '--question', 'first', '--text', 'yes'],
-            ['work', 'grade', '--work-order', 'WO-1', '--evaluator', 'gemini'], ['work', 'status', '--evaluator', 'codexcli'],
-            ['work', 'grade', '--work-order', '../WO-1'], ['grade', '--criteria', '../outside.md'], ['grade'],
-            ['work', 'status', 'WO-1'], ['work', '--json'], ['work', 'unknown'], ['browser', 'drive', '--role', 'a/b'], ['browser', 'screenshot', '--fail-on-findings'],
-            // A checkout outside every allowed root would widen what the agent can write, so a person names it.
-            ['use', 'app', '/outside/app-feature'], ['use', 'app', '../app-feature'], ['use', 'App', '--clear'], ['use'],
-            ['use', 'app', '/workspace/app/feature', 'extra'], ['pull', 'app'],
-            // Removing a tool deletes its guard, so a person runs it.
-            ['tool', 'remove', 'codexcli'], ['tool', 'add', 'unknown'], ['tool', 'add'], ['tool', 'add', 'codexcli', 'opencode'],
-            ['confirm'], ['confirm', 'ports'], ['confirm', 'ports.bases', 'guards'],
-        ]
-        for (const args of cases) {
-            const argv = args.some(arg => arg === '--config') ? args : [...args, '--config', authority.configPath]
-            expect(ordinary(argv), argv.join(' ')).toBeUndefined()
-        }
-        for (const row of commands) {
-            if (row.ordinary.availability !== 'available') continue
-            const required = row.name === 'init' ? ['.', '--target', 'codexcli'] : ['--config', authority.configPath, ...(requiredWords[row.name] ?? [])]
-            for (const [name, option] of Object.entries(row.ordinary.options)) {
-                const value = option.kind === 'flag' ? [] : [name === 'target' ? 'codexcli' : name === 'config' ? authority.configPath : name === 'service' ? 'app' : name === 'tail' ? '1' : name === 'since' ? '1m'
-                    : name === 'gate' ? 'quick' : name === 'mode' ? 'full' : name === 'select' ? 'test:refresh' : name === 'accept-reset' ? 'a'.repeat(64) : name === 'question' || name === 'decision' ? '1' : name === 'evaluator' ? 'codexcli'
-                        : name === 'profile' ? 'jobs' : name === 'path' ? '.env.schema' : 'path']
-                const baseline = required.filter((arg, i) => arg !== `--${name}` && required[i - 1] !== `--${name}`)
-                const tail = trailingWords(row.name)
-                expect(ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value, ...tail]), `${row.name} single ${name}`).toBeDefined()
-                const repeated = ordinary([...row.name.split(' '), ...baseline, `--${name}`, ...value, `--${name}`, ...value, ...tail])
-                if (option.repetition === 'repeated') expect(repeated, `${row.name} repeated ${name}`).toBeDefined()
-                else expect(repeated, `${row.name} repeated ${name}`).toBeUndefined()
-            }
+        for (const args of [['sibling', 'add', 'api'], ['sibling', 'remove', 'api'], ['tool', 'remove', 'codexcli'], ['guard-evaluate', '--harness', 'claudecode'],
+            ['sync', '--interactive'], ['sync', '--interactive=false'], ['reset', '--interactive'], ['stacks', 'prune', '--interactive'],
+            ...['accept', 'answer', 'acknowledge', 'signoff', 'retry'].map(sub => ['work', sub, '--work-order', 'WO-1', '--interactive']),
+            ...['--interactive', '--answers=a.toml', '--accept-preview=f', '--accept-defaults=f', '--scaffold-compose=app', '--command=x', '--port=1', '--with=redis']
+                .map(flag => ['init', '.', '--target', 'codexcli', flag]),
+            // A profile that mounts an operator-gated sibling never starts without a person.
+            ['up', '--profile', 'ops'], ['session', '--profile', 'jobs', '--profile', 'ops', '--', 'npm', 'test'],
+            // The CLI runs a wrapper's positionals before `--` too, which the evaluator would not judge.
+            ['session', 'cockpit', 'tool', 'remove', 'codexcli', '--', '--config', 'cockpit.toml'], ['session', 'rm', '--', '-rf', '/elsewhere'],
+            ['exec', '--service', 'api', 'sh', '--', '-c', 'id'], ['session', 'npm', 'test'],
+            // A checkout outside every allowed root would widen what agents can reach, so a person names it.
+            ['use', 'app', '/elsewhere/app'], ['use', 'app', '../app/feature'], ['use', 'app', '../../elsewhere'], ['use', 'app', '/workspace/app/../../elsewhere']]) {
+            expect(agentMayRun(args, authority), args.join(' ')).toBe(false)
         }
         // Browser commands run unprompted only where cockpit.toml preapproves them, and a writing sync, an
-        // upgrade (whose sync child writes), an applied reset or setup's writes into sibling repositories,
-        // which change what every agent session there loads, only where [autonomy] gives the decision to
-        // the agent. A dry run writes nothing, so no grant gates it.
-        const resolve = (argv: readonly string[], source: Parameters<typeof resolveOrdinaryInvocation>[1]) => resolveOrdinaryInvocation({ executable: authority.executable,
-            cwd: authority.canonicalRoot, argv: [...argv, '--config', authority.configPath] }, source, () => true)
-        for (const [argv, grant] of [[['browser', 'drive'], 'browser-preapproval'], [['sync'], 'autonomy-sync'], [['upgrade'], 'autonomy-sync'],
-            [['upgrade', '1.2.3'], 'autonomy-sync'], [['reset', '--apply'], 'autonomy-reset'],
-            [['setup', '--write-instruction-files'], 'autonomy-instruction-files'], [['setup', '--write-instruction-pointers'], 'autonomy-instruction-files']] as const) {
-            const without = { ...authority, grants: authority.grants.filter(row => row !== grant) }
-            expect(resolve(argv, authority), argv.join(' ')).toBeDefined()
-            expect(resolve(argv, without), argv.join(' ')).toBeUndefined()
+        // upgrade, an applied reset or setup's writes into sibling repositories only where [autonomy] gives
+        // the decision to the agent. A dry run writes nothing, so no grant gates it.
+        for (const [args, grant] of [[['browser', 'drive'], 'browser-preapproval'], [['sync'], 'autonomy-sync'], [['upgrade', '1.2.3'], 'autonomy-sync'],
+            [['reset', '--apply'], 'autonomy-reset'], [['setup', '--write-instruction-pointers'], 'autonomy-instruction-files']] as const) {
+            expect(agentMayRun(args, { ...authority, grants: authority.grants.filter(row => row !== grant) }), args.join(' ')).toBe(false)
         }
-        const noSync = { ...authority, grants: authority.grants.filter(row => row !== 'autonomy-sync') }
-        for (const argv of [['sync', '--dry-run'], ['upgrade', '--dry-run'], ['upgrade', '1.2.3', '--dry-run']]) expect(resolve(argv, noSync), argv.join(' ')).toBeDefined()
-        for (const executable of ['cockpit', '/other/cockpit', 'bash']) expect(ordinary(['check', '--config', authority.configPath], { executable })).toBeUndefined()
-        expect(ordinary(['check', '--config', authority.configPath], { cwd: '/workspace/app' })).toBeUndefined()
-        expect(ordinary(['sh', '-c', 'cockpit check', '--config', authority.configPath])).toBeUndefined()
+        const noSync = { ...authority, grants: [] }
+        for (const args of [['sync', '--dry-run'], ['upgrade', '--dry-run'], ['setup']]) expect(agentMayRun(args, noSync), args.join(' ')).toBe(true)
     })
 })
 
