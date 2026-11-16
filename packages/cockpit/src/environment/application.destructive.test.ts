@@ -86,11 +86,14 @@ describe('destructive application contracts', () => {
     }
 
     const removal = (id: string) => Object.freeze({ kind: 'container', id, name: `synthetic-${id}`, step: Object.freeze({ id: `remove:${id}` }) })
-    const resetPlan = (digest: string, noop = false) => Object.freeze({
+    const resetPlan = (digest: string, noop = false, removed = false) => Object.freeze({
         kind: 'complete', digest, noop,
         targets: Object.freeze(noop ? [] : [Object.freeze({ kind: 'volume', identity: 'synthetic-volume', declaration: 'data' })]),
-        removals: Object.freeze(noop ? [] : [removal('volume-1')]),
+        removals: Object.freeze(noop || removed ? [] : [removal('volume-1')]),
     }) as never
+    // Plans a removal of each resource the discovery lists, as the real classification does for this stack's own.
+    const teardownOfDiscovery = (input: { discovery: { resources: readonly { id: string }[] } }) =>
+        ({ kind: 'complete', targets: input.discovery.resources.map(({ id }) => removal(id)) }) as never
 
     async function holders(context: Awaited<ReturnType<typeof destructiveFixture>>['context']) {
         const stored = await readState(context.namespace.paths.coordination(context.stackId))
@@ -193,8 +196,9 @@ describe('destructive application contracts', () => {
 
     it('removes an approved reset\'s targets after stopping the stack, and releases it', async () => {
         const { configPath, context, instance, record } = await destructiveFixture()
-        applicationOwners.reclaim.planReset = async () => resetPlan('5'.repeat(64))
         const events: string[] = []
+        applicationOwners.reclaim.planReset = async () => resetPlan('5'.repeat(64), false, events.includes('remove:volume-1'))
+        applicationOwners.reclaim.planTeardown = teardownOfDiscovery
         applicationOwners.runtime.stopRuntime = async () => { events.push('stop'); return { kind: 'stopped' } }
 
         const session = await beginOperatorReset({ configPath }, {
@@ -247,7 +251,7 @@ describe('destructive application contracts', () => {
 
     it('retires a stack that never started without writing a lifecycle record up would refuse', async () => {
         const { configPath, context, instance, record } = await destructiveFixture()
-        applicationOwners.reclaim.planTeardown = () => ({ kind: 'complete', targets: [removal('container-1')] }) as never
+        applicationOwners.reclaim.planTeardown = teardownOfDiscovery
         // The discoveries here are opaque stand-ins, so the kept-resource classification is too.
         applicationOwners.reclaim.keptTeardownResources = () => []
         applicationOwners.runtime.stopRuntime = async () => ({ kind: 'stopped' })
@@ -274,7 +278,7 @@ describe('destructive application contracts', () => {
 
     it('keeps the stack held when a removal reported success but a fresh discovery still lists it', async () => {
         const { configPath, context, instance, record } = await destructiveFixture()
-        applicationOwners.reclaim.planTeardown = () => ({ kind: 'complete', targets: [removal('container-1')] }) as never
+        applicationOwners.reclaim.planTeardown = teardownOfDiscovery
         applicationOwners.runtime.stopRuntime = async () => ({ kind: 'stopped' })
         const still = observation(instance, record, [{ kind: 'container', id: 'container-1' }])
 
@@ -288,6 +292,33 @@ describe('destructive application contracts', () => {
         expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{
             code: 'RECLAIM_ACCOUNTING_MISMATCH', message: expect.stringContaining('container synthetic-container-1 (container-1)'),
             fix: expect.stringContaining(cockpitCommand('down', { config: context.source.path })),
+        }] })
+        expect(await holders(context)).toEqual([context.holderId])
+    })
+
+    // A leftover or concurrent `docker compose up` can start a container of this stack after down or
+    // reset read Docker; releasing the stack then would free ports that container runs on.
+    it.each(['down', 'reset'] as const)('refuses %s and keeps the stack held when a container of the stack appears during it', async (command) => {
+        const { configPath, context, instance, record } = await destructiveFixture()
+        applicationOwners.reclaim.planTeardown = teardownOfDiscovery
+        applicationOwners.reclaim.planReset = async (input) => resetPlan('6'.repeat(64), false, input.discovery.resources.length > 0)
+        applicationOwners.runtime.stopRuntime = async () => ({ kind: 'stopped' })
+        const adapters = {
+            load: async () => ({ kind: 'complete' as const, status: 0 as const, diagnostics: [], result: context }),
+            observe: async () => observation(instance, record),
+            observeReclaim: async () => observation(instance, record, [{ kind: 'container', id: 'container-late' }]),
+            execute: async () => ({ kind: 'complete' }) as never,
+        }
+        let result
+        if (command === 'down') result = await runDown({ configPath }, adapters)
+        else {
+            const session = await beginOperatorReset({ configPath }, adapters)
+            if (!('decide' in session)) throw new Error('operator reset session was not issued')
+            result = await session.decide('approve')
+        }
+
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{
+            code: 'EXECUTION_PRECONDITION_CHANGED', message: expect.stringContaining(`the stack changed during ${command}: a fresh discovery lists container synthetic-container-late (container-late)`),
         }] })
         expect(await holders(context)).toEqual([context.holderId])
     })

@@ -124,24 +124,38 @@ async function stopStack(context: DestructiveRunContext, adapters: DestructiveCo
         : lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_STEP_FAILED, `the stack could not be stopped: ${stopped.reason}`, context.stackId, rerunFix(context, purpose))
 }
 
+function describeTargets(targets: readonly RemovalTarget[]): string {
+    return targets.map(({ kind, name, id }) => `${kind} ${name} (${id})`).join('; ')
+}
+
 // Docker or rm reporting success is not proof; a later discovery that no longer lists the target is.
+// That discovery is planned again, because a container started meanwhile (a leftover or concurrent
+// `docker compose up`) would otherwise run on ports this command is about to release.
 async function removeAndConfirm(
     context: DestructiveRunContext,
     adapters: DestructiveCommandAdapters,
     targets: readonly RemovalTarget[],
-    observation: DestructiveReclaimObservation,
     purpose: 'down' | 'reset',
+    replan: (after: DestructiveReclaimObservation) => Promise<readonly RemovalTarget[] | Refusal>,
 ): Promise<DestructiveReclaimObservation | Refusal> {
-    if (targets.length === 0) return observation
     const failed = await removeTargets(targets, (step) => adapters.execute(step))
     if (failed) return forwardedRefusal(failed.diagnostics)
     const after = await observeDestructiveReclaim(context, adapters)
     if (!after || 'diagnostics' in after) return observationRefusal(context, after)
     const remaining = remainingTargets(targets, after.down.discovery)
-    if (remaining.length === 0) return after
-    return lifecycleRefusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH,
-        `${purpose} was told each removal succeeded, but a fresh discovery still lists ${remaining.map(({ kind, name, id }) => `${kind} ${name} (${id})`).join('; ')}`,
+    if (remaining.length > 0) return lifecycleRefusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH,
+        `${purpose} was told each removal succeeded, but a fresh discovery still lists ${describeTargets(remaining)}`,
         context.stackId, rerunFix(context, purpose))
+    const appeared = await replan(after)
+    if ('status' in appeared) return appeared
+    return appeared.length === 0 ? after : lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
+        `the stack changed during ${purpose}: a fresh discovery lists ${describeTargets(appeared)}, which it had not planned to remove`,
+        context.stackId, rerunFix(context, purpose))
+}
+
+async function teardownTargets(observed: DestructiveReclaimObservation): Promise<readonly RemovalTarget[] | Refusal> {
+    const plan = planTeardown(observed.down)
+    return plan.kind === 'complete' ? plan.targets : forwardedRefusal(plan.diagnostics)
 }
 
 // Teardown removes only what it can prove is this stack's and unused, so a finished teardown can
@@ -194,7 +208,7 @@ async function downWithContext(context: DestructiveRunContext, adapters: DownCom
     if (stopped) return stopped
     const plan = planTeardown(observation.down)
     if (plan.kind !== 'complete') return forwardedRefusal(plan.diagnostics)
-    const after = await removeAndConfirm(context, adapters, plan.targets, observation, 'down')
+    const after = await removeAndConfirm(context, adapters, plan.targets, 'down', teardownTargets)
     if ('status' in after) return after
     const kept = downKeptRefusal(context, after)
     if (kept) return kept
@@ -285,7 +299,16 @@ async function applyReset(context: DestructiveRunContext, adapters: ResetCommand
     if (plan.noop) return { kind: 'complete', status: 0, diagnostics: [], result: { stackId: context.stackId, change: 'unchanged' } }
     const stopped = await stopStack(context, adapters, observation, 'reset')
     if (stopped) return stopped
-    const after = await removeAndConfirm(context, adapters, plan.removals, observation, 'reset')
+    // Reset deletes the declared data and leaves the stopped stack, so what must not appear meanwhile
+    // is a target of its own or a container that was not there when it started.
+    const before = new Set(observation.down.discovery.resources.map(({ kind, id }) => `${kind}:${id}`))
+    const after = await removeAndConfirm(context, adapters, plan.removals, 'reset', async (observed) => {
+        const replanned = await planReset(observed.reset)
+        if (replanned.kind !== 'complete') return forwardedRefusal(replanned.diagnostics)
+        const teardown = await teardownTargets(observed)
+        if ('status' in teardown) return teardown
+        return [...replanned.removals, ...teardown.filter(({ kind, id }) => kind === 'container' && !before.has(`${kind}:${id}`))]
+    })
     if ('status' in after) return after
     return await releaseStack(context) ?? {
         kind: 'complete', status: 0, diagnostics: [],
