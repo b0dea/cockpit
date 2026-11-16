@@ -13,6 +13,16 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.19
+
+### Patch Changes
+
+- ffee417: **Fixed:** a work-order grade no longer counts the default branch's work merged into the order's branch as the order's change. A file still exactly as the last merged default-branch commit (`origin/HEAD`) has it is left out of the grade, its scope check and its test-protection check; a file the order also edited still counts.
+  
+  A change inside another open order's scope is also left to that order when that order was accepted from this order's base or an earlier one, since its grade sees all of the change; one an order accepted later could not see stays this order's.
+- fe3fc8a: **Fixed:** `printf`, `test` and the other commands that read an array subscript as arithmetic are no longer refused when a `[` and a `$` appear only inside a `$(…)` they are given, as in `printf '%s' "$(sed -n '/^[a-z]/p' f | rg -c -- "- $p")"`. The command inside is judged on its own, and a subscript in the word itself, such as `"a[$(cmd)]"`, is still refused.
+- 3ff1863: The configuration reference and the test-run docs now say that a stage does not get variables from the shell that runs `test-run`, so a gate's result does not depend on who ran it, and how to give a stage a value it needs: set it at the start of its command, as `["env", "STEP_TIMEOUT=3600", "pnpm", "selftest"]`.
+
 ## 0.1.18
 
 ### Patch Changes
