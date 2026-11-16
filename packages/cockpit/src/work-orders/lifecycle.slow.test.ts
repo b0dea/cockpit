@@ -327,6 +327,20 @@ describe('work-order lifecycle', () => {
         for (const args of [['work', 'status'], ['test-run', '--gate', 'quick', '--mode', 'canonical']]) {
             expect((await work(root, args)).diagnostics[0]?.message, args.join(' ')).toMatch(/cockpit\.toml changes testing\S* since the guards were generated/)
         }
+        // [browser] decides what a browser command reaches, so browser commands wait for that sync as well.
+        const browserToml = [checksToml, '[environment]', 'addressing = "port"', 'authentication = "bypassed"',
+            'posture_requirements = [{ requirement = "synthetic-browser", addressing = "port", authentication = "bypassed" }]',
+            'generated_host_paths = [".browser/mcp", ".browser/cli", ".browser/auth"]', '', '[browser]',
+            'harnesses = [{ target = "codexcli", version = "0.149.0" }]',
+            `images = { mcp = { reference = "synthetic.invalid/mcp@sha256:${'b'.repeat(64)}", driver_version = "1.2.3" } }`,
+            `project = { lockfile = "package-lock.json", sha256 = "${'c'.repeat(64)}", driver_version = "1.2.3" }`,
+            'max_clients = 1', 'proxy = { server_port = 3000, proxy_port = 3001, allowed_hosts = ["localhost:3001"] }', 'resolver = []',
+            'authentication = { policy = "none", states = [] }', 'data = { mode = "empty", isolated = true, reaches_production = false }',
+            'request_preapproval = true', 'artifacts = { mcp = ".browser/mcp", cli = ".browser/cli", auth = ".browser/auth" }', ''].join('\n')
+        writeFileSync(join(root, 'cockpit.toml'), browserToml)
+        for (const args of [['browser', 'drive'], ['browser', 'screenshot']]) {
+            expect((await work(root, args)).diagnostics[0]?.message, args.join(' ')).toMatch(/cockpit\.toml changes .*\bbrowser\b.* since the guards were generated/)
+        }
         writeFileSync(join(root, 'cockpit.toml'), checksToml)
         expect((await work(root, ['work', 'status'])).result).toMatchObject({ grading: 'checks' })
     }, 120_000)

@@ -983,8 +983,9 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             const loaded = await loadCockpitConfig(config.source.path)
             if (loaded.kind !== 'complete') throw new RefusalError(loaded.diagnostics[0]?.message ?? 'cockpit.toml could not be loaded')
             const change = await observeGuardConfigChange(root, { sha256: loaded.result.source.sha256, config: loaded.result.config })
-            // [testing] decides which files count as tests and what each stage runs, so it grades work as [work] does.
-            const held = (field: string) => ['work', 'testing'].some(table => field === table || field.startsWith(`${table}.`))
+            // [testing] decides which files count as tests and what each stage runs, so it grades work as [work]
+            // does; [browser] decides what a browser command reaches.
+            const held = (field: string) => ['work', 'testing', 'browser'].some(table => field === table || field.startsWith(`${table}.`))
             return change?.kind === 'widening' ? change.fields.filter(held) : []
         }, orderIds, readOrder,
         readCriteriaFile: async (path: string) => parseCriteriaFile(readBounded(root, path, 65_536)),

@@ -26,16 +26,17 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
     if (!isWorkApplicationComposition(composition)) return refusal('invalid', 'An issued work application composition is required')
     const operation = captured.operation
     try {
-        if (captured.operation === 'browser-drive' || captured.operation === 'browser-screenshot') {
-            const kind = captured.operation === 'browser-screenshot' ? 'screenshot' : 'drive'
-            return browserOutcome(captured.operation, await executeBrowserCommand(await composition.browser(kind, captured.role, captured.route)), captured.failOnFindings === true)
-        }
-        // A [work] edit that widens what agents may do is not in force until a person applies it at sync;
-        // test-run reads the grading too, to judge test weakening.
+        // A [work], [testing] or [browser] edit that widens what agents may do is not in force until a person
+        // applies it at sync; test-run reads the grading too, to judge test weakening, and a browser command
+        // reaches what [browser] declares.
         const unsynced = await composition.unsyncedWork()
         if (unsynced.length) {
             return refusal(operation, `cockpit.toml changes ${unsynced.join(', ')} since the guards were generated, which widens what agents may do; `
                 + 'a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive and answers yes, or the change is reverted')
+        }
+        if (captured.operation === 'browser-drive' || captured.operation === 'browser-screenshot') {
+            const kind = captured.operation === 'browser-screenshot' ? 'screenshot' : 'drive'
+            return browserOutcome(captured.operation, await executeBrowserCommand(await composition.browser(kind, captured.role, captured.route)), captured.failOnFindings === true)
         }
         if (captured.operation === 'test-run') return await testRun(captured, composition)
         return await work(captured as WorkRequest, composition)
