@@ -1610,10 +1610,12 @@ async function inspectLock(
     try {
         bytes = new TextDecoder('utf-8', { fatal: true }).decode(await readLockOwner(lockPath, stateRoot))
         const parsed = StateLockSchema.safeParse(JSON.parse(bytes))
-        if (!parsed.success) throw new SyntaxError('invalid lock metadata')
+        if (!parsed.success) throw new RefusalError('lock metadata does not match the state-lock format')
         owner = parsed.data
     } catch (error) {
-        const unreadable = hasErrorCode(error, 'ENOENT') || error instanceof SyntaxError || error instanceof TypeError
+        // Only a missing, empty or unparsable record is one a command left mid-write; a record that
+        // parses but does not match may name a live holder, and is never taken over.
+        const unreadable = hasErrorCode(error, 'ENOENT') || error instanceof SyntaxError
         const age = unreadable ? await lockAge(lockPath) : undefined
         if (age !== undefined && age >= OWNERLESS_LOCK_MS) {
             let current: string | null = null

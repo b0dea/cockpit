@@ -1570,6 +1570,21 @@ describe('transactState', () => {
         expect(await readdir(dirname(namespace.paths.stateLock))).toEqual([])
     })
 
+    // A record that parses but does not match the format may name a live holder this version cannot
+    // read; only a missing, empty or unparsable record is one a killed command left half written.
+    it('never takes over a lock whose owner record parses but does not match the lock format', async () => {
+        const { namespace, address } = await selectedNamespace()
+        await mkdir(namespace.paths.stateLock, { recursive: true })
+        const owner = `${JSON.stringify({ format: 'cockpit-state/v1', kind: 'state-lock', ownerId: holderA, pid: process.pid })}\n`
+        await writeFile(join(namespace.paths.stateLock, 'owner.json'), owner)
+        const stood = new Date(Date.now() - 60_000)
+        await utimes(namespace.paths.stateLock, stood, stood)
+
+        expect(await transactState(namespace, address, { ownerId: holderB, contentionTimeoutMs: 0 }, () => lifecycleRecord(0, 1)))
+            .toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED })
+        expect(await readFile(join(namespace.paths.stateLock, 'owner.json'), 'utf8')).toBe(owner)
+    })
+
     it('reclaims, once, a lock whose holder is gone from this host, and reports it', async () => {
         const home = join(await temporaryDirectory(), 'home')
         await mkdir(home)
