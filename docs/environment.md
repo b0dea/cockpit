@@ -305,9 +305,7 @@ diverging files, or writing a first AGENTS.md, stays a person's.
 existing one, so if the start fails, cockpit undoes only the holder that attempt added. Before
 resuming, it checks that the saved progress still matches the current lifecycle record, runtime and
 port lease. If so, it rechecks the services that completed and resumes the rest; if not, it discards
-that progress before touching containers left by the earlier attempt. After the first seed, missing
-saved progress blocks startup. Restore that state rather than delete it: deleting it would make the
-stack look like a fresh environment when it is not.
+that progress before touching containers left by the earlier attempt.
 
 When a service `up` started does not become healthy, cockpit reports its last log lines as one
 diagnostic, then stops its container and keeps it, so a restart policy cannot leave it restarting.
@@ -774,12 +772,12 @@ success.
 
 ## Bring-up order
 
-`setup` writes `started` to the lifecycle history, and so does the first `up` on a stack with
-neither lifecycle data nor history; lifecycle data without history is refused as lost. Bring-up then
-checks the runtime, starts the Compose stack, waits for every service to report healthy, records
-`seeded`, and only then runs `environment.seed` when it is due. A refusal keeps the progress so the
-next `up` resumes. Fix the named prerequisite; never edit lifecycle state to fake `started` or
-`seeded` history.
+`up` keeps one lifecycle record per stack. It checks the runtime, starts the Compose stack, waits for
+every service to report healthy, marks the stack as having come up, and only then runs
+`environment.seed` when it is due, recording when the seed last succeeded. A refusal keeps the
+progress so the next `up` resumes. A record written by an earlier cockpit is read as a stack that has
+not come up yet: the next `up` brings it up as usual and runs the seed once more. Fix the named
+prerequisite; never edit lifecycle state by hand.
 
 ## Result words
 

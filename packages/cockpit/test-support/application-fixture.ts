@@ -309,7 +309,6 @@ async function sequenceFixture(
         syncInstructionFiles: async ({ siblingRoot }) => ({ kind: 'none', root: siblingRoot }),
         execute: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: { steps: [] } }),
         observeSource: async () => ({ state: 'available', ...context.source }),
-        recordStarted: async () => ({ kind: 'unchanged', record: {} as never }),
         withIgnore: async (_input, use) => use(),
         planSeed: async () => ({ kind: 'none' }),
         seed: () => ({ kind: 'none' }),

@@ -492,31 +492,6 @@ describe('setup application choreography', () => {
         expect(outcome).toBeUndefined()
     })
 
-    it('retains lifecycle mutation evidence when execution is refused before starting', async () => {
-        const { configPath, adapters } = await sequenceFixture()
-        adapters.observeGit = cloneObservations()
-        adapters.planGit = async ({ sibling, context }) => ({
-            kind: 'preview', status: 0, diagnostics: [],
-            result: { sibling: sibling.slug, target: resolve(context.siblingsRoot, sibling.dir), observed: 'absent', action: 'clone', changed: true },
-            plan: { steps: [{ id: 'setup:api:clone' }] as never },
-        })
-        adapters.recordStarted = async () => ({ kind: 'complete', record: {} as never })
-        adapters.execute = async () => ({
-            kind: 'refusal', status: 2, diagnostics: [], result: null,
-            execution: {
-                completedStepIds: [], failedStep: { id: 'setup:api:clone', started: false },
-                compensation: { attemptedStepIds: [], completedStepIds: [], failed: [] },
-            },
-        })
-
-        const outcome = await runSetupSequence({ configPath }, adapters)
-
-        expect(outcome.kind).toBe('refusal')
-        if (outcome.kind !== 'refusal') throw new Error('expected setup refusal')
-        if (!outcome.evidence) throw new Error('expected setup refusal evidence')
-        expect(outcome.evidence.execution.mutationMayHaveOccurred).toBe(true)
-    })
-
     it('retains an earlier seed mutation when a later execution is refused before starting', async () => {
         const { configPath, context, adapters } = await sequenceFixture(
             { environment_files: [{ template: '.env.example', instance: '.env' }] },
@@ -543,7 +518,6 @@ describe('setup application choreography', () => {
             seeded = true
             return { kind: 'created', siblingRoot: apiRoot, destination: resolve(apiRoot, '.env') }
         }
-        adapters.recordStarted = async () => ({ kind: 'complete', record: {} as never })
         adapters.execute = async () => ({
             kind: 'refusal', status: 2, diagnostics: [], result: null,
             execution: {
@@ -560,10 +534,9 @@ describe('setup application choreography', () => {
         expect(outcome.evidence.execution.mutationMayHaveOccurred).toBe(true)
     })
 
-    it('refuses source drift before lifecycle or Git mutation', async () => {
+    it('refuses source drift before Git mutation', async () => {
         const { configPath, context, adapters } = await sequenceFixture()
         let changed = false
-        const recordStarted = vi.fn(adapters.recordStarted)
         const execute = vi.fn(adapters.execute)
         adapters.observeGit = cloneObservations()
         adapters.planGit = async ({ sibling }) => {
@@ -578,40 +551,12 @@ describe('setup application choreography', () => {
             state: 'available', ...context.source,
             ...(changed ? { sha256: 'f'.repeat(64) } : {}),
         })
-        adapters.recordStarted = recordStarted
-        adapters.execute = execute
-
-        const outcome = await runSetupSequence({ configPath }, adapters)
-
-        expect(outcome).toMatchObject({ kind: 'refusal', result: null })
-        expect(recordStarted).not.toHaveBeenCalled()
-        expect(execute).not.toHaveBeenCalled()
-    })
-
-    it('refuses source drift introduced by lifecycle before Git mutation', async () => {
-        const { configPath, context, adapters } = await sequenceFixture()
-        let changed = false
-        const execute = vi.fn(adapters.execute)
-        adapters.observeGit = cloneObservations()
-        adapters.planGit = async ({ sibling }) => ({
-            kind: 'preview', status: 0, diagnostics: [],
-            result: { sibling: sibling.slug, target: resolve(context.siblingsRoot, sibling.dir), observed: 'absent', action: 'clone', changed: true },
-            plan: { steps: [{ id: 'setup:api:clone' }] as never },
-        })
-        adapters.recordStarted = async () => { changed = true; return { kind: 'complete', record: {} as never } }
-        adapters.observeSource = async () => ({
-            state: 'available', ...context.source,
-            ...(changed ? { sha256: 'f'.repeat(64) } : {}),
-        })
         adapters.execute = execute
 
         const outcome = await runSetupSequence({ configPath }, adapters)
 
         expect(outcome).toMatchObject({ kind: 'refusal', result: null })
         expect(execute).not.toHaveBeenCalled()
-        if (outcome.kind !== 'refusal') throw new Error('expected setup refusal')
-        if (!outcome.evidence) throw new Error('expected setup refusal evidence')
-        expect(outcome.evidence.execution.mutationMayHaveOccurred).toBe(true)
     })
 
     it('preserves completed execution evidence when repository postcheck refuses', async () => {
@@ -733,7 +678,6 @@ describe('setup application choreography', () => {
             : { kind: 'preview', status: 0, diagnostics: [],
                 result: { sibling: sibling.slug, target: resolve(context.siblingsRoot, sibling.dir), observed: 'absent', action: 'clone', changed: true },
                 plan: { steps: [{ id: `setup:${sibling.slug}:clone` }] as never } }
-        adapters.recordStarted = async () => ({ kind: 'complete', record: {} as never })
         adapters.execute = async (plan) => plan.steps[0]!.id === 'setup:api:clone'
             ? { kind: 'complete', status: 0, diagnostics: [], result: { steps: [{ id: 'setup:api:clone', exitCode: 0, signal: null, stdoutBytes: 0, stderrBytes: 0 }] } }
             : { kind: 'refusal', status: 2, result: null,
@@ -908,16 +852,13 @@ describe('setup application choreography', () => {
             environment_files: [{ template: '.env.example', instance: '.env' }],
         })
         const seed = vi.fn(adapters.seed)
-        const recordStarted = vi.fn(adapters.recordStarted)
         adapters.planSeed = async () => plan(resolve(context.siblingsRoot, 'api')) as never
         adapters.seed = seed
-        adapters.recordStarted = recordStarted
 
         const outcome = await runSetupSequence({ configPath }, adapters)
 
         expect(outcome).toMatchObject({ kind: 'refusal', result: null })
         expect(seed).not.toHaveBeenCalled()
-        expect(recordStarted).not.toHaveBeenCalled()
         expect(JSON.stringify(outcome)).not.toContain('seed-secret-canary')
     })
 
@@ -950,9 +891,7 @@ describe('setup application choreography', () => {
         const { configPath, adapters } = await sequenceFixture({
             environment_files: [{ template: '.env.example', instance: '.env' }],
         })
-        const recordStarted = vi.fn(adapters.recordStarted)
         const planSeed = vi.fn(adapters.planSeed)
-        adapters.recordStarted = recordStarted
         adapters.planSeed = planSeed
         adapters.withIgnore = async () => ({
             kind: 'refusal', code: 'INSTANCE_NOT_IGNORED', path: '.env',
@@ -963,7 +902,6 @@ describe('setup application choreography', () => {
         expect(outcome).toMatchObject({ kind: 'refusal', result: null })
         expect(outcome.diagnostics).toContainEqual(expect.objectContaining({ code: 'INSTANCE_NOT_IGNORED' }))
         expect(planSeed).not.toHaveBeenCalled()
-        expect(recordStarted).not.toHaveBeenCalled()
     })
 
     it.each([
@@ -1227,7 +1165,6 @@ describe('setup application choreography', () => {
             const destination = resolve(siblingRoot, '.env')
             let seeded = false
             let planned = false
-            const lifecycleTimes: string[] = []
             const ignoreTimes: string[] = []
             const policyObservationTimes: string[] = []
             const policyProjectionTimes: string[] = []
@@ -1247,10 +1184,6 @@ describe('setup application choreography', () => {
                     vi.setSystemTime(operationTime)
                 }
                 return { kind: 'complete', status: 0, diagnostics: [], result }
-            }
-            adapters.recordStarted = async ({ observedAt }) => {
-                lifecycleTimes.push(observedAt)
-                return { kind: 'complete', record: {} as never }
             }
             adapters.withIgnore = async ({ observedAt }, use) => {
                 ignoreTimes.push(observedAt)
@@ -1289,11 +1222,10 @@ describe('setup application choreography', () => {
 
             expect(outcome.kind).toBe('complete')
             expect(context).not.toHaveProperty('observedAt')
-            expect(lifecycleTimes).toEqual([operationTime.toISOString()])
             expect(ignoreTimes).toEqual(Array(3).fill(operationTime.toISOString()))
             expect(policyObservationTimes).toEqual([operationTime.toISOString()])
             expect(policyProjectionTimes).toEqual(policyObservationTimes)
-            expect(observedAt).toHaveBeenCalledTimes(5)
+            expect(observedAt).toHaveBeenCalledTimes(4)
         } finally {
             vi.useRealTimers()
         }
@@ -1403,7 +1335,6 @@ describe('setup application choreography', () => {
                 return { kind: 'complete', status: 0, diagnostics: [], result: { steps: [{ id, exitCode: 0, signal: null, stdoutBytes: 0, stderrBytes: 0 }] } }
             },
             observeSource: async () => ({ state: 'available', ...context.source }),
-            recordStarted: async () => { events.push('started'); return { kind: 'complete', record: {} as never } },
             withIgnore: async ({ sibling }, use) => { events.push(`ignore:${sibling.slug}`); return use() },
             planSeed: async ({ sibling }) => { const siblingRoot = resolve(context.siblingsRoot, sibling.dir); const destination = resolve(siblingRoot, '.env'); events.push(`seed-plan:${sibling.slug}`); return seeds.has(sibling.slug) ? { kind: 'unchanged', siblingRoot, destination } : readySeed(siblingRoot) },
             seed: (plan) => { const siblingRoot = plan.kind === 'ready' ? plan.siblingRoot : ''; const slug = siblingRoot.split('/').at(-1) ?? ''; const destination = resolve(siblingRoot, '.env'); events.push(`seed:${slug}`); seeds.add(slug); return { kind: 'created', siblingRoot, destination } },
@@ -1416,7 +1347,7 @@ describe('setup application choreography', () => {
 
         expect(outcome.kind).toBe('complete')
         expect(events).toEqual([
-            'observe:api', 'plan:api', 'started', 'execute:api', 'observe:api', 'plan:api',
+            'observe:api', 'plan:api', 'execute:api', 'observe:api', 'plan:api',
             'ignore:api', 'seed-plan:api', 'ignore:api', 'seed:api', 'seed-plan:api', 'ignore:api', 'policy-observe:api', 'policy-resolve:api',
             'observe:web', 'plan:web', 'execute:web', 'observe:web', 'plan:web',
             'ignore:web', 'seed-plan:web', 'ignore:web', 'seed:web', 'seed-plan:web', 'ignore:web', 'policy-observe:web', 'policy-resolve:web',
@@ -1471,7 +1402,6 @@ describe('setup application choreography', () => {
                 syncInstructionFiles: async ({ siblingRoot }) => ({ kind: 'none', root: siblingRoot }),
                 execute: async () => ({ kind: 'refusal', status: 2, diagnostics: [{ severity: 'error', code: 'EXECUTION_STEP_FAILED', message: 'failed' }], result: null, execution: { completedStepIds: [], failedStep: { id: 'setup:api:clone', started: true }, compensation: { attemptedStepIds: [], completedStepIds: [], failed: [] } } }),
                 observeSource: async () => ({ state: 'available', ...candidate.source }),
-                recordStarted: async () => ({ kind: 'unchanged', record: {} as never }),
                 withIgnore: async ({ sibling }, use) => { events.push(`ignore:${sibling.slug}`); return use() },
                 planSeed: async ({ sibling }) => {
                     events.push(`seed-plan:${sibling.slug}`)

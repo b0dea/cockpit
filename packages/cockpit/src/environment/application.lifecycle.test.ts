@@ -46,7 +46,8 @@ import {
     type UpCommandAdapters,
 } from './application/lifecycle-context.js'
 import { readState } from './state.js'
-import { recordLifecycleStarted, recordLifecycleSeeded, resolveLifecycleStage, projectLifecycleStage } from './lifecycle-stage.js'
+import { resolveLifecycleStage, projectLifecycleStage } from './lifecycle-stage.js'
+import { recordSteadyStack } from '../../test-support/lifecycle-record.js'
 import { createApplicationFixtureSupport } from '../../test-support/application-fixture.js'
 // The digest of each file a fixture stack is started from, as lifecycle readiness reports it.
 const RUNTIME_INPUTS = Object.freeze({ 'cockpit.toml': 'd'.repeat(64) })
@@ -466,8 +467,7 @@ describe('lifecycle application contracts', () => {
         })}\n`, { mode: 0o600 })
 
         // A state write takes the lock over; the next command outcome from this process says so.
-        expect(await recordLifecycleStarted({ namespace: fixture.context.namespace, stackId: fixture.context.stackId,
-            holderId: fixture.context.holderId, observedAt: new Date().toISOString() })).toMatchObject({ kind: 'complete' })
+        await recordSteadyStack({ namespace: fixture.context.namespace, stackId: fixture.context.stackId, holderId: fixture.context.holderId })
         const up = await runUp({ configPath: fixture.configPath }, {
             load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: fixture.context }),
             ...unavailableRuntimeUpAdapters(fixture.context, async () => undefined),
@@ -515,42 +515,6 @@ describe('lifecycle application contracts', () => {
 
         expect(mismatched).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
         expect(substituted).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
-    })
-
-    it('refuses missing persisted progress after lifecycle history was seeded', async () => {
-        const { configPath, context } = await lifecycleContextFixture()
-        const observedAt = new Date().toISOString()
-        expect(await recordLifecycleStarted({ namespace: context.namespace, stackId: context.stackId, holderId: context.holderId, observedAt })).toMatchObject({ kind: 'complete' })
-        expect(await recordLifecycleSeeded({ namespace: context.namespace, stackId: context.stackId, holderId: context.holderId, observedAt })).toMatchObject({ kind: 'complete' })
-        const planner = vi.fn()
-        stubUpPlanner(planner)
-        const execute = vi.fn()
-        const lease = { stackId: context.stackId, offset: 0, ports: { APP_PORT: 4100 } }
-        const ownership = { change: 'unchanged', holderId: context.holderId,
-            recordRevision: 2, holderCount: 1, holderIds: [context.holderId] }
-        const result = await runUp({ configPath }, {
-            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
-            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS, activeProfiles: [] } as never),
-            withLifecycleStage: async (_context, use) => {
-                const stage = await resolveLifecycleStage({ namespace: context.namespace, stackId: context.stackId, observedAt: new Date().toISOString() })
-                if (stage.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
-                const projection = projectLifecycleStage({ authority: stage.authority, stackId: context.stackId,
-                    cockpitId: context.cockpitId, earliest: Date.parse(stage.authority.observedAt),
-                    latest: Date.parse(stage.authority.validThrough), evaluatedAt: Date.now() })
-                if (!projection) throw new Error('fixture lifecycle stage projection was refused')
-                return use(projection)
-            },
-            withAcquiredPorts: async (_context, use) => use({
-                retainOnFailure: vi.fn(),
-                leaseResult: { kind: 'complete', lease, change: 'unchanged', holderId: context.holderId, recordRevision: 2 },
-                projection: { lease, ownership, entrypoints: [] },
-            } as never),
-            execute,
-        })
-        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_PROGRESS_INVALID' }] })
-        expect(planner).not.toHaveBeenCalled()
-        expect(execute).not.toHaveBeenCalled()
-        expect(await readState(context.namespace.paths.lifecycle(context.stackId))).toMatchObject({ kind: 'missing' })
     })
 
     it.each([

@@ -17,7 +17,6 @@ import {
     earlierNameRefusalMessage,
     findStackUnderEarlierName,
     recordLifecycleSeeded,
-    recordLifecycleStarted,
     type CurrentLifecycleRecord,
     type LifecycleRecordValue,
     type RuntimeInputs,
@@ -465,14 +464,6 @@ async function executeUpRound(
             ...(runtime.activeProfiles.length > 0 ? { activeProfiles: runtime.activeProfiles } : {}),
         }
         if (!stored || resetProgress || stored.value.holderId !== context.holderId && !completedCoTenant) {
-            // The first lifecycle data starts its durable history, as `setup` does (an existing
-            // `started` is unchanged), so lifecycle data without history keeps meaning that history
-            // was lost. Publishing data alone let a first `up` pass and every resume refuse.
-            if (!stored) {
-                const started = await recordLifecycleStarted({ namespace: context.namespace, stackId: context.stackId,
-                    holderId: context.holderId, observedAt: new Date().toISOString() })
-                if (started.kind === 'refusal') return { kind: 'complete' as const, result: forwardedRefusal(started.diagnostics) }
-            }
             const publication = await publishLifecycleRecord(
                 context,
                 stored?.record ?? null,
@@ -681,7 +672,7 @@ async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAd
         let result = round.result
         if (result.kind === 'complete') {
             const seeded = await recordLifecycleSeeded({ namespace: context.namespace, stackId: context.stackId,
-                holderId: context.holderId, observedAt: new Date().toISOString() })
+                holderId: context.holderId })
             if (seeded.kind === 'refusal') return forwardedRefusal(seeded.diagnostics)
             // The stack stays up when its seed fails: the containers are healthy, and the next up
             // runs the seed again because no success was recorded.

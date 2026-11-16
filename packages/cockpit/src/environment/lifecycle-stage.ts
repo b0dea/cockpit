@@ -1,5 +1,4 @@
 import { exactKeys } from '../exact-keys.js'
-import { z } from 'zod'
 import { lstatSync } from 'node:fs'
 import { dirname, isAbsolute, relative, sep } from 'node:path'
 import {
@@ -20,7 +19,6 @@ import {
 import {
     abortStateTransaction,
     authenticateStateNamespace,
-    lifecycleHistoryAddress,
     readState,
     transactState,
     type StateNamespace,
@@ -45,7 +43,6 @@ export const observationDeclarations = Object.freeze([{
     code: ENVIRONMENT_CODES.STATE_UNSEEDED,
 }] as const)
 
-const HistoryValue = z.object({ status: z.enum(['started', 'seeded']) }).strict()
 const STACK_ID = /^stack:[a-f0-9]{64}$/
 const HOLDER_ID = /^holder:[a-f0-9]{64}:session$/
 const AUTHORITY_LIFETIME_MS = 30_000
@@ -64,6 +61,10 @@ export interface LifecycleRecordValue extends LifecycleProgress {
      * command on the stack activates the same set, so down removes the profile services too.
      */
     readonly activeProfiles?: readonly string[]
+    /** Set once an `up` has completed; later commands then check the stack as running, and down keeps it. */
+    readonly steady?: true
+    /** When `environment.seed` last succeeded, so the next `up` seeds again only into volumes created since. */
+    readonly seededAt?: string
 }
 
 export type RuntimeInputs = Readonly<Record<string, string>>
@@ -123,7 +124,7 @@ export function decodeLifecycleRecord(
 ): CurrentLifecycleRecord | undefined {
     const value = snapshotJson(record.value)
     if (!value || typeof value !== 'object' || Array.isArray(value)
-        || !exactKeys(value, ['completedServices', 'holderId', 'operationGeneration', 'workBasisSha256'], ['activeProfiles', 'runtimeInputs', 'teardownComplete'])
+        || !exactKeys(value, ['completedServices', 'holderId', 'operationGeneration', 'workBasisSha256'], ['activeProfiles', 'runtimeInputs', 'seededAt', 'steady', 'teardownComplete'])
         || record.format !== 'cockpit-state/v1' || record.kind !== 'lifecycle'
         || record.cockpitId !== context.cockpitId || record.subjectId !== context.stackId) return undefined
     const candidate = value as Record<string, unknown>
@@ -131,6 +132,8 @@ export function decodeLifecycleRecord(
         || typeof candidate.workBasisSha256 !== 'string' || !lifecycleDigest.test(candidate.workBasisSha256)
         || typeof candidate.operationGeneration !== 'string' || !lifecycleDigest.test(candidate.operationGeneration)
         || !Array.isArray(candidate.completedServices) || candidate.completedServices.length > 4_096) return undefined
+    if (Object.hasOwn(candidate, 'steady') && candidate.steady !== true
+        || Object.hasOwn(candidate, 'seededAt') && !isCanonicalTimestamp(candidate.seededAt)) return undefined
     const teardownComplete = Object.hasOwn(candidate, 'teardownComplete')
     if (teardownComplete && (candidate.teardownComplete !== true || candidate.completedServices.length !== 0)) return undefined
     let runtimeInputs: RuntimeInputs | undefined
@@ -168,6 +171,8 @@ export function decodeLifecycleRecord(
             ...(teardownComplete ? { teardownComplete: true as const } : {}),
             ...(runtimeInputs ? { runtimeInputs } : {}),
             ...(activeProfiles ? { activeProfiles } : {}),
+            ...(candidate.steady === true ? { steady: true as const } : {}),
+            ...(typeof candidate.seededAt === 'string' ? { seededAt: candidate.seededAt } : {}),
             workBasisSha256: candidate.workBasisSha256,
             operationGeneration: candidate.operationGeneration,
             completedServices: completed as LifecycleProgress['completedServices'],
@@ -183,8 +188,6 @@ interface FileIdentity {
 interface LifecycleAuthorityBinding {
     readonly cockpitId: string
     readonly namespace: StateNamespace
-    readonly historyPath: string
-    readonly historyIdentity: readonly FileIdentity[]
     readonly lifecyclePath: string
     readonly lifecycleIdentity: readonly FileIdentity[]
 }
@@ -194,7 +197,7 @@ export interface LifecycleStageAuthority {
     readonly stage: ObservationLifecycleStage
     readonly observedAt: string
     readonly validThrough: string
-    /** The lifecycle files the stage was read from, re-checked on disk before the stage is used. */
+    /** The lifecycle file the stage was read from, re-checked on disk before the stage is used. */
     readonly binding: LifecycleAuthorityBinding
 }
 
@@ -212,7 +215,7 @@ type LifecycleStageResolution =
     | { readonly kind: 'complete'; readonly authority: LifecycleStageAuthority; readonly observation: EnvironmentObservation }
     | { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
 
-export type LifecycleHistoryTransition =
+export type LifecycleStageTransition =
     | { readonly kind: 'complete' | 'unchanged'; readonly record: StateRecord }
     | { readonly kind: 'refusal'; readonly diagnostics: readonly EnvironmentDiagnostic[] }
 
@@ -230,7 +233,7 @@ function refusal(message: string, target: string): Extract<LifecycleStageResolut
             code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED,
             message,
             target,
-            fix: 'inspect lifecycle state and history before explicit recovery or adoption',
+            fix: 'inspect the lifecycle record; once no cockpit command runs for this stack, run down and up to start it afresh',
         }],
     }
 }
@@ -244,18 +247,6 @@ function stableInput(value: unknown): StableInput | undefined {
     if (!namespace || typeof stackId !== 'string' || !STACK_ID.test(stackId)
         || !isCanonicalTimestamp(observedAt) || observedMillis > now || now - observedMillis > AUTHORITY_LIFETIME_MS) return undefined
     return { namespace, stackId: stackId as StackId, observedAt }
-}
-
-function stableTransitionInput(value: unknown): (StableInput & { readonly holderId: HolderId }) | undefined {
-    const base = stableInput(value)
-    const holderId = base ? (value as Record<string, unknown>).holderId : undefined
-    return base && typeof holderId === 'string' && HOLDER_ID.test(holderId)
-        ? { ...base, holderId: holderId as HolderId }
-        : undefined
-}
-
-function historyStatus(record: StateRecord): 'started' | 'seeded' | undefined {
-    return record.kind === 'lifecycle-history' ? HistoryValue.safeParse(record.value).data?.status : undefined
 }
 
 function sameResult(left: StateResult<StateRecord>, right: StateResult<StateRecord>): boolean {
@@ -309,64 +300,35 @@ function samePathIdentity(left: readonly FileIdentity[], right: readonly FileIde
     return left.length === right.length && left.every((identity, index) => sameIdentity(identity, right[index]!))
 }
 
-function lifecycleBinding(
-    namespace: StateNamespace,
-    cockpitId: string,
-    historyPath: string,
-    lifecyclePath: string,
-): LifecycleAuthorityBinding | undefined {
-    const historyIdentity = pathIdentity(namespace.root, historyPath)
+function lifecycleBinding(namespace: StateNamespace, cockpitId: string, lifecyclePath: string): LifecycleAuthorityBinding | undefined {
     const lifecycleIdentity = pathIdentity(namespace.root, lifecyclePath)
-    return historyIdentity && lifecycleIdentity
-        ? {
-            cockpitId,
-            namespace,
-            historyPath,
-            historyIdentity,
-            lifecyclePath,
-            lifecycleIdentity,
-        }
-        : undefined
+    return lifecycleIdentity ? { cockpitId, namespace, lifecyclePath, lifecycleIdentity } : undefined
 }
 
 function sameBinding(left: LifecycleAuthorityBinding, right: LifecycleAuthorityBinding): boolean {
-    return left.historyPath === right.historyPath
-        && left.lifecyclePath === right.lifecyclePath
+    return left.lifecyclePath === right.lifecyclePath
         && left.cockpitId === right.cockpitId
-        && samePathIdentity(left.historyIdentity, right.historyIdentity)
         && samePathIdentity(left.lifecycleIdentity, right.lifecycleIdentity)
 }
 
 async function inspect(input: StableInput): Promise<LifecycleStageResolution> {
-    const historyAddress = lifecycleHistoryAddress(input.namespace, input.stackId)
     const lifecycleAddress = input.namespace.paths.lifecycle(input.stackId)
-    if (!historyAddress) return refusal('lifecycle history address is unavailable', lifecycleAddress.path)
-    if (historyAddress.cockpitId !== lifecycleAddress.cockpitId) {
-        return refusal('lifecycle state addresses disagree on cockpit identity', historyAddress.path)
-    }
-    const bindingBefore = lifecycleBinding(input.namespace, historyAddress.cockpitId, historyAddress.path, lifecycleAddress.path)
-    if (!bindingBefore) return refusal('lifecycle state identity is unavailable', historyAddress.path)
-    const historyBefore = await readState(historyAddress)
+    const bindingBefore = lifecycleBinding(input.namespace, lifecycleAddress.cockpitId, lifecycleAddress.path)
+    if (!bindingBefore) return refusal('lifecycle state identity is unavailable', lifecycleAddress.path)
     const lifecycleBefore = await readState(lifecycleAddress)
-    const historyAfter = await readState(historyAddress)
     const lifecycleAfter = await readState(lifecycleAddress)
-    const bindingAfter = lifecycleBinding(input.namespace, historyAddress.cockpitId, historyAddress.path, lifecycleAddress.path)
-    if (!bindingAfter || !sameBinding(bindingBefore, bindingAfter)
-        || !sameResult(historyBefore, historyAfter) || !sameResult(lifecycleBefore, lifecycleAfter)) {
-        return refusal('lifecycle state changed while its stage was observed', historyAddress.path)
-    }
-    if (historyBefore.kind === 'refusal' || historyBefore.kind === 'indeterminate') {
-        return refusal(historyBefore.message, historyAddress.path)
+    const bindingAfter = lifecycleBinding(input.namespace, lifecycleAddress.cockpitId, lifecycleAddress.path)
+    if (!bindingAfter || !sameBinding(bindingBefore, bindingAfter) || !sameResult(lifecycleBefore, lifecycleAfter)) {
+        return refusal('lifecycle state changed while its stage was observed', lifecycleAddress.path)
     }
     if (lifecycleBefore.kind === 'refusal' || lifecycleBefore.kind === 'indeterminate') {
         return refusal(lifecycleBefore.message, lifecycleAddress.path)
     }
-    const status = historyBefore.kind === 'complete' ? historyStatus(historyBefore.value) : undefined
-    if (historyBefore.kind === 'complete' && !status) return refusal('lifecycle history is malformed', historyAddress.path)
-    if (historyBefore.kind === 'missing' && lifecycleBefore.kind === 'complete') {
-        return refusal('lifecycle data exists without durable lifecycle history', lifecycleAddress.path)
-    }
-    const stage: ObservationLifecycleStage = status === 'seeded' ? 'steady' : 'bootstrap'
+    const lifecycle = lifecycleBefore.kind === 'complete'
+        ? decodeLifecycleRecord(lifecycleBefore.value, { cockpitId: lifecycleAddress.cockpitId, stackId: input.stackId })
+        : undefined
+    if (lifecycleBefore.kind === 'complete' && !lifecycle) return refusal('lifecycle progress record is malformed', lifecycleAddress.path)
+    const stage: ObservationLifecycleStage = lifecycle?.value.steady ? 'steady' : 'bootstrap'
     const seeded = lifecycleBefore.kind === 'complete'
     const issuedAt = Date.now()
     const authority = {
@@ -441,7 +403,7 @@ function consumeLifecycleStageAuthority(
         || observedAt > expected.evaluatedAt || trustedCurrentTime > validThrough) return undefined
     const namespace = authenticateStateNamespace(binding.namespace)
     const currentBinding = namespace
-        ? lifecycleBinding(namespace, binding.cockpitId, binding.historyPath, binding.lifecyclePath)
+        ? lifecycleBinding(namespace, binding.cockpitId, binding.lifecyclePath)
         : undefined
     if (!currentBinding || !sameBinding(binding, currentBinding)) return undefined
     return authority.stage
@@ -483,59 +445,38 @@ export function consumeLifecycleStageProjection(
     return evidence
 }
 
-async function transition(
-    value: unknown,
-    requested: 'started' | 'seeded',
-): Promise<LifecycleHistoryTransition> {
-    const input = stableTransitionInput(value)
-    if (!input) return refusal('lifecycle history transition input is malformed', 'lifecycle history input')
-    const address = lifecycleHistoryAddress(input.namespace, input.stackId)
-    if (!address) return refusal('lifecycle history address is unavailable', input.stackId)
-    const result = await transactState<LifecycleHistoryTransition>(input.namespace, address, { ownerId: input.holderId }, (current) => {
-        const currentStatus = current ? historyStatus(current) : undefined
-        if (current && !currentStatus) return abortStateTransaction(refusal('lifecycle history is malformed', address.path))
-        if (requested === 'seeded' && currentStatus === undefined) {
-            return abortStateTransaction(refusal('lifecycle history must be started before it is seeded', address.path))
-        }
-        // Seeded history already records its start, so a later `started` (setup acquiring a
-        // sibling added after the stack has run) leaves it seeded. Refusing it deadlocked setup.
-        if (currentStatus === requested || currentStatus === 'seeded') {
-            return abortStateTransaction({ kind: 'unchanged' as const, record: current! })
-        }
-        return {
-            format: 'cockpit-state/v1' as const,
-            kind: 'lifecycle-history' as const,
-            cockpitId: address.cockpitId,
-            subjectId: input.stackId,
-            revision: (current?.revision ?? -1) + 1,
-            updatedAt: input.observedAt,
-            value: { status: requested },
-        }
+/**
+ * Adds `steady` or `seededAt` to the stack's lifecycle record, which `up` writes before it starts a
+ * service, so a stack without one has nothing to mark.
+ */
+export async function updateLifecycleRecord(input: Readonly<{
+    namespace: StateNamespace
+    stackId: StackId
+    holderId: HolderId
+    change: Readonly<{ steady: true } | { seededAt: string }>
+}>): Promise<LifecycleStageTransition> {
+    const address = input.namespace.paths.lifecycle(input.stackId)
+    const context = { cockpitId: address.cockpitId, stackId: input.stackId }
+    const result = await transactState<LifecycleStageTransition>(input.namespace, address, { ownerId: input.holderId }, (current) => {
+        const decoded = current ? decodeLifecycleRecord(current, context) : undefined
+        if (!current || !decoded) return abortStateTransaction(refusal(
+            current ? 'lifecycle progress record is malformed' : 'the stack has no lifecycle record to update', address.path))
+        const value = { ...decoded.value, ...input.change }
+        if (JSON.stringify(value) === JSON.stringify(decoded.value)) return abortStateTransaction({ kind: 'unchanged' as const, record: current })
+        return { ...current, revision: current.revision + 1, updatedAt: new Date().toISOString(), value: snapshotJson(value)! as StateRecord['value'] }
     })
-    const aborted = result as StateTransactionAbort<LifecycleHistoryTransition>
+    const aborted = result as StateTransactionAbort<LifecycleStageTransition>
     if (aborted.aborted === true) return aborted.value
     const stateResult = result as StateResult<StateRecord>
     if (stateResult.kind === 'complete') return { kind: 'complete', record: stateResult.value }
-    const message = stateResult.kind === 'refusal' || stateResult.kind === 'indeterminate'
-        ? stateResult.message
-        : 'lifecycle history transition failed'
-    return refusal(message, address.path)
+    return refusal(stateResult.kind === 'missing' ? 'lifecycle record update returned no record' : stateResult.message, address.path)
 }
 
-export function recordLifecycleStarted(input: {
-    readonly namespace: StateNamespace
-    readonly stackId: StackId
-    readonly holderId: HolderId
-    readonly observedAt: string
-}): Promise<LifecycleHistoryTransition> {
-    return transition(input, 'started')
-}
-
-export function recordLifecycleSeeded(input: {
-    readonly namespace: StateNamespace
-    readonly stackId: StackId
-    readonly holderId: HolderId
-    readonly observedAt: string
-}): Promise<LifecycleHistoryTransition> {
-    return transition(input, 'seeded')
+/** Marks the stack steady once an `up` completed. */
+export function recordLifecycleSeeded(input: Readonly<{
+    namespace: StateNamespace
+    stackId: StackId
+    holderId: HolderId
+}>): Promise<LifecycleStageTransition> {
+    return updateLifecycleRecord({ ...input, change: { steady: true } })
 }

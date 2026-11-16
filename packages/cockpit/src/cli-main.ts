@@ -88,7 +88,6 @@ import { synchronizeSiblingInstructionFiles } from './environment/sibling-instru
 import { resolvedGitExecutable, resolveExecutable, resolveGitExecutable } from './environment/executable.js'
 import { checkoutId, holderId, stackId } from './environment/identity.js'
 import { selectStateRoot } from './environment/state.js'
-import { recordLifecycleStarted } from './environment/lifecycle-stage.js'
 import { planEnvironmentSeed, seedEnvironmentInstanceSync } from './environment/templates.js'
 import {
     observeInstallPolicyLockfiles,
@@ -385,7 +384,6 @@ const defaultSetupAdapters: SetupCommandAdapters = {
     syncInstructionFiles: synchronizeSiblingInstructionFiles,
     execute: executePlan,
     observeSource: observeConfigSource,
-    recordStarted: recordLifecycleStarted,
     withIgnore: async ({ context, siblingIndex, sibling, environmentFileIndex, environmentFile, observedAt }, use) => {
         const siblingRoot = resolve(context.siblingsRoot, sibling.dir)
         const siblingCheckoutId = checkoutId({ checkoutPath: siblingRoot })

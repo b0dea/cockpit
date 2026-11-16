@@ -56,7 +56,6 @@ import { loadCockpitConfig } from '../config/load.js'
 import { collectFailureLogs, runSleep, runUp } from './application/lifecycle.js'
 import { type LifecycleRunContext } from './application/lifecycle-context.js'
 import { readState, transactState, type StateRecord } from './state.js'
-import { recordLifecycleStarted } from './lifecycle-stage.js'
 import { createApplicationFixtureSupport } from '../../test-support/application-fixture.js'
 // The digest of each file a fixture stack is started from, as lifecycle readiness reports it.
 const RUNTIME_INPUTS = Object.freeze({ 'cockpit.toml': 'd'.repeat(64) })
@@ -453,12 +452,6 @@ describe('lifecycle application contracts', () => {
         const address = context.namespace.paths.lifecycle(context.stackId)
         const completedContainerId = 'c'.repeat(64)
         const observedAt = new Date().toISOString()
-        expect(await recordLifecycleStarted({
-            namespace: context.namespace,
-            stackId: context.stackId,
-            holderId: context.holderId,
-            observedAt,
-        })).toMatchObject({ kind: 'complete' })
         await transactState(context.namespace, address, { ownerId: context.holderId }, () => ({
             format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId: context.cockpitId,
             subjectId: context.stackId, revision: 0, updatedAt: observedAt,
@@ -803,7 +796,7 @@ describe('lifecycle application contracts', () => {
         expect(result).toMatchObject({ kind: 'complete', result: { stackId: context.stackId, change: 'retained', remainingHolders: remaining } })
     })
 
-    it('stops the final-holder runtime, clears its startup progress, then releases the stack', async () => {
+    it('stops the final-holder runtime, clears its startup progress but keeps its seed, then releases the stack', async () => {
         const { configPath, context } = await lifecycleContextFixture()
         const events: string[] = []
         const now = new Date().toISOString()
@@ -818,7 +811,7 @@ describe('lifecycle application contracts', () => {
         await transactState(context.namespace, context.namespace.paths.lifecycle(context.stackId), { ownerId: context.holderId }, () => ({
             format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId: context.cockpitId, subjectId: context.stackId,
             revision: 0, updatedAt: now, value: { workBasisSha256: 'a'.repeat(64), operationGeneration: 'b'.repeat(64),
-                completedServices: [{ service: 'api', containerId: 'c'.repeat(64) }], holderId: context.holderId },
+                completedServices: [{ service: 'api', containerId: 'c'.repeat(64) }], holderId: context.holderId, steady: true, seededAt: now },
         }))
         const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
         applicationOwners.ports.observeRetainedPortFamily = async () => ({
@@ -848,7 +841,7 @@ describe('lifecycle application contracts', () => {
         expect(events).toEqual(['stop', 'postcheck'])
         expect(result).toMatchObject({ kind: 'complete', result: { stackId: context.stackId, change: 'stopped' } })
         expect(await readState(context.namespace.paths.lifecycle(context.stackId))).toMatchObject({
-            kind: 'complete', value: { value: { holderId: context.holderId, completedServices: [] } },
+            kind: 'complete', value: { value: { holderId: context.holderId, completedServices: [], steady: true, seededAt: now } },
         })
         expect(await readState(context.namespace.paths.coordination(context.stackId))).toMatchObject({
             kind: 'complete', value: { value: { holders: [], lease: { released: true }, lastReleasedHolder: context.holderId } },

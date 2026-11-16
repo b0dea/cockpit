@@ -9,7 +9,7 @@ import {
 } from '../contract.js'
 import { cockpitCommand } from '../../fix-catalogue.js'
 import { abortStateTransaction, readState, transactState, type StateRecord, type StateResult, type SkippedStateNamespace } from '../state.js'
-import { decodeLifecycleRecord, resolveLifecycleStage, type CurrentLifecycleRecord, type LifecycleRecordValue } from '../lifecycle-stage.js'
+import { decodeLifecycleRecord, type CurrentLifecycleRecord, type LifecycleRecordValue } from '../lifecycle-stage.js'
 import { inspectPortLeaseTransfer, revalidatePortLeaseProjection, type PortLeaseProjection } from '../ports.js'
 import { decodeCoordinationRecord } from '../claims.js'
 import { lifecycleRefusal, ownerDiagnostic } from './shared.js'
@@ -22,16 +22,7 @@ export function lifecycleSuggestion(context: LifecycleRunContext, command: 'up' 
 export async function readLifecycleRecord(context: LifecycleRunContext): Promise<CurrentLifecycleRecord | null | UpCommandResult> {
     const address = context.namespace.paths.lifecycle(context.stackId)
     const result = await readState(address)
-    if (result.kind === 'missing') {
-        const stage = await resolveLifecycleStage({
-            namespace: context.namespace, stackId: context.stackId, observedAt: new Date().toISOString(),
-        })
-        if (stage.kind !== 'complete') return forwardedRefusal(stage.diagnostics)
-        return stage.authority.stage === 'steady'
-            ? lifecycleRefusal(ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID,
-                'seeded lifecycle history requires persisted progress', address.path)
-            : null
-    }
+    if (result.kind === 'missing') return null
     if (result.kind !== 'complete') {
         return lifecycleRefusal(result.code, result.message, result.target)
     }
@@ -48,6 +39,8 @@ function lifecycleStateRecord(
     value: LifecycleRecordValue,
     updatedAt: string,
 ): StateRecord {
+    // Progress is rewritten whole; whether the stack has come up and when it was seeded outlive it.
+    const kept = current === null ? undefined : decodeLifecycleRecord(current, context)?.value
     return {
         format: 'cockpit-state/v1',
         kind: 'lifecycle',
@@ -55,7 +48,11 @@ function lifecycleStateRecord(
         subjectId: context.stackId,
         revision: current === null ? 0 : current.revision + 1,
         updatedAt,
-        value: snapshotJson(value)! as StateRecord['value'],
+        value: snapshotJson({
+            ...value,
+            ...(kept?.steady ? { steady: true } : {}),
+            ...(kept?.seededAt ? { seededAt: kept.seededAt } : {}),
+        })! as StateRecord['value'],
     }
 }
 
@@ -163,8 +160,7 @@ export async function invalidateCompletedLifecycle(
     if (current !== null && 'kind' in current) return forwardedRefusal(current.diagnostics)
     const stored = current as CurrentLifecycleRecord | null
     // `up` writes the lifecycle record before it starts a service, so without one nothing ever ran
-    // and there is no identity to retire. Writing one here left a record without lifecycle history,
-    // which the next `up` refused as malformed state.
+    // and there is no identity to retire.
     if (stored === null) return undefined
     if (purpose === 'down' && stored.value.teardownComplete === true && stored.value.holderId === context.holderId) return undefined
     // A basis no up computes, so the next up starts every service afresh. Sleep keeps the recorded

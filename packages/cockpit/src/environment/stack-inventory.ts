@@ -95,7 +95,7 @@ export type Refusal = Readonly<{ kind: 'refusal'; diagnostics: readonly Environm
 
 const COCKPIT_ID = /^cockpit:([a-z0-9][a-z0-9-]*):[a-f0-9]{64}$/
 const STACK_FILE = /^stack_([a-f0-9]{64})\.json$/
-const RECORD_KINDS = ['coordination', 'lifecycle', 'lifecycle-history', 'data-outcome'] as const
+const RECORD_KINDS = ['coordination', 'lifecycle'] as const
 const GIT_POINTER_BYTES = 4_096
 const WORKTREE_LIMIT = 4_096
 

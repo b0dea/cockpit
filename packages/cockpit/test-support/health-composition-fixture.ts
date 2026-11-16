@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { loadCockpitConfig } from '../src/config/load.js'
 import { checkoutId, cockpitId, holderId, stackId } from '../src/environment/identity.js'
-import { recordLifecycleSeeded, recordLifecycleStarted } from '../src/environment/lifecycle-stage.js'
+import { recordSteadyStack } from './lifecycle-record.js'
 import { selectStateRoot } from '../src/environment/state.js'
 import { publishComposeOwnership } from './compose-ownership-fixture.js'
 
@@ -74,8 +74,7 @@ export function createHealthCompositionFixture(roots: string[]) {
         if (selected.kind !== 'complete') throw new Error('fixture state root was refused')
         const observedAt = new Date().toISOString()
         if (!options.unseeded) {
-            await recordLifecycleStarted({ namespace: selected.value, stackId: stack, holderId: holder, observedAt })
-            await recordLifecycleSeeded({ namespace: selected.value, stackId: stack, holderId: holder, observedAt: new Date().toISOString() })
+            await recordSteadyStack({ namespace: selected.value, stackId: stack, holderId: holder })
         }
         if (options.configuredRuntime || options.machineOnly) {
             const loaded = await loadCockpitConfig(configPath)

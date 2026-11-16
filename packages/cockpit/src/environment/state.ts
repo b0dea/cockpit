@@ -78,7 +78,7 @@ export async function observeConfiguration(input: { readonly path: string; reado
 
 const STATE_FORMAT = 'cockpit-state/v1'
 export const SERIALIZED_RECORD_BYTE_LIMIT = 1_048_576
-const RECORD_KINDS = ['coordination', 'lifecycle', 'lifecycle-history', 'data-outcome', 'cache'] as const
+const RECORD_KINDS = ['coordination', 'lifecycle', 'cache'] as const
 const safeSegment = /^[a-z0-9][a-z0-9._-]*$/
 const digest = /^[a-f0-9]{64}$/
 const cockpitIdentity = /^cockpit:[a-z0-9][a-z0-9-]*:[a-f0-9]{64}$/
@@ -241,7 +241,6 @@ export interface StateNamespace {
     readonly paths: {
         readonly coordination: (stackId: StackId) => StateAddress
         readonly lifecycle: (stackId: StackId) => StateAddress
-        readonly dataOutcome: (stackId: StackId) => StateAddress
         readonly stateLock: string
         readonly installLock: (cacheId: string) => string
         readonly cache: (checkoutId: CheckoutId, cacheIdentitySha256: string) => StateAddress
@@ -548,7 +547,7 @@ function namespace(root: string, cockpitId: CockpitId): StateNamespace {
     const id = checkedIdentity(cockpitId, cockpitIdentity, 'cockpit id')
     const cockpitRoot = join(root, 'cockpits', identitySegment(id))
     const stackAddress = (
-        kind: 'coordination' | 'lifecycle' | 'lifecycle-history' | 'data-outcome',
+        kind: 'coordination' | 'lifecycle',
         stackId: StackId,
     ): StateAddress => {
         const subjectId = checkedIdentity(stackId, stackIdentity, 'stack id')
@@ -557,7 +556,6 @@ function namespace(root: string, cockpitId: CockpitId): StateNamespace {
     const paths: StateNamespace['paths'] = {
         coordination: (stackId) => stackAddress('coordination', stackId),
         lifecycle: (stackId) => stackAddress('lifecycle', stackId),
-        dataOutcome: (stackId) => stackAddress('data-outcome', stackId),
         stateLock: join(cockpitRoot, 'locks', 'state.lock'),
         installLock: (cacheId) => join(cockpitRoot, 'locks', 'install', `cache-${checkedSegment(cacheId, 'cache id')}.lock`),
         cache: (checkoutId, cacheIdentitySha256) => {
@@ -756,21 +754,6 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
     return { kind: 'complete', value: result }
 }
 
-export function lifecycleHistoryAddress(value: StateNamespace, stackId: StackId): StateAddress | undefined {
-    const authenticated = authenticateStateNamespace(value)
-    if (!authenticated) return undefined
-    const subjectId = checkedIdentity(stackId, stackIdentity, 'stack id') as StackId
-    const lifecycle = authenticated.paths.lifecycle(subjectId)
-    return address(
-        join(authenticated.cockpitRoot, 'records', 'lifecycle-history', `${identitySegment(subjectId)}.json`),
-        authenticated.root,
-        authenticated.cockpitRoot,
-        'lifecycle-history',
-        lifecycle.cockpitId,
-        subjectId,
-    )
-}
-
 export function parseCoordinationStateEntry(name: string):
 Readonly<{ kind: 'record'; stackId: StackId } | { kind: 'temporary' }
     | { kind: 'executor'; stackId: StackId; attemptId: string }> | undefined {
@@ -796,14 +779,12 @@ export function snapshotStateNamespace(value: StateNamespace): StateNamespace | 
         if (typeof root !== 'string' || typeof cockpitRoot !== 'string' || !paths || typeof paths !== 'object') return undefined
         const coordination = own(paths, 'coordination')
         const lifecycle = own(paths, 'lifecycle')
-        const dataOutcome = own(paths, 'dataOutcome')
         const stateLock = own(paths, 'stateLock')
         const installLock = own(paths, 'installLock')
         const cache = own(paths, 'cache')
         if (
             typeof coordination !== 'function'
             || typeof lifecycle !== 'function'
-            || typeof dataOutcome !== 'function'
             || typeof stateLock !== 'string'
             || typeof installLock !== 'function'
             || typeof cache !== 'function'
@@ -811,7 +792,7 @@ export function snapshotStateNamespace(value: StateNamespace): StateNamespace | 
         // Recover captured authority only from its original path functions and exact namespace fields.
         const issued = issuedNamespacePaths.get(coordination)
         if (issued && root === issued.root && cockpitRoot === issued.cockpitRoot
-            && lifecycle === issued.paths.lifecycle && dataOutcome === issued.paths.dataOutcome
+            && lifecycle === issued.paths.lifecycle
             && stateLock === issued.paths.stateLock && installLock === issued.paths.installLock
             && cache === issued.paths.cache) return issued
         return {
@@ -820,7 +801,6 @@ export function snapshotStateNamespace(value: StateNamespace): StateNamespace | 
             paths: {
                 coordination,
                 lifecycle,
-                dataOutcome,
                 stateLock,
                 installLock,
                 cache,
@@ -1028,12 +1008,7 @@ function expectedAddressPath(address: StateAddress | BootstrapStateAddress): str
     ) return undefined
     const expectedSubject = address.kind === 'cache' ? checkoutIdentity : stackIdentity
     if (!expectedSubject.test(address.subjectId)) return undefined
-    if (
-        address.kind === 'lifecycle'
-        || address.kind === 'lifecycle-history'
-        || address.kind === 'coordination'
-        || address.kind === 'data-outcome'
-    ) {
+    if (address.kind === 'lifecycle' || address.kind === 'coordination') {
         return join(address.cockpitRoot, 'records', address.kind, `${identitySegment(address.subjectId)}.json`)
     }
     if (address.kind === 'cache' && address.qualifier && digest.test(address.qualifier)) {
@@ -2403,14 +2378,12 @@ export async function transactState<T>(
 }
 
 /** One of a stack's own record files, by the SHA-256 of its exact bytes. */
-export type StackStateFile = Readonly<{ kind: 'coordination' | 'lifecycle' | 'lifecycle-history' | 'data-outcome'; path: string; sha256: string }>
+export type StackStateFile = Readonly<{ kind: 'coordination' | 'lifecycle'; path: string; sha256: string }>
 
 function stackStatePaths(value: StateNamespace, stackId: StackId): readonly Readonly<{ kind: StackStateFile['kind']; path: string }>[] {
     return [
         { kind: 'coordination', path: value.paths.coordination(stackId).path },
         { kind: 'lifecycle', path: value.paths.lifecycle(stackId).path },
-        { kind: 'lifecycle-history', path: lifecycleHistoryAddress(value, stackId)!.path },
-        { kind: 'data-outcome', path: value.paths.dataOutcome(stackId).path },
     ]
 }
 

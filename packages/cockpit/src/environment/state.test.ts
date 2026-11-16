@@ -10,7 +10,6 @@ import { ENVIRONMENT_CODES, type CheckoutId, type CockpitId, type HolderId, type
 import {
     abortStateTransaction,
     authenticateStatePublication,
-    lifecycleHistoryAddress,
     readState,
     refreshBootstrapObservation,
     refreshBootstrapPublication,
@@ -181,11 +180,8 @@ describe('selectStateRoot', () => {
 
     it('round-trips logical identities through Windows-safe state filenames', async () => {
         const { namespace } = await selectedNamespace()
-        const history = lifecycleHistoryAddress(namespace, stackId)
-        if (!history) throw new Error('expected lifecycle history address')
         const addresses = [
             namespace.paths.coordination(stackId), namespace.paths.lifecycle(stackId),
-            namespace.paths.dataOutcome(stackId), history,
             namespace.paths.cache(checkoutId, 'f'.repeat(64)),
         ]
         expectWindowsSafeStatePath(namespace.root, namespace.paths.stateLock)
@@ -430,12 +426,10 @@ describe('selectStateRoot', () => {
 
         expect(result.value.cockpitRoot).toBe(base)
         expect(Object.keys(result.value.paths).sort()).toEqual([
-            'cache', 'coordination', 'dataOutcome', 'installLock', 'lifecycle', 'stateLock',
+            'cache', 'coordination', 'installLock', 'lifecycle', 'stateLock',
         ])
         expect(result.value.paths.coordination(stackId).path).toBe(join(base, 'records', 'coordination', `stack_${'b'.repeat(64)}.json`))
         expect(result.value.paths.lifecycle(stackId).path).toBe(join(base, 'records', 'lifecycle', `stack_${'b'.repeat(64)}.json`))
-        expect(result.value.paths.dataOutcome(stackId).path).toBe(join(base, 'records', 'data-outcome', `stack_${'b'.repeat(64)}.json`))
-        expect(lifecycleHistoryAddress(result.value, stackId)?.path).toBe(join(base, 'records', 'lifecycle-history', `stack_${'b'.repeat(64)}.json`))
         expect(result.value.paths.stateLock).toBe(join(base, 'locks', 'state.lock'))
         expect(result.value.paths.installLock('cache-a')).toBe(join(base, 'locks', 'install', 'cache-cache-a.lock'))
         expect(result.value.paths.cache(checkoutId, 'a'.repeat(64)).path).toBe(
@@ -824,7 +818,7 @@ describe('readState', () => {
         const reading = readState(mutable)
         Object.assign(mutable, {
             path: join(dirname(originalPath), 'mutated.json'),
-            kind: 'data-outcome',
+            kind: 'coordination',
             cockpitId: `cockpit:mutated:${'f'.repeat(64)}`,
             subjectId: `stack:${'f'.repeat(64)}`,
         })
@@ -835,7 +829,7 @@ describe('readState', () => {
         const malformedReading = readState(malformedAddress)
         Object.assign(malformedAddress, {
             path: join(dirname(originalPath), 'other.json'),
-            kind: 'data-outcome',
+            kind: 'coordination',
             cockpitId: `cockpit:other:${'e'.repeat(64)}`,
             subjectId: `stack:${'e'.repeat(64)}`,
         })

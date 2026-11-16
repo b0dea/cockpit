@@ -17,7 +17,7 @@ import { RefusalError, type ExecutionStep } from './contract.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { createDestructiveCommandAdapters } from './destructive-composition.js'
 import { runSiblingAdd, runSiblingRemove } from './sibling-registration.js'
-import { recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage.js'
+import { resolveLifecycleStage } from './lifecycle-stage.js'
 import { createHealthCommandAdapters } from './health-composition.js'
 import { createReadCommandAdapters } from './read-composition.js'
 import { runServiceExec, runServicePs, runServiceRestart } from './application/services.js'
@@ -524,13 +524,6 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const loaded = await adapters.load({ configPath: candidate.configPath })
         expect(loaded.kind, JSON.stringify(loaded)).toBe('complete')
         if (loaded.kind !== 'complete') return
-        const started = await recordLifecycleStarted({
-            namespace: loaded.result.namespace,
-            stackId: loaded.result.stackId,
-            holderId: loaded.result.holderId,
-            observedAt: new Date().toISOString(),
-        })
-        expect(started.kind, JSON.stringify(started)).not.toBe('refusal')
         await configureStackDocker(candidate, loaded.result)
         listenerProbeControl.enabled = true
 

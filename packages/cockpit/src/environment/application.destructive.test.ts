@@ -266,7 +266,7 @@ describe('destructive application contracts', () => {
         expect(await holders(context)).toEqual([])
         // Nothing runs that a later doctor could call stale.
         expect(() => readFileSync(stackInputs)).toThrow()
-        // A lifecycle record without lifecycle history reads as malformed, so the next up refused.
+        // Nothing ever started, so down leaves no lifecycle record and the next up starts afresh.
         expect(await readState(context.namespace.paths.lifecycle(context.stackId))).toMatchObject({ kind: 'missing' })
         expect(await resolveLifecycleStage({ namespace: context.namespace, stackId: context.stackId, observedAt: new Date().toISOString() }))
             .toMatchObject({ kind: 'complete', authority: { stage: 'bootstrap' } })
