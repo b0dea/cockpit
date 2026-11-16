@@ -281,17 +281,19 @@ refused.
 
 ### Configuration, Git and guard controls
 
-**The configuration and ownership manifest.** Every guarded call reads the configuration file and
-`.cockpit/generated-environment-ownership.json`, so losing either holds the agent until a human
-restores it. Deleting, renaming, truncating, relinking or making either unreadable is a hard denial,
-and so is removing a directory that contains either. The guard recognises this through `rm`,
-`unlink`, `mv`, `git rm`, `git mv`, `find -delete`, `truncate`, `git archive` output, truncating
-`dd` or `tee` writes, `ln` onto either file, a `chmod` mode that drops the owner's read permission
-or is copied with `--reference`, a patch delete or move, a Write tool call with empty content, and a
-`>` redirect. Editing the configuration in place stays permitted, including bounded
-`dd conv=notrunc` and `tee` append forms under the normal write checks; the edit takes effect only
-after `sync`, and only a person's sync applies an edit that
-[widens what agents may do](#edits-the-guard-has-not-applied).
+**The ownership manifest.** Every guarded call reads `.cockpit/generated-environment-ownership.json`,
+so losing it holds the agent until a human restores it. Deleting, renaming, truncating, relinking or
+making it unreadable is a hard denial, and so is removing a directory that contains it. The guard
+recognises this through `rm`, `unlink`, `mv`, `git rm`, `git mv`, `find -delete`, `truncate`,
+`git archive` output, truncating `dd` or `tee` writes, `ln` onto it, a `chmod` mode that drops the
+owner's read permission or is copied with `--reference`, a patch delete or move, a Write tool call
+with empty content, and a `>` redirect.
+
+**The configuration.** `cockpit.toml` is not protected the same way. The guard's authority is the
+configuration last synced, recorded in `.cockpit/local/guard-config`, so whatever state an agent
+leaves `cockpit.toml` in, deleted, a link, unreadable or not loading, calls are judged under that
+record and the agent repairs the file with any tool ([Edits the guard has not
+applied](#edits-the-guard-has-not-applied)).
 
 **Git.** Writing anywhere under a `.git` directory is a hard denial, because Git configuration
 chooses programs that read-only Git commands run. So is every `git config` form other than a proven
@@ -1102,26 +1104,16 @@ the exact bytes it publishes, so an edit made while it runs is judged too. An `i
 the same way. The first sync on a machine, before any guard is recorded, runs unattended. Cockpit
 cannot tell a person from a program driving a terminal.
 
-An edit whose configuration does not load, and a missing, mismatched or no longer loading recorded
-copy, hold every guarded call until a person syncs. Without a recorded copy that loads, as after an
-upgrade that changed the schema, an agent's sync is refused too, and `sync --interactive` asks for the
-yes saying it cannot show what changed: the person reads `cockpit.toml` itself. A guarded call is one a generated hook fires on: shell commands,
-file edits and writes, and restricted MCP tools under Claude Code. A hold stops nothing else, so
-file reads and unrestricted MCP tools continue.
-
-While the file does not load, the agent that broke it can mend it: the hold admits an edit, write or
-patch of `cockpit.toml` alone, by its own path, and `check --config cockpit.toml` and
-`sync --dry-run --config cockpit.toml` run alone from the cockpit root through a launcher the guard proves starts the installed cockpit. Neither
-grants anything: once the file loads it is judged as any edit is, and one that widens waits for a
-person. Every other call stays held.
-
-Sync can refuse an edit the guard admitted, such as a tool restriction naming an undeclared server.
-So the hold on a file that does not load also admits one edit, write or patch of `cockpit.toml` itself
-that leaves it byte-identical to the recorded copy. An agent can restore only what was recorded, so
-authority never exceeds the recorded policy, and this may also discard a person's unsynced narrowing
-edit. An edit the guard cannot prove applies exactly once, or that also touches another file, stays
-held. The same restoration is admitted out of a widening edit, which leaves agents under the policy
-they already had.
+When `cockpit.toml` is missing, a link, unreadable or does not load, or loads but the guard cannot
+build its policy from it, every call is judged under the configuration last synced, as with a
+widening edit: nothing is held, the agent's `sync` and `upgrade` are refused, and the agent repairs
+the file with any tool. Only a missing or mismatched recorded copy, or one that no longer loads,
+holds every guarded call until a person syncs: there is nothing to judge by. Without a recorded copy
+that loads, as after an upgrade that changed the schema, `sync --interactive` asks for the yes saying
+it cannot show what changed, lists every MCP server the yes leaves enabled, and the person reads
+`cockpit.toml` itself. A guarded call is one a generated hook fires on: shell commands, file edits
+and writes, and restricted MCP tools under Claude Code. A hold stops nothing else, so file reads and
+unrestricted MCP tools continue.
 
 An edit does not widen only when every difference is one of these:
 

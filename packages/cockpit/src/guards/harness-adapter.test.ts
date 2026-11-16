@@ -4,7 +4,7 @@ import { parseGuardInput } from './invocation-parser.js'
 import { evaluateGuard, GUARD_DEFERRED_REASONS, GUARD_ROOT_PROTECTIONS } from './evaluator.js'
 
 const cwd = '/workspace/product'
-const protectedIdentities = [...GUARD_ROOT_PROTECTIONS.map(({ path }) => `${cwd}/${path}`), `${cwd}/cockpit.toml`].map(path => ({ path, identity: null, ancestors: [] }))
+const protectedIdentities = GUARD_ROOT_PROTECTIONS.map(({ path }) => `${cwd}/${path}`).map(path => ({ path, identity: null, ancestors: [] }))
 const payload = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd, tool_input: { command: 'git push origin HEAD:main' } })
 const unsafeReasonCharacters = Array.from({ length: 160 }, (_, code) => code)
     .filter((code) => code < 32 || code >= 127)

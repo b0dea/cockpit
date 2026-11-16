@@ -184,8 +184,6 @@ export function guardConfigHeldReason(change: Exclude<GuardConfigChange, Readonl
         : `the configuration they were generated from is missing from ${GUARD_LOCAL_PATHS.generatedConfig} or no longer loads there, so the edit cannot be shown not to widen what agents may do`
 }
 
-/** What restoring the recorded configuration costs, for every message that offers it. */
-export const GUARD_RESTORE_LIMIT = 'an agent can restore only what was recorded, so authority never exceeds the recorded policy, and this may also discard a person\'s unsynced narrowing edit'
 
 /**
  * How the configuration on disk differs from the one the guards on this machine were generated from,
@@ -228,7 +226,7 @@ export async function inspectGuardConfigChange(root: string, configPath: string,
     if (change.kind === 'non-widening') return [{ severity: 'warning' as const, target: 'guard',
         code: 'GUARD_CONFIG_UNSYNCED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_UNSYNCED,
         message: 'cockpit.toml changed since the guards were generated without widening what agents may do; the guard judges agent calls under it, while the generated files still follow the configuration last synced until it is synced',
-        fix: `run ${cockpitCommand('sync', { config: configPath })}; an agent may run it. If sync refuses the edit, undo it: the guard admits one edit of ${configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}; ${GUARD_RESTORE_LIMIT}` }]
+        fix: `run ${cockpitCommand('sync', { config: configPath })}; an agent may run it. If sync refuses the edit, correct or revert it: meanwhile calls are judged under it, or under the configuration last synced where the guard cannot build its policy from it` }]
     return [{ severity: 'error' as const, target: 'guard',
         code: 'GUARD_CONFIG_WIDENED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED,
         message: `cockpit.toml changed since the guards were generated and ${guardConfigHeldReason(change)}; ${change.kind === 'widening'

@@ -193,7 +193,7 @@ describe('inspectGuardConfigChange', () => {
                     message: expect.stringMatching(/the guard judges agent calls under the configuration last synced, and refuses an agent's sync or upgrade, until a person syncs$/) })])
             expect(await reports(edited(config => { config.sibling[0].purpose = 'the storefront' }))).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_UNSYNCED',
                 message: expect.stringMatching(/the guard judges agent calls under it, while the generated files still follow the configuration last synced until it is synced$/),
-                fix: expect.stringContaining(GUARD_LOCAL_PATHS.generatedConfig) })])
+                fix: expect.stringContaining('correct or revert it') })])
         } finally { rmSync(root, { recursive: true, force: true }) }
     })
 })

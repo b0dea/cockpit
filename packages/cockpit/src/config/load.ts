@@ -371,19 +371,6 @@ export function parseCockpitConfigBytes(bytes: Uint8Array): CockpitConfig | unde
     return parseConfigBytes(bytes)?.config
 }
 
-/**
- * `current`'s file, declaring what `recorded` declares: the configuration the last sync recorded,
- * which the caller has authenticated. The guard judges calls under it while an edit a person has not
- * approved waits, and every check that the file on disk has not changed again still binds to
- * `current.source`. Consumes `current`; undefined when it was not issued here or `recorded` does not
- * parse.
- */
-export function withRecordedDeclarations(current: LoadedConfigProjection, recorded: Uint8Array): LoadedConfigProjection | undefined {
-    const loaded = consumeLoadedConfigProjection(current)
-    const declared = loaded && parseConfigBytes(recorded)
-    return loaded && declared ? issueLoadedConfig(declared.parsed, declared.config, loaded.source) : undefined
-}
-
 function issueLoadedConfig(parsed: unknown, config: CockpitConfig, provenance: SourceProvenance): LoadedCockpitConfig | undefined {
     const reconstructed = CockpitConfig.safeParse(snapshotJson(config))
     if (!reconstructed.success) return undefined

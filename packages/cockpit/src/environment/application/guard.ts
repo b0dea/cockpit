@@ -18,10 +18,9 @@ import {
 } from '../contract.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolveExecutable } from '../executable.js'
 import { CockpitConfig } from '../../schema.js'
-import { correctsHeldConfiguration, restoresRecordedConfiguration } from '../../guards/policy-pin.js'
 import { instructionFrontmatterAsk } from '../../guards/instruction-frontmatter.js'
 import { readBoundedFile } from '../../bounded-read.js'
-import { GUARD_RESTORE_LIMIT, guardConfigChange, guardConfigHeldReason } from '../../guards/policy-change.js'
+import { policyChange } from '../../guards/policy-change.js'
 import {
     evaluateGuard,
     approvedReadOnlyInvocation,
@@ -81,7 +80,7 @@ import {
     withSetupCheckoutProjection,
     type SetupCheckoutObservation,
 } from '../setup-observation.js'
-import { browserPreapprovalRequested, loadCockpitConfig, consumeLoadedConfigProjection, parseCockpitConfigBytes, STRUCTURED_INPUT_BYTE_LIMIT, withRecordedDeclarations, type LoadedConfigProjection } from '../../config/load.js'
+import { browserPreapprovalRequested, loadCockpitConfig, consumeLoadedConfigProjection, type LoadedConfigProjection } from '../../config/load.js'
 import { deriveRegistry } from '../../registry-derivation.js'
 import { confinedPath, lifecycleRefusal, ownDataValues, sameSource } from './shared.js'
 import { splitRepositoryPath } from '../../repository-path.js'
@@ -181,46 +180,10 @@ function versionDrift(identity: GuardHandlerIdentity, generated: string | undefi
         why, `Fix: install the dependencies the lockfile pins, with ${install} in ${formatShellCommand([identity.root])}, outside the agent; sync is not the fix, since it would regenerate the guards with the older version. If the older version is intended, a human runs \`${installedSyncCommand(identity.root, identity.configPath)}\` in a terminal instead.`)
 }
 
-// An edit that does not widen what agents may do is judged as written, so a policy it cannot build
-// leaves nothing to judge a call by. Sync can refuse such an edit too, so undoing it exactly stays open
-// or the agent could never recover.
-function unbuildableEdit(identity: GuardHandlerIdentity, detail: string): GuardEvaluationApplicationResult {
-    const reason = `${guardHeld(identity, `${identity.configPath} changed since the guards were generated without widening what agents may do, but the guard cannot build its policy from it (${detail})`,
-        'calls are judged under the configuration on disk')} If sync refuses the edit, undo it: one edit or write of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig} is admitted; ${GUARD_RESTORE_LIMIT}.`
-    return { decision: { decision: 'unavailable', reason }, diagnostics: [{ severity: 'error', target: 'guard', message: reason,
-        code: 'GUARD_CONFIG_UNSYNCED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_UNSYNCED,
-        fix: `correct ${identity.configPath} and have a person run ${installedSyncCommand(identity.root, identity.configPath)} in a terminal, or undo the edit: the guard admits one edit of ${identity.configPath} that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}; ${GUARD_RESTORE_LIMIT}` }] }
-}
-
 // A guard message reaches the agent and the harness's log: text it forwards from a failure stays one
 // bounded line with credential-shaped values removed.
 function forwardedReason(reason: string): string {
     return redactSensitiveMessage(reason.replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ').replace(/(\w+:\/\/)[^/@\s]+@/g, '$1[redacted]@').slice(0, 512)) ?? 'the reason was withheld because it could not be redacted'
-}
-
-const restored: GuardEvaluationApplicationResult = { decision: { decision: 'allow', reason: 'The edit restores the configuration the guards were generated from.' }, diagnostics: [] }
-const correcting: GuardDecision = { decision: 'allow', reason: 'The configuration does not load, and this edits it; the edit takes effect only once it loads, and one that widens waits for a person.' }
-const reporting: GuardDecision = { decision: 'allow', reason: 'The configuration does not load, and this command only reports on it.' }
-// How cockpit's own messages spell the installed launcher from the cockpit root.
-const launcherSpelling = './node_modules/@b00dea/cockpit/bin/cockpit.mjs'
-
-/**
- * `check` or `sync --dry-run` of the configuration, alone, from the cockpit root: the reports an agent
- * needs to mend a configuration that does not load. Both read and print; neither writes a file the
- * guard relies on.
- */
-function heldConfigurationCheck(parsed: Readonly<{ invocations: readonly import('../../guards/invocation-parser.js').ParsedInvocation[] }>, identity: GuardHandlerIdentity): boolean {
-    if (parsed.invocations.length !== 1) return false
-    const [invocation] = parsed.invocations as [import('../../guards/invocation-parser.js').ParsedInvocation]
-    if (invocation.executable === null || invocation.wrapped || invocation.dynamic || invocation.redirects.length || invocation.cwd !== identity.root
-        || invocation.words.some(word => word.role === 'environment-assignment-value')) return false
-    const prefix = cockpitLaunch(invocation)
-    if (prefix === undefined) return false
-    const args = invocation.argv.slice(prefix)
-    const config = (word: string | undefined) => word !== undefined && !word.split('/').includes('..') && resolve(invocation.cwd, word) === identity.configPath
-    return args.length === 3 && args[0] === 'check' && args[1] === '--config' && config(args[2])
-        || args.length === 4 && args[0] === 'sync' && (args[1] === '--dry-run' && args[2] === '--config' && config(args[3])
-            || args[1] === '--config' && config(args[2]) && args[3] === '--dry-run')
 }
 
 /** Installed bytes are authority only while their source, roots and publication still match. */
@@ -267,24 +230,11 @@ export async function runGuardEvaluationApplication(
             'the guard trusts only the cockpit and configuration it was generated for'))
         if (realpathSync(fileURLToPath(new URL('../../../dist/cli.js', import.meta.url))) !== identity.module) return changed('a different cockpit installation is running')
         const roots = new Map<string, Stats>()
-        for (const [path, directory] of [[identity.root, true], [identity.configPath, false]] as const) {
-            let status: Stats
-            try { status = lstatSync(path) }
-            catch (error) {
-                if (hasErrorCode(error, 'ENOENT') && !directory) return unavailable(guardHeld(identity,
-                    `${identity.configPath} is missing`, 'guard policy comes from it'))
-                throw error
-            }
-            // The configuration is authenticated by its content digest below. Holding on its inode
-            // as well refused the identical bytes that `git restore`, `sed -i` and editors that save
-            // by rename leave in a new file, until a human ran sync for no change.
-            if (status.isSymbolicLink() || (directory ? !status.isDirectory() : !status.isFile())
-                || directory && String(status.ino) !== identity.rootInode
-                || realpathSync(path) !== path) {
-                return changed(directory ? `the cockpit checkout ${path} was moved or replaced` : `${path} was replaced by a link or a non-file`)
-            }
-            roots.set(path, status)
+        const rootStatus = lstatSync(identity.root)
+        if (!rootStatus.isDirectory() || String(rootStatus.ino) !== identity.rootInode || realpathSync(identity.root) !== identity.root) {
+            return changed(`the cockpit checkout ${identity.root} was moved or replaced`)
         }
+        roots.set(identity.root, rootStatus)
         // Whichever Node the hook ran: the record pins its path, not the binary behind it. Re-hashing a
         // 100 MB Node binary dominated each call, so the Node file sync hashed, unchanged by path, inode,
         // size, mode and timestamps, keeps the digest sync recorded.
@@ -299,10 +249,8 @@ export async function runGuardEvaluationApplication(
         }
         const manifestPath = '.cockpit/generated-environment-ownership.json'
         const registration = { claudecode: '.claude/settings.json', codexcli: '.codex/hooks.json', opencode: '.opencode/plugin/cockpit-guards.js' }[harness]
-        // The configuration rides in the same batch: the restoration check applies an edit to exactly these bytes.
-        const configName = basename(identity.configPath)
-        const publicationRequests = [manifestPath, '.cockpit/guards/bash-guard.sh', registration, GUARD_LOCAL_PATHS.identity, configName].map(path => ({
-            path, action: 'read-file' as const, maxBytes: path === manifestPath || path === configName ? 1_048_576 : 65_536,
+        const publicationRequests = [manifestPath, '.cockpit/guards/bash-guard.sh', registration, GUARD_LOCAL_PATHS.identity].map(path => ({
+            path, action: 'read-file' as const, maxBytes: path === manifestPath ? 1_048_576 : 65_536,
         }))
         const readPublication = async (requests = publicationRequests) => {
             const batch = await readAnchoredBatches(identity.root, requests, node, { execute: adapters.execute ?? executeProbe })
@@ -366,64 +314,64 @@ export async function runGuardEvaluationApplication(
             }
             return { publication, manifestRead, published }
         }
-        const anchored = (path: string) => readAnchoredFile(identity.root, path, STRUCTURED_INPUT_BYTE_LIMIT, node, { execute: adapters.execute ?? executeProbe })
+        // The guard's authority is the configuration last synced, which sync recorded beside the guard's
+        // identity. cockpit.toml is judged as written only while it loads and widens nothing that record
+        // grants; otherwise calls are judged under the record, so no state of the file holds the agent,
+        // which repairs it with any tool. Holding instead left the agent stranded by every spelling that
+        // could delete, link or empty the file, until a person repaired it.
+        const recordPath = join(identity.root, GUARD_LOCAL_PATHS.generatedConfig)
+        const lastSynced = async () => {
+            const recorded = await adapters.loadConfig(recordPath)
+            return recorded.kind === 'complete' && recorded.result.source.path === recordPath && recorded.result.source.sha256 === identity.configSha256
+                ? recorded.result : undefined
+        }
+        const unrecorded = (why: string) => unavailable(guardHeld(identity, `${why}, and the configuration last synced is missing from ${GUARD_LOCAL_PATHS.generatedConfig} or does not load there`,
+            'guard policy comes from that record'))
+        const underRecord = (why: string, until: string) => ` ${why}; calls are judged under the configuration last synced until ${until}.`
+        const personSyncs = `a person runs \`${installedSyncCommand(identity.root, identity.configPath)} --interactive\` in a terminal, outside the agent, and confirms it`
         const loaded = unwrap(await configPending)
+        let declared: LoadedConfigProjection
         if (loaded.kind !== 'complete' || loaded.result.source.path !== identity.configPath) {
-            const held = guardHeld(identity, `${identity.configPath} changed since the guards were generated and does not load${loaded.kind === 'complete' ? '' : ` (${forwardedReason(loaded.diagnostics[0]?.message ?? 'no reason given')})`}`,
-                'guard policy comes from it and an edit takes effect only once a human approves it')
-            const hold = unavailable(`${held} Sync refuses a file that does not load, so correct it first: an edit, write or patch of ${identity.configPath} alone is admitted, and so are \`${formatShellCommand([launcherSpelling, 'check', '--config', configName])}\` and \`${formatShellCommand([launcherSpelling, 'sync', '--dry-run', '--config', configName])}\` run alone from the cockpit root, to see what is wrong. Or undo it: one edit or write that leaves it byte-identical to ${GUARD_LOCAL_PATHS.generatedConfig}; ${GUARD_RESTORE_LIMIT}.`)
-            // Restoring the recorded bytes needs no policy, so a file with none to offer is no reason to
-            // refuse it; without this an agent's valid-TOML edit the schema rejects stranded it.
-            const parsed = parseGuardInput(data.payload)
-            if (parsed.status !== 'parsed' || parsed.cwd !== data.cwd) return hold
-            const current = await anchored(configName)
-            const recorded = await anchored(GUARD_LOCAL_PATHS.generatedConfig)
-            const recordedConfig = recorded.kind === 'complete' && recorded.sha256 === identity.configSha256 ? parseCockpitConfigBytes(recorded.bytes) : undefined
-            if (!recordedConfig || recorded.kind !== 'complete') return hold
-            // A file too large to read gets the empty text, which an edit cannot match; a write needs none.
-            const currentText = current.kind === 'complete' ? current.bytes.toString('utf8') : ''
-            // The agent that broke the file can mend it, and read what check reports about it, without a
-            // person; everything else waits for a file that loads. Neither grants anything: a correction
-            // that widens what agents may do still waits for a person's sync once it loads.
-            const admitted = restoresRecordedConfiguration(parsed, currentText, identity.configPath, identity.configSha256)
-                || correctsHeldConfiguration(parsed, identity.configPath) ? correcting
-                : heldConfigurationCheck(parsed, identity) ? reporting : undefined
-            if (!admitted) return hold
-            const authenticated = await authenticatePublication(settle(readPublication(publicationRequests.filter(request => request.path !== configName))), recordedConfig.cockpit.name)
-            return authenticated.held ?? { decision: admitted, diagnostics: [] }
+            const why = `${identity.configPath} ${loaded.kind === 'complete' ? 'is a link' : `does not load (${forwardedReason(loaded.diagnostics[0]?.message ?? 'no reason given')})`}`
+            const recorded = await lastSynced()
+            if (!recorded) return unrecorded(why)
+            declared = recorded
+            notice = underRecord(why, 'the file loads again, which the agent may repair with any tool')
+        } else if (loaded.result.source.sha256 === identity.configSha256) declared = loaded.result
+        else {
+            // An edit since sync that does not widen the configuration last synced grants nothing that sync
+            // did not, so calls are judged under it at once.
+            const recorded = await lastSynced()
+            if (!recorded) return unrecorded(`${identity.configPath} changed since the guards were generated`)
+            const change = policyChange(recorded.config, loaded.result.config)
+            declared = change.kind === 'widening' ? recorded : loaded.result
+            if (change.kind === 'widening') notice = underRecord(`${identity.configPath} has an unapproved edit that widens what agents may do (${change.fields.join(', ')})`, personSyncs)
         }
-        // Every check below runs against the configuration on disk. An edit since sync that does not
-        // widen the one the guards were generated from grants nothing the last sync did not, so calls are
-        // judged under it; holding every call but sync until it ran was stricter than a widening edit.
-        // One that widens is not applied: calls are judged under the declarations last synced, which the
-        // recorded copy holds, and only a person may sync it in. Holding every call instead stopped the
-        // agent each time someone added an allow rule, though continuing under the approved policy grants
-        // nothing new.
-        const configSha256 = loaded.result.source.sha256
-        const unsynced = configSha256 !== identity.configSha256
-        let declared: LoadedConfigProjection = loaded.result
-        if (unsynced) {
-            const recorded = await anchored(GUARD_LOCAL_PATHS.generatedConfig)
-            const change = guardConfigChange(identity.configSha256, recorded.kind === 'complete' ? recorded.bytes : undefined,
-                { sha256: configSha256, config: loaded.result.config })
-            const approved = change.kind === 'widening' && recorded.kind === 'complete' ? withRecordedDeclarations(loaded.result, recorded.bytes) : undefined
-            if (change.kind === 'unrecorded' || change.kind === 'widening' && !approved) return unavailable(guardHeld(identity,
-                `${identity.configPath} changed since the guards were generated and ${guardConfigHeldReason(change)}`,
-                'guard policy comes from it and an edit that may widen it takes effect only once a human approves it'))
-            if (change.kind === 'widening' && approved) {
-                declared = approved
-                notice = ` ${identity.configPath} has an unapproved edit that widens what agents may do (${change.fields.join(', ')}); calls are judged under the configuration last synced until a person runs \`${installedSyncCommand(identity.root, identity.configPath)} --interactive\` in a terminal, outside the agent, and confirms it.`
-            }
-        }
-        const widening = notice !== ''
-        const config = declared.config
-        const authenticated = await authenticatePublication(publicationPending, config.cockpit.name)
+        const authenticated = await authenticatePublication(publicationPending, declared.config.cockpit.name)
         if (authenticated.held) return authenticated.held
         const { publication, manifestRead, published } = authenticated
         const git = await adapters.resolveGit()
         if (git.state !== 'available') return unavailable('Guard checkout observation requires an authenticated Git executable.')
-        const checkout = await adapters.observeCheckout({ source: loaded.result.source, cockpitName: config.cockpit.name,
-            observedAt: new Date().toISOString(), env: {}, gitExecutable: git.value })
+        const build = async (from: LoadedConfigProjection) => {
+            const observed = await adapters.observeCheckout({ source: from.source, cockpitName: from.config.cockpit.name,
+                observedAt: new Date().toISOString(), env: {}, gitExecutable: git.value })
+            return { checkout: observed, config: from.config, source: { path: from.source.path, sha256: from.source.sha256 },
+                prepared: await prepareGuardEvaluationPolicy({ configuration: from, checkout: observed, configPath: identity.configPath }, checkoutsPending.then(unwrap)) }
+        }
+        let built = await build(declared)
+        // An edit that widens nothing but whose policy cannot be built, such as a sibling that escapes its
+        // root, leaves the configuration last synced to judge by, as an edit that does not load does.
+        if (built.prepared.kind !== 'complete' && declared === loaded.result && loaded.result.source.sha256 !== identity.configSha256) {
+            const recorded = await lastSynced()
+            if (recorded) {
+                notice = underRecord(`${identity.configPath} changed since the guards were generated, but the guard cannot build its policy from it (${forwardedReason(built.prepared.diagnostics[0]?.message ?? 'no reason given')})`, 'it is corrected or reverted')
+                built = await build(recorded)
+            }
+        }
+        const { checkout, config, prepared } = built
+        // What the policy is built from, checked unchanged once the call is judged.
+        const policySource = built.source
+        const widening = notice !== ''
         // A word the guard cannot expand is marked, not refused: the evaluator refuses it only where it
         // decides what is read, written or pushed.
         const parsed = parseGuardInput(data.payload, { home: homedir() })
@@ -432,19 +380,10 @@ export async function runGuardEvaluationApplication(
         // the agent's shell changed directory through a link or under another spelling.
         if (parsed.cwd !== data.cwd) return unavailable(`The call reports the working directory ${JSON.stringify(parsed.cwd)}, but the guard runs in ${JSON.stringify(data.cwd)}: `
             + `paths are judged from one directory only. Change to ${JSON.stringify(data.cwd)} itself, then run the command.`)
-        // The restoration applies an edit to exactly these bytes, which must be the text the policy is built from.
-        const configRead = publication.get(configName)!
-        if (configRead.sha256 !== configSha256) return unavailable('Guard configuration changed during evaluation.')
-        const configText = configRead.bytes.toString('utf8')
-        const restoring = unsynced && restoresRecordedConfiguration(parsed, configText, identity.configPath, identity.configSha256)
-        const prepared = await prepareGuardEvaluationPolicy({ configuration: declared, checkout }, checkoutsPending.then(unwrap))
         if (prepared.kind !== 'complete') {
-            if (restoring) return restored
-            return unsynced && !widening
-                ? unbuildableEdit(identity, prepared.diagnostics[0]?.message ?? 'no reason given')
-                : unavailable(checkout.state === 'available'
-                    ? `Guard policy authority could not be authenticated: ${prepared.diagnostics[0]?.message ?? 'no reason given'}`
-                    : prepared.diagnostics[0]?.message ?? 'Guard checkout observation failed without a reason.')
+            return unavailable(checkout.state === 'available'
+                ? `Guard policy authority could not be authenticated: ${prepared.diagnostics[0]?.message ?? 'no reason given'}`
+                : prepared.diagnostics[0]?.message ?? 'Guard checkout observation failed without a reason.')
         }
         // The inspector answers synchronously, so what only Git can say is asked first: which protected
         // paths a default ripgrep search reads, and which a repository's index holds for a Git command
@@ -731,15 +670,15 @@ export async function runGuardEvaluationApplication(
             const nestedPrefix = nested && cockpitLaunch(nested)
             if (nested && nestedPrefix !== undefined) launched.push({ ...nested, cwd: invocation.cwd, prefix: nestedPrefix, nested: true })
         }
-        // Sync or upgrade would apply a widening edit, and the person reviews that edit first.
+        // Sync or upgrade would apply what the configuration last synced does not grant, and a person reviews it first.
         const applying = widening ? launched.find(entry => ['sync', 'upgrade'].includes(commandSpelling(entry.argv.slice(entry.prefix)).name ?? '')) : undefined
-        if (applying) return refused({ decision: 'deny', reason: `Refusing to run cockpit ${commandSpelling(applying.argv.slice(applying.prefix)).name} while ${identity.configPath} has an unapproved edit that widens what agents may do: a person reviews it and syncs.` })
+        if (applying) return refused({ decision: 'deny', reason: `Refusing to run cockpit ${commandSpelling(applying.argv.slice(applying.prefix)).name} while calls are judged under the configuration last synced: a person reviews ${identity.configPath} and syncs.` })
         // A spelling that does not name cockpit, such as a path into the package through `/./` or another
         // case, still runs it: any cockpit-shaped command naming sync or upgrade is held too.
         const packages = [...policy.cockpitPackageDirectories ?? [], ...policy.executionDirectories]
         const unproven = widening ? parsed.invocations.find(invocation => cockpitShaped(invocation, packages)
             && [invocation.executable ?? '', ...invocation.argv].some(word => /(?:^|:)(?:sync|upgrade)$/.test(word))) : undefined
-        if (unproven) return refused({ decision: 'deny', reason: `Refusing to run cockpit ${[unproven.executable ?? '', ...unproven.argv].find(word => /(?:^|:)upgrade$/.test(word)) ? 'upgrade' : 'sync'} while ${identity.configPath} has an unapproved edit that widens what agents may do: a person reviews it and syncs.` })
+        if (unproven) return refused({ decision: 'deny', reason: `Refusing to run cockpit ${[unproven.executable ?? '', ...unproven.argv].find(word => /(?:^|:)upgrade$/.test(word)) ? 'upgrade' : 'sync'} while calls are judged under the configuration last synced: a person reviews ${identity.configPath} and syncs.` })
         const authority = { grants: ordinaryGrants(config), profiles: agentProfiles(config), roots: prepared.result.policy.allowedRoots }
         // A session inside a session would run a command the evaluator never sees.
         const cockpitInvocations: GuardInvocationProfile[] = launched.filter(entry => agentMayRun(entry.argv.slice(entry.prefix), { ...authority, cwd: entry.cwd })
@@ -762,8 +701,8 @@ export async function runGuardEvaluationApplication(
             try { const read = readBoundedFile(path, 1_048_576); return read.kind === 'complete' ? read.bytes.toString('utf8') : undefined }
             catch (error) { if (hasErrorCode(error, 'ENOENT')) return undefined; throw new CallPathUnreadable(path, error) }
         }) : undefined
-        const current = await adapters.loadConfig(identity.configPath)
-        if (current.kind !== 'complete' || current.result.source.sha256 !== configSha256) return unavailable('Guard configuration changed during evaluation.')
+        const current = await adapters.loadConfig(policySource.path)
+        if (current.kind !== 'complete' || current.result.source.sha256 !== policySource.sha256) return unavailable('Guard configuration changed during evaluation.')
         for (const [path, before] of [...roots, ...inspected]) {
             const after = lstatSync(path)
             // Directories may receive unrelated leaves, but replacement and file changes invalidate evidence.
@@ -866,6 +805,8 @@ interface PreparedGuardEvaluationPolicy {
 interface GuardEvaluationPolicyInput {
     readonly configuration: LoadedConfigProjection
     readonly checkout: SetupCheckoutObservation
+    /** The cockpit.toml the policy speaks for, when the configuration was read from the record of it sync keeps. */
+    readonly configPath?: string
 }
 
 function guardPolicyRefusal(message: string): EnvironmentCommandOutcome<PreparedGuardEvaluationPolicy> {
@@ -881,24 +822,28 @@ export async function prepareGuardEvaluationPolicy(
     input: GuardEvaluationPolicyInput,
     siblingCheckouts?: Promise<SiblingCheckoutRecordRead>,
 ): Promise<EnvironmentCommandOutcome<PreparedGuardEvaluationPolicy>> {
-    const inputData = ownDataValues(input, ['configuration', 'checkout'])
+    const inputData = ownDataValues(input, ['configuration', 'checkout'], ['configPath'])
     const data = inputData && Object.hasOwn(inputData, 'configuration') && Object.hasOwn(inputData, 'checkout') ? inputData : undefined
-    if (!data) return guardPolicyRefusal('guard policy requires own-data configuration and checkout observations')
+    if (!data || data.configPath !== undefined && (typeof data.configPath !== 'string' || !isAbsolute(data.configPath))) {
+        return guardPolicyRefusal('guard policy requires own-data configuration and checkout observations')
+    }
     const configuration = data.configuration as LoadedConfigProjection
     const exposed = snapshotJson(configuration)
     const loaded = consumeLoadedConfigProjection(configuration)
     if (!loaded || !exposed || !isDeepStrictEqual(exposed, snapshotJson(loaded))) {
         return guardPolicyRefusal('guard policy configuration authority is copied, changed or already consumed')
     }
+    const configPath = (data.configPath as string | undefined) ?? loaded.source.path
+    const cockpitRoot = dirname(configPath)
     const derived = deriveRegistry(loaded.config)
     if (derived.kind !== 'complete') return guardPolicyRefusal(`guard policy registry refused (${derived.code}): ${derived.message}`)
     const guardConfig = CockpitConfig.parse(derived.result.config)
-    const recorded = await (siblingCheckouts ?? readSiblingCheckouts(dirname(loaded.source.path)))
+    const recorded = await (siblingCheckouts ?? readSiblingCheckouts(cockpitRoot))
     if (recorded.kind === 'refusal') return guardPolicyRefusal(recorded.diagnostic.message)
-    const served = servedSiblings(dirname(loaded.source.path), guardConfig, recorded.checkouts)
+    const served = servedSiblings(cockpitRoot, guardConfig, recorded.checkouts)
     const observed = snapshotJson(data.checkout) as SetupCheckoutObservation | undefined
     if (observed?.state !== 'available') {
-        const root = dirname(loaded.source.path)
+        const root = cockpitRoot
         return guardPolicyRefusal(`Generated files stay valid, but the guard needs a Git repository it can read and holds ${GUARD_HELD_CALLS} until it has one, while ${GUARD_UNHELD_CALLS} continue: ${forwardedReason(observed?.reason ?? 'no reason given')}. Fix: in a terminal, outside the agent, run \`${formatShellCommand(['git', '-C', root, 'init'])}\` if ${root} has no repository, remove a stale .git entry or repair it with git worktree repair, and remove any include.path or includeIf entry from the repository's Git configuration; held calls then continue without a sync.`)
     }
     try {
@@ -947,7 +892,7 @@ export async function prepareGuardEvaluationPolicy(
                 identities.set(path, before)
                 return path
             }
-            const canonicalRoot = directory(dirname(loaded.source.path))
+            const canonicalRoot = directory(cockpitRoot)
             checkoutRoots = siblingRoots(config, directory(resolve(canonicalRoot, config.cockpit.siblings_root)), served)
             const allowedRoots = new Set([canonicalRoot])
             const instances: Array<{ readonly name: string; readonly path: string }> = []
@@ -983,9 +928,6 @@ export async function prepareGuardEvaluationPolicy(
                 }
             }
             for (const { path, type } of GUARD_ROOT_PROTECTIONS) protect(canonicalRoot, join(canonicalRoot, path), type, 'guard control or secrets')
-            // The configuration's own identity lets the evaluator recognise its deletion under any spelling.
-            const configPath = loaded.source.path
-            protect(canonicalRoot, configPath, 'file', 'configuration')
             // This module runs from dist/environment, so two levels up is the running cockpit package.
             const packageRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
             const installed = guardInstalledDirectories(packageRoot, canonicalRoot)
