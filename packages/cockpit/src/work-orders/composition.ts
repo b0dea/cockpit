@@ -130,7 +130,9 @@ type TestWeakeningObservation = Readonly<{ patterns: TestFilePatterns; findings:
  * whole change. A path that differs between them holds work only this order's diff shows, so it stays this order's.
  */
 export type Attribution = Readonly<{ own: readonly string[]; others: readonly Readonly<{ id: string; scope: readonly string[]; base: Readonly<Record<string, string>> }>[] }>
+// Who a changed path belongs to when it is not this order's: another order's id, or the default branch it was merged from.
 type Holder = (key: string, path: string) => string | undefined
+const DEFAULT_BRANCH_WORK = ':default-branch'
 interface WorkApplicationGateRequest {
     readonly operation: 'test-run'
     readonly gate: string
@@ -733,6 +735,13 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         if (observed.kind !== 'executed' || observed.exitCode !== 0 || observed.truncated) throw new RefusalError(`${repository.identity}: ${probeFailure(`git ${args.join(' ')}`, observed)}`)
         return observed.stdout
     }
+    // A query whose exit status 1 means "none", as `merge-base` with no common commit or `rev-parse --verify --quiet` of an absent ref.
+    const gitIfAny = async (repository: typeof repositories[number], args: readonly string[]) => {
+        const observed = await executeBounded(repository.root, ['git', ...GIT_CHILD_CONFIG, ...args], directories, 30_000, { kind: 'probe' })
+        if (observed.kind === 'executed' && observed.exitCode === 1 && !observed.truncated) return ''
+        if (observed.kind !== 'executed' || observed.exitCode !== 0 || observed.truncated) throw new RefusalError(`${repository.identity}: ${probeFailure(`git ${args.join(' ')}`, observed)}`)
+        return observed.stdout.trim()
+    }
     let evaluatorAuthority: Promise<EvaluatorAuthority> | undefined
     const resolveEvaluator = async (): Promise<EvaluatorAuthority> => {
         evaluatorAuthority ??= authorities.evaluator ? Promise.resolve(authorities.evaluator)
@@ -832,7 +841,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             const shown = rows.filter(([, path]) => {
                 if (repository.key === '.' && (coordination(path) || generated.has(path))) return false
                 const held = holder(repository.key, path)
-                if (held !== undefined) (otherOrders[held] ??= new Set()).add(qualified(repository.key, path))
+                if (held !== undefined && held !== DEFAULT_BRANCH_WORK) (otherOrders[held] ??= new Set()).add(qualified(repository.key, path))
                 return held === undefined
             })
             const declared = { kind: 'declared', env: {}, timeoutField: VERIFICATION_TIMEOUT_FIELD } as const
@@ -927,18 +936,35 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         }))
         return { patterns, findings: perRepository.flat() }
     }
+    // The files a checkout took from its default branch since the base by merging it: changed there since the base,
+    // and still exactly as the last merged default-branch commit has them. Such a file is that branch's work, not the
+    // order's; one the order also edited differs from it and stays the order's.
+    const mergedFromDefault = async (repository: typeof repositories[number], from: string): Promise<ReadonlySet<string>> => {
+        const tip = await gitIfAny(repository, ['rev-parse', '--verify', '--quiet', 'refs/remotes/origin/HEAD^{commit}'])
+        if (!tip) return new Set()
+        const merged = await gitIfAny(repository, ['merge-base', 'HEAD', tip])
+        const since = merged && await gitIfAny(repository, ['merge-base', from, merged])
+        if (!merged || !since || since === merged) return new Set()
+        const list = async (args: readonly string[]) => (await git(repository, ['diff', '--name-only', '-z', '--no-renames', ...args, '--'],
+            { stdoutLimitBytes: GIT_CHANGE_OUTPUT_BYTES })).split('\0').filter(Boolean)
+        const [changedThere, differing] = await Promise.all([list([since, merged]), list([merged])])
+        const edited = new Set(differing)
+        return new Set(changedThere.filter(path => !edited.has(path)))
+    }
     const holderOf = async (base: Readonly<Record<string, string>>, attribution: Attribution | undefined): Promise<Holder> => {
-        if (!attribution?.others.length) return () => undefined
-        const own = scopeMatcher(attribution.own)
-        const others = await Promise.all(attribution.others.map(async other => ({ id: other.id, inScope: scopeMatcher(other.scope),
+        const own = scopeMatcher(attribution?.own ?? [])
+        const others = await Promise.all((attribution?.others ?? []).map(async other => ({ id: other.id, inScope: scopeMatcher(other.scope),
             differing: new Map(await Promise.all(repositories.map(async repository => {
                 const [from, to] = [base[repository.key] ?? 'HEAD', other.base[repository.key] ?? 'HEAD']
                 return [repository.key, new Set(from === to ? [] : (await git(repository, ['diff', '--name-only', '-z', '--no-renames', from, to, '--'],
                     { stdoutLimitBytes: GIT_CHANGE_OUTPUT_BYTES })).split('\0').filter(Boolean))] as const
             }))) })))
+        const merged = new Map(await Promise.all(repositories.map(async repository =>
+            [repository.key, await mergedFromDefault(repository, base[repository.key] ?? 'HEAD')] as const)))
         return (key, path) => {
+            if (merged.get(key)?.has(path)) return DEFAULT_BRANCH_WORK
             const named = qualified(key, path)
-            return own(named) ? undefined : others.find(other => other.inScope(named) && !other.differing.get(key)!.has(path))?.id
+            return attribution === undefined || own(named) ? undefined : others.find(other => other.inScope(named) && !other.differing.get(key)!.has(path))?.id
         }
     }
     const testWeakening = async (base: Readonly<Record<string, string>>, attribution?: Attribution) => {
