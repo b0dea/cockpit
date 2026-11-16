@@ -540,7 +540,9 @@ affects: declare its affected or changed-since run as a targeted gate and its co
 gate. A stage command is an argv array run without a shell, from the directory holding
 `cockpit.toml`. Its environment is `PATH` plus `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LANG`,
 `LC_ALL`, `LC_CTYPE` and `TZ` when set; every other variable, including credentials, is withheld.
-When this checkout holds a leased stack, every stage also gets the variables `session` exports (each
+A variable set in the shell that runs `test-run` does not reach a stage, so a gate's result does not
+depend on who ran it; set a value a stage needs, such as a step timeout, in its command:
+`command = ["env", "STEP_TIMEOUT=3600", "pnpm", "selftest"]`. When this checkout holds a leased stack, every stage also gets the variables `session` exports (each
 `[ports.bases]` name with its leased port, and the `COCKPIT_ENTRYPOINT_*` addresses), whatever its
 `requires_stack`, so a stage that does not need the stack still reaches this checkout's ports and
 never another checkout's. With no lease, a stage with `requires_stack = false` runs without them and
