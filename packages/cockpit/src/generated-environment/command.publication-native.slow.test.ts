@@ -71,6 +71,19 @@ describe('public surface publication transaction', () => {
                 permissionDecisionReason: expect.stringContaining('has an unapproved edit that widens what agents may do') })
         })
 
+        it('refuses an MCP approval no source declares in every sync, so a yes never covers a server it did not show', async () => {
+            const fixture = await surfaceConsumer('undeclared-approval', { mcp: { command: '/usr/bin/true' } })
+            await writeFile(join(fixture.siblingDirectory, '.mcp.json'), JSON.stringify({ mcpServers: { 'approved-server': { command: '/usr/bin/true' } } }))
+            const config = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
+            config.mcp.approved = { ...config.mcp.approved, 'later-server': digest('later') }
+            await writeFile(fixture.configPath, stringifyToml(config))
+            for (const mode of [{}, { dryRun: true }, { dryRun: true, approveDeclaredMcp: true }]) {
+                expect(await syncGeneratedEnvironment({ configPath: fixture.configPath, ...mode }), JSON.stringify(mode)).toMatchObject({ kind: 'refusal',
+                    diagnostics: [expect.objectContaining({ code: 'MCP_APPROVAL_UNKNOWN', target: 'later-server',
+                        message: expect.stringMatching(/\[mcp\.approved\] later-server .*no MCP source declares.*delete/) })] })
+            }
+        })
+
         it('admits each agent tool\'s own files through the installed hook from the session the payload names', async () => {
             const fixture = await surfaceConsumer('agent-workspaces')
             expect(spawnSync('git', ['init', '--quiet', fixture.root]).status).toBe(0)

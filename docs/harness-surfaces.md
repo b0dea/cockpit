@@ -233,7 +233,7 @@ rendered disabled for every harness (for Claude Code through `disabledMcpjsonSer
 ignores `disabled` in `.mcp.json`), and `sync` and `check` report `MCP_NOT_APPROVED` with the digest
 to approve. A person approves with the one yes at `sync --interactive`, which shows each server's
 name, what it runs and where it is declared, and writes the entry; nobody types or copies a hash.
-A name without a declaration reports `MCP_APPROVAL_UNKNOWN`. Cockpit rejects conflicting
+An approval whose name no source declares refuses every sync (`MCP_APPROVAL_UNKNOWN`) until the entry is deleted, so a yes never covers a server it did not show. Cockpit rejects conflicting
 commands for one server, credential-like arguments, environment values that are not same-name
 references, and working directories outside the declared sibling.
 

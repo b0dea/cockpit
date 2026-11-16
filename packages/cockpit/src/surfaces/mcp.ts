@@ -254,7 +254,9 @@ export function collectMcpDeclarations(input: unknown): McpCollectionOutcome {
         message: 'MCP server has no shared approval for its current declaration and remains disabled',
     }))
     for (const name of Object.keys(approved).sort()) if (!collected.has(name)) diagnostics.push({
-        code: 'MCP_APPROVAL_UNKNOWN', server: name, message: 'The shared approval list names an undeclared MCP server',
+        // Sync refuses it: an agent could approve a server before declaring it, and a person's yes would cover it unseen.
+        code: 'MCP_APPROVAL_UNKNOWN', server: name,
+        message: `[mcp.approved] ${name} approves a server that no MCP source declares, so a yes could cover one it never showed; delete that entry from cockpit.toml`,
     })
     // A tool that cannot carry a remote server's credential gets nothing for it: written without
     // its headers, the server would start, fail to authenticate and still read as configured.

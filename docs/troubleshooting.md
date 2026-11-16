@@ -205,7 +205,7 @@ was approved; a person runs `sync --interactive` in a terminal, reads the server
 runs and where it is declared, and answers yes, which writes the entry. An agent may remove an
 approval and narrow an exact allowlist under `[mcp.allowed_tools]`, which grant nothing new; adding
 an approval or widening tool access waits for that yes.
-`MCP_APPROVAL_UNKNOWN` means the allowlist names no declaration. `MCP_EXECUTABLE_UNAVAILABLE` comes from the generated wrapper when its declared
+`MCP_APPROVAL_UNKNOWN` means `[mcp.approved]` names a server no source declares; delete that entry. `MCP_EXECUTABLE_UNAVAILABLE` comes from the generated wrapper when its declared
 executable is absent or not executable; restore that executable rather than changing the wrapper.
 `MCP_TRANSPORT_UNAVAILABLE` names a remote server left out of the tools that cannot carry its
 credential, such as OpenCode for a server with a `headersHelper`; see
