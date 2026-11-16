@@ -63,7 +63,8 @@ if (argv.at(-1) === '--help') { process.stdout.write('--print --output-format --
 const request = JSON.parse(fs.readFileSync(/request JSON at (\\S+) with SHA-256/.exec(argv.at(-1))[1], 'utf8'))
 fs.writeFileSync(__dirname + '/request.json', JSON.stringify(request))
 const verdict = fs.existsSync(__dirname + '/verdict') ? fs.readFileSync(__dirname + '/verdict', 'utf8').trim() : 'unclear'
-const evidence = verdict === 'met' && request.changes.length ? [{ source: request.changes[0].path, quote: request.changes[0].diff }] : []
+const paraphrase = fs.existsSync(__dirname + '/paraphrase')
+const evidence = verdict === 'met' && request.changes.length ? [{ source: request.changes[0].path, quote: paraphrase ? 'a summary of what the change does' : request.changes[0].diff }] : []
 const answer = { criteria: request.order.criteria.map(row => ({ id: row.id, verdict, note: 'synthetic: ' + row.text, evidence })) }
 process.stdout.write(JSON.stringify({ type: 'result', is_error: false, session_id: require('node:crypto').randomUUID(), result: JSON.stringify(answer), structured_output: answer }))
 `)
@@ -718,6 +719,24 @@ describe('work-order lifecycle', () => {
         expect((await run(['work', 'status', '--work-order', 'WO-16'])).result).toMatchObject({ orders: [{ state: 'accepted', attempts: 0 }] })
         expect((await run(['work', 'grade', '--work-order', 'WO-16', '--verdict', 'unmet', '--note', 'add subtracts'])).status).toBe(2)
         expect((await run(['work', 'status', '--work-order', 'WO-16'])).result).toMatchObject({ orders: [{ state: 'blocked', attempts: 1 }] })
+    }, 120_000)
+
+    it('spends no attempt on an independent grader\'s met read as unclear for its quote, and one on its own unclear', async () => {
+        const root = await cockpit('[work]\nevaluators = ["claudecode"]\nattempt_cap = 2')
+        const tools = syntheticEvaluator()
+        const env = { ...process.env, CLAUDECODE: undefined, CODEX_THREAD_ID: undefined, PATH: [tools, ...(process.env.PATH ?? '').split(':')].join(':') }
+        writeFileSync(join(root, 'workorders/WO-17.md'), order('WO-17'))
+        expect((await work(root, ['work', 'accept', '--work-order', 'WO-17'], env)).status).toBe(0)
+        writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => b + a\n')
+        writeFileSync(join(tools, 'verdict'), 'met')
+        writeFileSync(join(tools, 'paraphrase'), '')
+        expect((await work(root, ['work', 'grade', '--work-order', 'WO-17'], env)).result).toMatchObject({ criteria: expect.arrayContaining([
+            expect.objectContaining({ id: 'AC1', verdict: 'unclear', note: expect.stringContaining('is not found exactly once') })]) })
+        expect(record(root, 'WO-17')).toMatchObject({ state: 'accepted', attempts: 0 })
+        rmSync(join(tools, 'paraphrase'))
+        writeFileSync(join(tools, 'verdict'), 'unclear')
+        expect((await work(root, ['work', 'grade', '--work-order', 'WO-17'], env)).status).toBe(2)
+        expect(record(root, 'WO-17')).toMatchObject({ attempts: 1 })
     }, 120_000)
 
     it('grants a capped order fresh attempts only on a person\'s word, keeping what failed, and an agent\'s amendment keeps the count', async () => {

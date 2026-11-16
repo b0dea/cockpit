@@ -230,8 +230,10 @@ export async function gradeOrder(request: Extract<WorkRequest, { operation: 'wor
     const loweredBar = verdicts.find(row => row.id === AMENDMENTS_HOLD && row.verdict !== 'met')
     await store.update(order.id, async existing => {
         if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while it was graded; rerun work grade`)
-        // Only a grader's unmet verdict spends an attempt; a failed check or a refusal may be cockpit's own bug.
-        return { record: { ...existing, state: passed ? 'graded' : 'accepted', attempts: existing.attempts + (verdicts.some(row => row.verdict !== 'met') ? 1 : 0), grade,
+        // Only a verdict the grader reached spends an attempt; a failed check or a refusal may be cockpit's own bug, and an
+        // independent grader's met read as unclear for its quote says nothing about the work.
+        const spends = verdicts.some(row => row.verdict !== 'met' && !(mode === 'independent' && row.unquoted))
+        return { record: { ...existing, state: passed ? 'graded' : 'accepted', attempts: existing.attempts + (spends ? 1 : 0), grade,
             ...loweredBar ? { amendmentsFailedReview: { at: grade.at, note: loweredBar.note } } : {},
             ...mode === 'independent' && !passed ? { evaluatorFailed: { at: grade.at } } : {},
             ...checks.length ? { checks: { at: now(), digest: record.accepted.digest, results: [...checks] } } : {} }, value: undefined }

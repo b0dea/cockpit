@@ -15,7 +15,8 @@ export interface GradingSubject {
     readonly changes: readonly ChangedFile[]
     readonly outOfScope: readonly string[]
 }
-export type Verdict = Readonly<{ id: string; verdict: 'met' | 'unmet' | 'unclear'; note: string }>
+// `unquoted` marks a grader's met that cockpit read as unclear because its quote was not found exactly once.
+export type Verdict = Readonly<{ id: string; verdict: 'met' | 'unmet' | 'unclear'; note: string; unquoted?: true }>
 
 export function gradingDocument(instruction: string, repositoryRoot: string, subject: GradingSubject): Readonly<Record<string, unknown>> {
     return {
@@ -72,7 +73,7 @@ export function readGradingAnswer(answer: Readonly<Record<string, unknown>>, sub
         const unsupported = row.evidence.length === 0 ? 'cites no evidence'
             : row.evidence.find(item => { const textCited = cited(item.source); return textCited === undefined || !quoted(textCited, item.quote) })
         return unsupported === undefined ? { id: row.id, verdict: 'met' as const, note: row.note }
-            : { id: row.id, verdict: 'unclear' as const, note: `the grader said met but ${typeof unsupported === 'string' ? unsupported
+            : { id: row.id, verdict: 'unclear' as const, unquoted: true as const, note: `the grader said met but ${typeof unsupported === 'string' ? unsupported
                 : `its quote from ${unsupported.source} is not found exactly once there`}: ${row.note}` }
     }) }
 }
