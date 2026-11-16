@@ -11,7 +11,6 @@ import { mounted, type CockpitConfig } from '../schema.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
 import {
     issueLifecycleRunContext,
-    noticeLifecycleRun,
     type LifecycleRunContext,
     type ReadinessRefusal,
     type RuntimeReadinessPurpose,

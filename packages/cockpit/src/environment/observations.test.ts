@@ -1,10 +1,9 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 import { createServer } from 'node:net'
-import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
 import { execFileSync, spawn } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ENVIRONMENT_CODES, type CheckoutId, type CockpitId, type EnvironmentObservation, type HolderId, type StackId } from './contract.js'
@@ -17,12 +16,11 @@ import {
     resolveObservationPostures,
     validateObservationDeclarations,
 } from './observations.js'
-import { observeConfiguration, selectStateRoot, transactState } from './state.js'
-import { coordinationStateRecord, observeClaimState } from './claims.js'
-import { leasePortFamily, observePortFamily } from './ports.js'
+import { observeConfiguration, selectStateRoot } from './state.js'
+import { observeClaimState } from './claims.js'
+import { leasePortFamily } from './ports.js'
 import { observeEnvironmentKeys, observeSiblingPresence } from './templates.js'
-import { createRuntimeAdapter, observeRuntimeExecution } from './runtime.js'
-import { resolveGitExecutable, resolvedExecutable } from './executable.js'
+import { resolveGitExecutable } from './executable.js'
 import { createGitObservationStep, gitWorkingTreeDirty, observeGit } from './git-observation.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { observeStateSeed, recordLifecycleSeeded, recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage.js'
@@ -39,7 +37,6 @@ const stackId = stackFor('first')
 const otherStackId = stackFor('second')
 const checkoutId = `checkout:${'8'.repeat(64)}` as CheckoutId
 const firstHolder = `holder:${'9'.repeat(64)}:session` as HolderId
-const secondHolder = `holder:${'a'.repeat(64)}:session` as HolderId
 const now = new Date().toISOString()
 const validConfigSource = `[cockpit]\nname = "fixture"\n\n[[sibling]]\nslug = "service"\ndir = "service"\nremote = "https://example.invalid/service.git"\nmount = "always"\nacquire = "manual"\nvar = "SERVICE_DIR"\npurpose = "synthetic service"\n\n[ports.bases]\nWEB = 3000\n\n[environment]\naddressing = "hostname"\nauthentication = "real"\nposture_requirements = [{ requirement = "synthetic-route", addressing = "hostname", authentication = "real" }]\n`
 const revision = createHash('sha256').update(validConfigSource).digest('hex')
@@ -397,83 +394,6 @@ describe('observation contract and applicability', () => {
         })).rejects.toThrow('configuration source')
     })
 
-    it('rejects runtime health derived from a caller-authored plan and outcome', () => {
-        expect(() => observeRuntimeExecution({
-            plan: { steps: [] }, outcome: {}, stackId, coldStartLimitMillis: 1,
-        } as never)).toThrow('runtime execution evidence is not authentic')
-    })
-
-    it('projects tri-state healthy runtime and mount health only from an executed runtime plan', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'cockpit-runtime-observation-'))
-        temporaryPaths.push(root)
-        const dockerPath = join(root, 'docker')
-        const script = `#!/bin/sh\nprintf 'services:\\n  app:\\n    volumes:\\n      - /tmp/source:/workspace\\n'\n`
-        const composeSource = 'services: {}\n'
-        const composePath = join(root, 'compose.yml')
-        await writeFile(dockerPath, script)
-        await chmod(dockerPath, 0o755)
-        await writeFile(composePath, composeSource)
-        const executable = resolvedExecutable({
-            canonicalPath: dockerPath, invocationPath: dockerPath,
-            sha256: createHash('sha256').update(script).digest('hex'), executionMode: 'verified-path',
-        })!
-        const planned = createRuntimeAdapter({
-            runtime: { name: 'docker', version: '27.1.2', executableSha256: executable.sha256 }, composeVersion: '2.39.2',
-            executable, operation: 'validate', cwd: root, stackId, coldStartLimitMillis: 10_000, expectedMountSources: ['/tmp/source'],
-            composeFiles: [{ reference: 'compose.yml', canonicalPath: composePath, source: composeSource, sha256: createHash('sha256').update(composeSource).digest('hex') }],
-            projectName: 'synthetic-stack', env: {}, ports: [], labels: {}, timeoutMs: 10_000,
-        })
-        expect(planned.kind).toBe('preview')
-        if (planned.kind !== 'preview') return
-        const evaluationContext = await context(stackId, 'always', validConfigSource, new Date().toISOString())
-        const outcome = await executeProbe(planned.plan.steps[0]!)
-        const values = observeRuntimeExecution({ plan: planned.plan, outcome })
-        expect(values.map(({ observed }) => observed)).toEqual([
-            expect.objectContaining({ state: 'available', value: true }),
-            expect.objectContaining({ state: 'available', value: true }),
-        ])
-        const preflight = aggregateObservations([values], evaluationContext)
-        for (const projection of [preflight, projectDoctor(preflight)]) {
-            expect(projection.checks.filter(({ owner, code }) => values.some((value) => value.owner === owner && value.code === code)))
-                .toEqual(expect.arrayContaining(values.map(({ owner, code }) => expect.objectContaining({ owner, code, verdict: 'pass', measured: true }))))
-        }
-    })
-
-    it('keeps explicit runtime failure distinct from dependent transport unavailability', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'cockpit-runtime-failure-observation-'))
-        temporaryPaths.push(root)
-        const dockerPath = join(root, 'docker')
-        const script = '#!/bin/sh\nexit 9\n'
-        const composeSource = 'services: {}\n'
-        const composePath = join(root, 'compose.yml')
-        await writeFile(dockerPath, script)
-        await chmod(dockerPath, 0o755)
-        await writeFile(composePath, composeSource)
-        const executable = resolvedExecutable({
-            canonicalPath: dockerPath, invocationPath: dockerPath,
-            sha256: createHash('sha256').update(script).digest('hex'), executionMode: 'verified-path',
-        })!
-        const planned = createRuntimeAdapter({
-            runtime: { name: 'docker', version: '27.1.2', executableSha256: executable.sha256 }, composeVersion: '2.39.2',
-            executable, operation: 'validate', cwd: root, stackId, coldStartLimitMillis: 10_000, expectedMountSources: ['/tmp/source'],
-            composeFiles: [{ reference: 'compose.yml', canonicalPath: composePath, source: composeSource, sha256: createHash('sha256').update(composeSource).digest('hex') }],
-            projectName: 'synthetic-stack', env: {}, ports: [], labels: {}, timeoutMs: 10_000,
-        })
-        expect(planned.kind).toBe('preview')
-        if (planned.kind !== 'preview') return
-        const outcome = await executeProbe(planned.plan.steps[0]!)
-        const values = observeRuntimeExecution({ plan: planned.plan, outcome })
-        const preflight = aggregateObservations([values], await context(stackId, 'always', validConfigSource, new Date().toISOString()))
-        for (const projection of [preflight, projectDoctor(preflight)]) {
-            expect(projection.checks.find(({ code }) => code === ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE))
-                .toMatchObject({ owner: 'runtime-planning', verdict: 'fail', measured: false })
-            const unknown = projection.checks.find(({ code }) => code === ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE)
-            expect(unknown).toMatchObject({ owner: 'runtime-planning', verdict: 'unavailable' })
-            expect(unknown).not.toHaveProperty('measured')
-        }
-        expect(preflight.verdict).not.toBe('pass')
-    })
-
     it('has local producers for configuration and sibling checks', async () => {
         const siblingRoot = await mkdtemp(join(tmpdir(), 'cockpit-siblings-'))
         temporaryPaths.push(siblingRoot)
@@ -504,22 +424,17 @@ describe('observation contract and applicability', () => {
         })
     })
 
-    it('collects claim, port, and seed state through their owning read paths', async () => {
+    it('collects claim and seed state through their owning read paths', async () => {
         const state = await namespace()
         const items = await Promise.all([
             observeClaimState({ namespace: state, stackId, observedAt: now }),
-            observePortFamily({ namespace: state, stackId, observedAt: now }),
             observeStateSeed({ namespace: state, stackId, observedAt: now }),
         ])
         expect(items.map(({ code }) => code)).toEqual([
             ENVIRONMENT_CODES.CLAIM_STATE_UNHEALTHY,
-            ENVIRONMENT_CODES.PORT_FAMILY_COLLISION,
             ENVIRONMENT_CODES.STATE_UNSEEDED,
         ])
-        const evaluationContext = await context()
-        const healthItems = items.filter(({ code }) => code !== ENVIRONMENT_CODES.PORT_FAMILY_COLLISION)
-        expect(() => aggregateObservations([[items[1]!]], evaluationContext)).toThrow('no declared producer authority')
-        expect(aggregateObservations([healthItems], await context()).checks.filter(({ code }) => healthItems.some((item) => item.code === code)).map(({ verdict }) => verdict))
+        expect(aggregateObservations([items], await context()).checks.filter(({ code }) => items.some((item) => item.code === code)).map(({ verdict }) => verdict))
             .toEqual(['not-applicable', 'not-applicable'])
     })
 
@@ -543,43 +458,6 @@ describe('observation contract and applicability', () => {
             ENVIRONMENT_CODES.PORT_FAMILY_COLLISION,
             ENVIRONMENT_CODES.RUNNING_CHECKOUT_MISMATCH,
         ]) expect(checks.find((check) => check.code === code)?.verdict).toBe('unavailable')
-    })
-
-    it('keeps empty acquisition listener evidence separate from current runtime health', async () => {
-        const state = await namespace()
-        const leaseEvidence = await leasePortFamilyFixture({
-            namespace: state, stackId, holderId: firstHolder, checkoutId,
-            config: { step: 100, count: 2, bases: { WEB: 3000 } }, now, listenerTimeoutMs: 100,
-            listenerEvidence: [
-                { ports: [3000], observation: { state: 'available', value: [], observedAt: now, producer: 'synthetic-listener-probe' } },
-                { ports: [3100], observation: { state: 'available', value: [], observedAt: now, producer: 'synthetic-listener-probe' } },
-            ],
-        })
-        expect(leaseEvidence.kind).toBe('complete')
-        if (leaseEvidence.kind !== 'complete') return
-        expect((await observePortFamily({ namespace: state, stackId, observedAt: now, leaseEvidence })).observed)
-            .toEqual({ state: 'available', value: true, observedAt: now })
-        for (const transition of [recordLifecycleStarted, recordLifecycleSeeded]) {
-            expect((await transition({ namespace: state, stackId, holderId: firstHolder, observedAt: now })).kind).toBe('complete')
-        }
-        const stage = await resolveLifecycleStage({ namespace: state, stackId, observedAt: now })
-        if (stage.kind !== 'complete') throw new Error('empty listener lifecycle authority was refused')
-        const authorities = (await context()).authorities
-        const absence = await observePortFamily({ namespace: state, stackId, observedAt: now, leaseEvidence })
-        expect(() => aggregateObservations([[absence]], { authorities, stages: [stage.authority] }))
-            .toThrow('no declared producer authority')
-        expect((await observePortFamily({ namespace: state, stackId, observedAt: now, leaseEvidence: { ...leaseEvidence } })).observed.state)
-            .toBe('unavailable')
-
-        const written = await transactState(state, state.paths.coordination(otherStackId), { ownerId: secondHolder, contentionTimeoutMs: 2_000 }, (current) =>
-            coordinationStateRecord(state, otherStackId, current, now, {
-                holders: [{ holderId: secondHolder, checkoutId, claimedAt: now }],
-                lease: { offset: 0, ports: { WEB: 3000 }, released: false, declaration: { step: 100, count: 2, bases: { WEB: 3000 } } },
-                lastReleasedHolder: null,
-            }))
-        expect(written.kind).toBe('complete')
-        expect((await observePortFamily({ namespace: state, stackId, observedAt: now, leaseEvidence })).observed)
-            .toEqual({ state: 'available', value: false, observedAt: now })
     })
 
     it('rejects forged-empty listener evidence when a loopback port is occupied', async () => {

@@ -24,7 +24,6 @@ import {
     isCanonicalTimestamp,
     type EnvironmentCode,
     type EnvironmentDiagnostic,
-    type EnvironmentObservation,
     type HolderId,
     type Observation,
     type StackId,
@@ -43,7 +42,6 @@ import {
     type StateTransactionAbort,
 } from './state.js'
 
-const OWNER = 'environment-port-coordination'
 
 const issuedLeaseResults = new WeakMap<object, {
     readonly result: Extract<LeasePortFamilyResult, { kind: 'complete' }>
@@ -70,57 +68,6 @@ const issuedRetainedPortFamilies = new WeakMap<object, {
     readonly holderIds: readonly HolderId[]
 }>()
 const availableRetainedPortFamilies = new WeakSet<object>()
-
-export async function observePortFamily(input: {
-    readonly namespace: StateNamespace
-    readonly stackId: StackId
-    readonly observedAt: string
-    readonly leaseEvidence?: LeasePortFamilyResult
-}): Promise<EnvironmentObservation> {
-    const namespace = authenticateStateNamespace(snapshotStateNamespace(input.namespace))
-    if (!namespace || !/^stack:[a-f0-9]{64}$/.test(input.stackId) || !isCanonicalTimestamp(input.observedAt)) {
-        throw new RefusalError('port observation input is malformed')
-    }
-    const inventory = await readRootPortInventory(namespace)
-    const refusal = inventory.kind === 'refusal' ? inventory.diagnostics[0] : undefined
-    const cockpitId = namespace.paths.coordination(input.stackId).cockpitId
-    const record = inventory.kind === 'complete' ? inventory.value.find((item) => item.cockpitId === cockpitId && item.stackId === input.stackId)?.record : undefined
-    const occupied = new Set<number>()
-    let collision = false
-    if (inventory.kind === 'complete') {
-        for (const item of inventory.value) {
-            if (!item.record.lease || item.record.lease.released) continue
-            for (const port of Object.values(item.record.lease.ports)) {
-                if (occupied.has(port)) collision = true
-                occupied.add(port)
-            }
-        }
-    }
-    const leaseAuthority = input.leaseEvidence && issuedLeaseResults.get(input.leaseEvidence)
-    const listenerEvidenceCurrent = input.leaseEvidence?.kind === 'complete'
-        && leaseAuthority?.result.lease.stackId === input.stackId && leaseAuthority.observedAt === input.observedAt
-        && record?.lease !== null && record?.lease !== undefined && !record.lease.released
-        && sameValues(record.lease.ports, input.leaseEvidence.lease.ports)
-    return {
-        code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION,
-        owner: OWNER,
-        stackId: input.stackId,
-        source: namespace.paths.coordination(input.stackId).path,
-        observed: refusal
-            ? { state: 'failed', reason: refusal.message, observedAt: input.observedAt }
-            : collision
-                ? { state: 'available', value: false, observedAt: input.observedAt }
-                : listenerEvidenceCurrent
-                    ? { state: 'available', value: true, observedAt: input.observedAt }
-                    : { state: 'unavailable', reason: record?.lease && !record.lease.released
-                        ? 'current host-listener evidence is unavailable'
-                        : 'the stack has no active port-family lease', observedAt: input.observedAt },
-        expectation: { kind: 'equal', value: true },
-        applicability: { state: 'required', posture: 'environment' },
-        freshness: { state: 'current' },
-        remedy: 'lease the declared port family before starting the stack',
-    }
-}
 
 const stackIdentity = /^stack:[a-f0-9]{64}$/
 const holderIdentity = /^holder:[a-f0-9]{64}:session$/

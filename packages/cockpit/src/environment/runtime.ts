@@ -20,7 +20,6 @@ import {
     type ExecutionFence,
     type ExecutionPlan,
     type ExecutionStep,
-    type JsonSnapshot,
     type RefusalCode,
     type CockpitId,
     type StackId,
@@ -80,91 +79,6 @@ interface RuntimeObservationContract {
     readonly portLeaseProjection?: PortLeaseProjection
 }
 const issuedRuntimePlans = new WeakMap<object, RuntimeObservationContract>()
-
-export function observeRuntimeExecution(input: {
-    readonly plan: ExecutionPlan
-    readonly outcome: ExecuteProbeOutcome
-}): readonly EnvironmentObservation[] {
-    let plan: ExecutionPlan
-    let suppliedOutcome: ExecuteProbeOutcome
-    let owned: JsonSnapshot | undefined
-    try {
-        plan = input.plan
-        suppliedOutcome = input.outcome
-        owned = snapshotJson(issuedRuntimePlans.get(plan))
-    } catch { throw new RefusalError('runtime execution evidence is not authentic') }
-    const values = owned && typeof owned === 'object' && !Array.isArray(owned) ? owned as Readonly<Record<string, JsonSnapshot>> : undefined
-    const contract = issuedRuntimePlans.get(plan)
-    const step = plan?.steps?.[0]
-    const outcome = step ? authenticatedExecutionOutcome(suppliedOutcome, step) : undefined
-    if (!contract || !step || !outcome || typeof values?.stackId !== 'string' || !/^stack:[a-f0-9]{64}$/.test(values.stackId)
-        || !Number.isSafeInteger(values.coldStartLimitMillis) || (values.coldStartLimitMillis as number) < 1) {
-        throw new RefusalError('runtime execution evidence is not authentic')
-    }
-    if (!Array.isArray(values.expectedMountSources) || values.expectedMountSources.length > 4_096
-        || new Set(values.expectedMountSources).size !== values.expectedMountSources.length
-        || values.expectedMountSources.some((path) => typeof path !== 'string' || !isAbsolute(path) || normalize(path) !== path || path.includes('\0'))) {
-        throw new RefusalError('runtime mount expectation is malformed')
-    }
-    const stackId = values.stackId as StackId
-    const coldStartLimitMillis = values.coldStartLimitMillis as number
-    const expectedMountSources = values.expectedMountSources as readonly string[]
-    const observedAt = outcome.receipt?.finishedAt
-    if (!observedAt || !isCanonicalTimestamp(observedAt)) throw new RefusalError('runtime execution evidence is not authentic')
-    const runtimeAvailable = outcome.kind === 'complete'
-    const observations: EnvironmentObservation[] = [{
-        code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, owner: OWNER, stackId, source: step.argv0,
-        observed: { state: 'available', value: runtimeAvailable, observedAt }, expectation: { kind: 'equal', value: true },
-        applicability: { state: 'required', posture: 'mounted' }, freshness: { state: 'current' }, remedy: 'restore the declared runtime executable and retry the bounded probe',
-    }]
-    let mountObserved: EnvironmentObservation['observed']
-    if (contract.operation !== 'validate' || outcome.kind !== 'complete') {
-        mountObserved = { state: 'unavailable', reason: 'mount evidence requires a successful runtime validation plan', observedAt }
-    } else {
-        let sources: readonly string[] | undefined
-        let mountCause = ''
-        try {
-            const source = new TextDecoder('utf-8', { fatal: true }).decode(outcome.stdout)
-            const parsed = parseDocument(source).toJS() as { services?: Record<string, { volumes?: unknown[] }> }
-            const values: string[] = []
-            if (!parsed || typeof parsed !== 'object' || !parsed.services || typeof parsed.services !== 'object'
-                || Object.keys(parsed.services).length > 4_096) throw new RefusalError('invalid services')
-            for (const service of Object.values(parsed.services)) {
-                if (!service || typeof service !== 'object' || !Array.isArray(service.volumes) || service.volumes.length > 4_096) continue
-                for (const volume of service.volumes) {
-                    if (typeof volume === 'string') {
-                        const source = volume.split(':', 1)[0]!
-                        if (isAbsolute(source) && normalize(source) === source && !source.includes('\0')) values.push(source)
-                    }
-                    else if (volume && typeof volume === 'object' && (volume as { type?: unknown }).type === 'bind'
-                        && typeof (volume as { source?: unknown }).source === 'string') values.push((volume as { source: string }).source)
-                }
-            }
-            sources = [...new Set(values)].sort()
-        } catch (error) { mountCause = `: ${errorCause(error)}` }
-        mountObserved = sources
-            ? { state: 'available', value: mountSourcesMatch(sources, expectedMountSources), observedAt }
-            : { state: 'failed', reason: `runtime mount output is malformed or unreadable${mountCause}`, observedAt }
-    }
-    observations.push({
-        code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, owner: OWNER, stackId, source: step.id,
-        observed: mountObserved, expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'mounted' },
-        freshness: { state: 'current' }, remedy: 'restore the declared checkout mount sources',
-    })
-    if (contract.operation === 'up') {
-        const startedAt = outcome.receipt?.startedAt
-        const duration = startedAt ? Date.parse(observedAt) - Date.parse(startedAt) : Number.NaN
-        observations.push({
-            code: ENVIRONMENT_CODES.MACHINE_COLD_START_EXCEEDED, owner: OWNER, stackId, source: step.id,
-            observed: Number.isSafeInteger(duration) && duration >= 0
-                ? { state: 'available', value: duration, observedAt }
-                : { state: 'failed', reason: 'runtime receipt timestamps are incoherent', observedAt },
-            expectation: { kind: 'maximum', value: coldStartLimitMillis }, applicability: { state: 'required', posture: 'environment' },
-            freshness: { state: 'current' }, remedy: 'restore the declared cold-start budget',
-        })
-    }
-    return observations
-}
 
 type RuntimeOperation = 'validate' | 'up' | 'down'
 
@@ -1444,11 +1358,6 @@ function parseTopology(stdout: Buffer, stackId: StackId, configSha256: string, a
 
 /** Declared mount sources no service binds inside, and bind sources inside no declared one. */
 export type RuntimeMountMismatch = Readonly<{ missing: readonly string[]; unexpected: readonly string[] }>
-
-function mountSourcesMatch(binds: readonly string[], declared: readonly string[]): boolean {
-    const { missing, unexpected } = compareBindSources(binds, declared)
-    return missing.length === 0 && unexpected.length === 0
-}
 
 function admitRuntimeTopology(contract: TopologyPlanContract, step: ExecutionStep, outcome: ExecuteProbeOutcome): RuntimeTopologyObservation {
     const unavailable = () => unavailableTopology()

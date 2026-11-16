@@ -53,10 +53,6 @@ export interface LifecycleRunContext {
     readonly holderId: HolderId
     readonly ports: PortFamilyConfig
     readonly entrypointDerivatives: readonly EntrypointDerivative[]
-    // Warnings an owner raised while a run held this context, such as an interrupted restore released
-    // with its data possibly half applied. The command's result carries them whatever its outcome:
-    // dropping one left a person working on partial data with nobody told.
-    readonly notices: EnvironmentDiagnostic[]
 }
 
 export interface LifecycleRunContextInput {
@@ -228,10 +224,6 @@ export type SessionCommandResult =
     }> }>
     | Readonly<{ kind: 'refusal'; status: number; diagnostics: readonly EnvironmentDiagnostic[]; result: null }>
 
-export function noticeLifecycleRun(context: LifecycleRunContext, diagnostic: EnvironmentDiagnostic): void {
-    context.notices.push({ ...diagnostic })
-}
-
 // A lock taken over from a killed command is said once: what that command was doing may be half done.
 export function stateLockReclaimed(reclaim: Readonly<{ lock: string; holder: string; reason: string }>) {
     return {
@@ -247,7 +239,7 @@ export function withLifecycleRunNotices<Result extends { readonly diagnostics: r
     context: LifecycleRunContext,
     result: Result,
 ): Result {
-    const notices = [...context.notices.splice(0), ...takeStateLockReclaims(context.namespace).map(stateLockReclaimed)]
+    const notices = takeStateLockReclaims(context.namespace).map(stateLockReclaimed)
     return notices.length > 0 ? { ...result, diagnostics: [...result.diagnostics, ...notices] } : result
 }
 
@@ -326,7 +318,6 @@ export function issueLifecycleRunContext(input: LifecycleRunContextInput): Envir
                 bases: { ...loaded.config.ports.bases },
             },
             entrypointDerivatives: loaded.config.environment.entrypoint_derivatives.map((value) => ({ ...value })),
-            notices: [],
         }
         return { kind: 'complete', status: 0, diagnostics: [], result: context }
     } catch (error) {
