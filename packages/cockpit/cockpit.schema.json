@@ -1247,7 +1247,7 @@
                   "minLength": 1,
                   "maxLength": 4096
                 },
-                "description": "Command to run, as an argument list."
+                "description": "Command to run, as an argument list. It gets PATH, HOME, USER, the locale and the leased port variables, not the caller's other variables; set a value it needs at its start, as [\"env\", \"NAME=value\", ...]."
               },
               "requires_stack": {
                 "type": "boolean",

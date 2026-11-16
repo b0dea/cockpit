@@ -675,7 +675,7 @@ export const Testing = z.object({
         .describe('Paths and globs, relative to each checkout, that hold tests. Grading fails an order that deletes, skips or loosens what they match. Defaults to common layouts.'),
     stages: z.array(z.object({
         id: TestingName.describe('Name of the stage.'),
-        command: TestingCommand.describe('Command to run, as an argument list.'),
+        command: TestingCommand.describe('Command to run, as an argument list. It gets PATH, HOME, USER, the locale and the leased port variables, not the caller\'s other variables; set a value it needs at its start, as ["env", "NAME=value", ...].'),
         requires_stack: z.boolean().describe('True when the stage needs the stack running. Every stage gets the leased port variables when this checkout holds a stack, whatever this says.'),
         timeout_seconds: z.number().int().min(1).max(TESTING_STAGE_TIMEOUT_MAX_SECONDS).default(TESTING_STAGE_TIMEOUT_DEFAULT_SECONDS)
             .describe('Seconds the stage may run before it is stopped and the gate reports DEGRADED.'),
