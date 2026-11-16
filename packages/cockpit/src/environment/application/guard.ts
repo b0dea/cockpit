@@ -638,10 +638,13 @@ export async function runGuardEvaluationApplication(
                     // External grants never follow one.
                     if (managedRoot && ['read', 'search', 'unignored-search'].includes(request.operation)) {
                         inspected.set(cursor, status)
-                        const target = realpathSync(path)
-                        const leads = allowed(target) ? lstatSync(target) : undefined
-                        if (leads && (leads.isFile() || request.operation !== 'read' && leads.isDirectory())) {
-                            readLinks.set(path, target)
+                        // The link is resolved, not the whole path: a name below it that does not exist, as a
+                        // glob's pattern does not, is judged as missing where the link leads.
+                        const leadsTo = realpathSync(cursor)
+                        const target = join(leadsTo, relative(cursor, path))
+                        const leads = allowed(target) ? lstatIfPresentSync(target) ?? 'missing' : undefined
+                        if (leads === 'missing' || leads && (leads.isFile() || request.operation !== 'read' && leads.isDirectory())) {
+                            readLinks.set(cursor, leadsTo)
                             const evidence = inspect({ ...request, path: target })
                             if (evidence && typeof evidence === 'object') return { ...evidence, path, canonicalPath: target }
                         }
@@ -726,7 +729,7 @@ export async function runGuardEvaluationApplication(
             if (before.dev !== after.dev || before.ino !== after.ino || before.mode !== after.mode
                 || before.isFile() && (before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs || before.size !== after.size)) return unavailable('Guard filesystem authority changed during evaluation.')
         }
-        for (const [path, target] of readLinks) if (realpathSync(path) !== target) return unavailable('Guard read link target changed during evaluation.')
+        for (const [link, target] of readLinks) if (realpathSync(link) !== target) return unavailable('Guard read link target changed during evaluation.')
         const currentPublication = await readPublication()
         for (const [path, hash] of [[manifestPath, manifestRead.sha256], [GUARD_LOCAL_PATHS.identity, publication.get(GUARD_LOCAL_PATHS.identity)!.sha256], ...published] as const) {
             if (currentPublication.get(path)!.sha256 !== hash) return unavailable('Guard publication changed during evaluation.')
