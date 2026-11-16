@@ -285,7 +285,8 @@ that knows about them.
 Every write to these records holds the state lock, `locks/state.lock` under the cockpit's folder. A
 command that finds another one holding it waits a few seconds before refusing with `STATE_LOCKED`,
 which names the holder's process and command. A command killed while holding it leaves the lock
-behind; the next command takes it over when the holder's process is gone from this host and reports
+behind; the next command takes it over when the holder's process is gone from this host, or when
+the lock directory has stood for seconds without an owner record, and reports
 `STATE_LOCK_RECLAIMED`. Cockpit never takes over a lock written on another host or from inside a
 container or sandbox, or one an earlier cockpit release wrote, since it cannot see that process: once
 no cockpit command runs, remove the lock directory the refusal names.

@@ -292,7 +292,7 @@ const JUSTIFIED_EMPTY_CATCHES: readonly (readonly [site: string, why: string])[]
     ['packages/cockpit/src/environment/executable.ts#digestRegularFile', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/environment/posture-observation.ts#currentConfigurationRevision', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/environment/setup-observation.ts#stableFile', CLOSE_AFTER_DECISION],
-    ['packages/cockpit/src/environment/state.ts#acquireLock', 'a partly created lock is authority evidence that must survive for recovery; the acquisition error is rethrown'],
+    ['packages/cockpit/src/environment/state.ts#acquireLock', 'a lock directory left without an owner record is taken over by the next command; the acquisition error is rethrown'],
     ['packages/cockpit/src/generated-environment/transaction.ts#admitPlan', PARSE_REFUSED_NEXT],
     ['packages/cockpit/src/generated-environment/transaction.ts#digestFile', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/generated-environment/transaction.ts#recordRecovery', CLOSE_AFTER_DECISION],
@@ -373,7 +373,6 @@ const ENVIRONMENT_IDENTITY_TABLES: readonly (readonly [site: string, why: string
         'issuedBootstrapRestarts', 'issuedNamespacePaths', 'issuedNamespaces', 'issuedStatePublications']
         .map((name) => [`${ENV}state.ts#${name}`, ISSUED] as const),
     [`${ENV}state.ts#issuedScopedLocks`, 'the state lock\'s handles, which go with the state lock'],
-    [`${ENV}state.ts#unwaitableRefusals`, 'marks a state lock refusal that waiting cannot clear, private to the state lock'],
 ]
 
 /**

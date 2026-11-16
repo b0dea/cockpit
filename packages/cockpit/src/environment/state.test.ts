@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { chmodSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
-import { chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rename, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
 import { dirname, join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
@@ -40,26 +40,12 @@ import { executeProbe } from '../environment-exec/execute.js'
 
 const executeFile = promisify(execFile)
 
-// Acquisition re-checks for a release quarantine right after creating its lock directory; no
-// public seam opens between those two steps, so the race is staged inside mkdir itself.
-const lockAcquisitionControl = vi.hoisted(() => ({
-    afterLockCreated: undefined as undefined | ((lockPath: string) => Promise<void>),
-}))
 // A sandbox that keeps the home directory read-only (Codex's workspace-write sandbox) denies the
 // write probe with EPERM although the mode bits allow it; chmod cannot stage that.
 const sandboxDenied = vi.hoisted(() => ({ path: '' }))
 
 vi.mock('node:fs/promises', async (importOriginal) => {
     const actual = await importOriginal<typeof import('node:fs/promises')>()
-    const mkdir = (async (...args: Parameters<typeof actual.mkdir>) => {
-        const created = await actual.mkdir(...args)
-        const hook = lockAcquisitionControl.afterLockCreated
-        if (hook && String(args[0]).endsWith('/state.lock')) {
-            lockAcquisitionControl.afterLockCreated = undefined
-            await hook(String(args[0]))
-        }
-        return created
-    }) as typeof actual.mkdir
     const access = (async (...args: Parameters<typeof actual.access>) => {
         if (sandboxDenied.path && args[0] === sandboxDenied.path) {
             throw Object.assign(new Error(`EPERM: operation not permitted, access '${sandboxDenied.path}'`),
@@ -67,13 +53,12 @@ vi.mock('node:fs/promises', async (importOriginal) => {
         }
         return actual.access(...args)
     }) as typeof actual.access
-    return { ...actual, mkdir, access, default: { ...actual, mkdir, access } }
+    return { ...actual, access, default: { ...actual, access } }
 })
 
 const temporaryPaths: string[] = []
 
 afterEach(async () => {
-    lockAcquisitionControl.afterLockCreated = undefined
     sandboxDenied.path = ''
     await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })))
 })
@@ -1103,25 +1088,6 @@ describe('transactState', () => {
         expect(JSON.stringify(result)).not.toContain('CANARY_SECRET_5d1e')
     })
 
-    it('names a lock directory it created but could not remove when a release quarantine races acquisition', async () => {
-        const { namespace, address } = await selectedNamespace()
-        const lockPath = namespace.paths.stateLock
-        const quarantine = join(dirname(lockPath), '.state.lock.release-synthetic')
-        lockAcquisitionControl.afterLockCreated = async (created) => {
-            await mkdir(quarantine, { mode: 0o700 })
-            await writeFile(join(created, 'unexpected-entry'), 'occupied')
-        }
-        const update = vi.fn(() => lifecycleRecord(0, 1))
-
-        const result = await transactState(namespace, address, { ownerId: holderA }, update)
-
-        expect(result).toMatchObject({
-            kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED, target: quarantine,
-            message: expect.stringContaining(`lock directory this acquisition created at ${lockPath} could not be removed`),
-        })
-        expect(update).not.toHaveBeenCalled()
-    })
-
     it('rejects a transaction address kind outside the current namespace', async () => {
         const { namespace, address } = await selectedNamespace()
         const unsupported = { ...address, kind: 'unsupported' } as unknown as StateAddress
@@ -1368,9 +1334,7 @@ describe('transactState', () => {
         try {
             result = await transactState(namespace, address, {
                 ownerId: holderA,
-                beforeRelease: async () => {
-                    await writeFile(join(namespace.paths.stateLock, 'unexpected-entry'), 'occupied')
-                },
+                beforeRelease: async () => { throw new Error('injected release failure') },
             }, () => lifecycleRecord(0, 9))
         } finally {
             sync?.restore()
@@ -1380,74 +1344,14 @@ describe('transactState', () => {
             kind: 'indeterminate',
             code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
             message: failPublicationSync
-                ? 'state bytes were renamed but parent directory durability could not be confirmed; the state lock also could not be released safely'
-                : 'state bytes were committed but the state lock could not be released safely',
+                ? 'state bytes were renamed but parent directory durability could not be confirmed; the state lock also could not be released: Error'
+                : 'state bytes were committed but the state lock could not be released: Error',
             target: address.path,
-            recovery: `${publicationRecovery}; inspect the quarantined lock holder and restore or reclaim it using positive owner evidence`,
+            recovery: `${publicationRecovery}; retry once this command has exited; cockpit takes over a lock whose holder is gone`,
             value: lifecycleRecord(0, 9),
         })
-        const quarantines = (await readdir(dirname(namespace.paths.stateLock)))
-            .filter((name) => name.startsWith('.state.lock.release-'))
-        expect(quarantines).toHaveLength(1)
-        expect(await readFile(join(dirname(namespace.paths.stateLock), quarantines[0]!, 'owner.json'), 'utf8'))
-            .toContain(holderA)
+        expect(await readFile(join(namespace.paths.stateLock, 'owner.json'), 'utf8')).toContain(holderA)
         expect(await readState(address)).toMatchObject({ kind: 'complete', value: lifecycleRecord(0, 9) })
-    })
-
-    it.each([2, 3, 4, 5, 6])('preserves exact owner evidence when release directory sync %i fails', async (failedSync) => {
-        const { namespace, address } = await selectedNamespace()
-        const releaseRoot = dirname(namespace.paths.stateLock)
-        await mkdir(releaseRoot, { recursive: true })
-        let tombstoneIdentity: { readonly dev: number; readonly ino: number } | undefined
-        const releaseRootCall = new Map([[2, 1], [3, 2], [5, 3], [6, 4]]).get(failedSync)
-        const sync = await interceptDirectorySync(
-            releaseRoot,
-            (call) => {
-                if (call === (releaseRootCall ?? 1)) throw new Error(`injected sync failure ${failedSync}`)
-            },
-            failedSync === 4 ? () => tombstoneIdentity : undefined,
-        )
-        let result
-        try {
-            result = await transactState(namespace, address, {
-                ownerId: holderA,
-                ...(failedSync === 4 ? { beforeRelease: async () => {
-                    const handle = await open(namespace.paths.stateLock, 'r')
-                    try {
-                        const identity = await handle.stat()
-                        tombstoneIdentity = { dev: identity.dev, ino: identity.ino }
-                    } finally {
-                        await handle.close()
-                    }
-                } } : {}),
-            }, () => lifecycleRecord(0, failedSync))
-        } finally {
-            sync.restore()
-        }
-
-        expect(result).toMatchObject({
-            kind: 'indeterminate', code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
-            value: lifecycleRecord(0, failedSync),
-        })
-        const locksRoot = dirname(namespace.paths.stateLock)
-        const residues = (await readdir(locksRoot)).filter((name) => name.startsWith('.state.lock.release-'))
-        expect(residues.length).toBeGreaterThan(0)
-        const evidence: string[] = []
-        for (const residue of residues) {
-            const path = join(locksRoot, residue)
-            try {
-                evidence.push(await readFile(path, 'utf8'))
-            } catch {
-                try {
-                    evidence.push(await readFile(join(path, 'owner.json'), 'utf8'))
-                } catch {
-                    // A sibling residue carries the same inode-bound evidence.
-                }
-            }
-        }
-        expect(evidence).toContainEqual(expect.stringContaining(holderA))
-        await expect(transactState(namespace, address, { ownerId: holderB }, () => lifecycleRecord(1, 9)))
-            .resolves.toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED })
     })
 
     it('snapshots the complete transaction address before invoking the update', async () => {
@@ -1526,38 +1430,6 @@ describe('transactState', () => {
             .resolves.toMatchObject({
                 kind: 'refusal', code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, target: 'state transaction input',
             })
-    })
-
-    it('preserves the lock owner when an adjacent evidence path already exists', async () => {
-        const { namespace, address } = await selectedNamespace()
-        let tombstone = ''
-        const result = await transactState(namespace, address, {
-            ownerId: holderA,
-            beforeRelease: async () => {
-                const owner = JSON.parse(await readFile(join(namespace.paths.stateLock, 'owner.json'), 'utf8')) as { token: string }
-                tombstone = join(dirname(namespace.paths.stateLock), `.state.lock.release-${owner.token}`)
-                await writeFile(`${tombstone}.owner.json`, 'occupied')
-            },
-        }, () => lifecycleRecord(0, 4))
-
-        expect(result).toMatchObject({ kind: 'indeterminate', code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE })
-        expect(await readFile(join(tombstone, 'owner.json'), 'utf8')).toContain(holderA)
-        expect(await readFile(`${tombstone}.owner.json`, 'utf8')).toBe('occupied')
-    })
-
-    it('blocks on crash-equivalent adjacent owner evidence without deleting it', async () => {
-        const { namespace, address } = await selectedNamespace()
-        const locksRoot = dirname(namespace.paths.stateLock)
-        const tombstone = join(locksRoot, `.state.lock.release-${crypto.randomUUID()}`)
-        const evidence = `${tombstone}.owner.json`
-        await mkdir(tombstone, { recursive: true })
-        await writeFile(evidence, 'durable-owner-evidence')
-
-        expect(await transactState(namespace, address, { ownerId: holderA }, () => lifecycleRecord(0, 1))).toMatchObject({
-            kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED, target: tombstone,
-            recovery: expect.stringContaining(evidence),
-        })
-        expect(await readFile(evidence, 'utf8')).toBe('durable-owner-evidence')
     })
 
     it.each([
@@ -1686,6 +1558,22 @@ describe('transactState', () => {
         expect(await readFile(join(namespace.paths.stateLock, 'owner.json'), 'utf8')).toBe(bytes)
         expect(JSON.stringify(result)).toContain('recovery')
         expect(takeStateLockReclaims(namespace)).toEqual([])
+    })
+
+    it('takes over a lock directory left without a readable owner record once it has stood a moment, and not before', async () => {
+        const { namespace, address } = await selectedNamespace()
+        await mkdir(namespace.paths.stateLock, { recursive: true })
+        await expect(transactState(namespace, address, { ownerId: holderB, contentionTimeoutMs: 0 }, () => lifecycleRecord(0, 1)))
+            .resolves.toMatchObject({ kind: 'refusal', code: ENVIRONMENT_CODES.STATE_LOCKED })
+        const stood = new Date(Date.now() - 60_000)
+        await utimes(namespace.paths.stateLock, stood, stood)
+
+        expect(await transactState(namespace, address, { ownerId: holderB, contentionTimeoutMs: 0 }, () => lifecycleRecord(0, 1)))
+            .toMatchObject({ kind: 'complete', value: lifecycleRecord(0, 1) })
+        expect(takeStateLockReclaims(namespace)).toEqual([expect.objectContaining({
+            lock: namespace.paths.stateLock, reason: expect.stringContaining('its owner record is missing'),
+        })])
+        expect(await readdir(dirname(namespace.paths.stateLock))).toEqual([])
     })
 
     it('reclaims, once, a lock whose holder is gone from this host, and reports it', async () => {
@@ -2001,79 +1889,6 @@ describe('transactState', () => {
         })
     }, 10_000)
 
-    it('preserves cooperative pre-syscall replacements without claiming a malicious same-UID guarantee', async () => {
-        const { namespace, address } = await selectedNamespace()
-        let tombstone = ''
-        const replacementOwner = `${JSON.stringify({
-            format: 'cockpit-state/v1', kind: 'state-lock', ownerId: holderB, pid: process.pid,
-            acquiredAt: '2026-09-07T12:00:00.000Z', token: 'ddfb3ed5-6a5c-4622-b90d-838743a53ef3',
-        })}\n`
-        const result = await transactState(namespace, address, {
-            ownerId: holderA,
-            beforeRelease: async () => {
-                const owner = JSON.parse(await readFile(join(namespace.paths.stateLock, 'owner.json'), 'utf8')) as { token: string }
-                tombstone = join(dirname(namespace.paths.stateLock), `.state.lock.release-${owner.token}`)
-            },
-            beforeLockMetadata: async (operation) => {
-                if (operation !== 'owner-unlink') return
-                await rename(join(tombstone, 'owner.json'), join(tombstone, 'verified-owner.json'))
-                await writeFile(join(tombstone, 'owner.json'), replacementOwner)
-            },
-        }, () => lifecycleRecord(0, 7))
-
-        expect(result).toMatchObject({ kind: 'indeterminate', code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE })
-        expect(await readFile(join(tombstone, 'owner.json'), 'utf8')).toBe(replacementOwner)
-        expect(await readFile(join(tombstone, 'verified-owner.json'), 'utf8')).toContain(holderA)
-        expect(await readFile(`${tombstone}.owner.json`, 'utf8')).toContain(holderA)
-    })
-
-    it.each(['tombstone-rmdir', 'owner-restore-link', 'backup-unlink'] as const)(
-        'keeps owner evidence when %s metadata handling fails',
-        async (failedOperation) => {
-            const { namespace, address } = await selectedNamespace()
-            const releaseRoot = dirname(namespace.paths.stateLock)
-            await mkdir(releaseRoot, { recursive: true })
-            let tombstoneIdentity: { readonly dev: number; readonly ino: number } | undefined
-            const sync = failedOperation === 'owner-restore-link'
-                ? await interceptDirectorySync(
-                    releaseRoot, () => { throw new Error('force restoration') }, () => tombstoneIdentity,
-                )
-                : undefined
-            let result
-            try {
-                result = await transactState(namespace, address, {
-                    ownerId: holderA,
-                    ...(sync ? { beforeRelease: async () => {
-                        const handle = await open(namespace.paths.stateLock, 'r')
-                        try {
-                            const identity = await handle.stat()
-                            tombstoneIdentity = { dev: identity.dev, ino: identity.ino }
-                        } finally {
-                            await handle.close()
-                        }
-                    } } : {}),
-                    beforeLockMetadata: async (operation) => {
-                        if (operation === failedOperation) throw new Error(`injected ${operation} failure`)
-                    },
-                }, () => lifecycleRecord(0, 8))
-            } finally {
-                sync?.restore()
-            }
-
-            expect(result).toMatchObject({ kind: 'indeterminate', code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE })
-            const residues = (await readdir(dirname(namespace.paths.stateLock)))
-                .filter((name) => name.startsWith('.state.lock.release-'))
-            expect(residues.length).toBeGreaterThan(0)
-            const contents = await Promise.all(residues.map(async (name) => {
-                const path = join(dirname(namespace.paths.stateLock), name)
-                try { return await readFile(path, 'utf8') } catch {
-                    try { return await readFile(join(path, 'owner.json'), 'utf8') } catch { return '' }
-                }
-            }))
-            expect(contents).toContainEqual(expect.stringContaining(holderA))
-        },
-    )
-
     it('synchronizes the directory after removing verified prepared bytes', async () => {
         const { namespace, address } = await selectedNamespace()
         const publicationParent = dirname(address.path)
@@ -2153,7 +1968,21 @@ describe('transactState', () => {
         expect(await readState(address)).toEqual(before)
         expect(await readFile(temporaryPath, 'utf8')).toBe(injected)
     })
+
+    it('does not authenticate lock metadata beneath an unsafe state namespace', async () => {
+        const { namespace } = await selectedNamespace()
+        await mkdir(namespace.paths.stateLock, { recursive: true })
+        await writeFile(join(namespace.paths.stateLock, 'owner.json'), JSON.stringify({
+            format: 'cockpit-state/v1', kind: 'state-lock', ownerId: holderA, pid: process.pid,
+            acquiredAt: '2026-09-07T12:00:00.000Z', token: crypto.randomUUID(),
+        }))
+        await chmod(namespace.cockpitRoot, 0o777)
+        const observe = vi.fn(async () => ({ state: 'absent' as const }))
+        expect(await inspectStateLock(namespace, observe)).toMatchObject({ holderState: 'invalid' })
+        expect(observe).not.toHaveBeenCalled()
+    })
 })
+
 
 
 describe('state path permissions', () => {
@@ -2192,19 +2021,6 @@ describe('state permission revalidation', () => {
         }, () => lifecycleRecord(1, 99))).toMatchObject({ kind: 'refusal' })
         expect(await readFile(address.path)).toEqual(bytes)
     })
-
-    it('does not authenticate lock metadata beneath an unsafe state namespace', async () => {
-        const { namespace } = await selectedNamespace()
-        await mkdir(namespace.paths.stateLock, { recursive: true })
-        await writeFile(join(namespace.paths.stateLock, 'owner.json'), JSON.stringify({
-            format: 'cockpit-state/v1', kind: 'state-lock', ownerId: holderA, pid: process.pid,
-            acquiredAt: '2026-09-07T12:00:00.000Z', token: crypto.randomUUID(),
-        }))
-        await chmod(namespace.cockpitRoot, 0o777)
-        const observe = vi.fn(async () => ({ state: 'absent' as const }))
-        expect(await inspectStateLock(namespace, observe)).toMatchObject({ holderState: 'invalid' })
-        expect(observe).not.toHaveBeenCalled()
-    })
 })
 
 
@@ -2223,25 +2039,5 @@ describe('state release permissions', () => {
         expect(result).toMatchObject({ kind: 'indeterminate', code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE })
         expect(await readdir(dirname(namespace.paths.stateLock))).toEqual(['state.lock'])
         expect(await readFile(ownerPath)).toEqual(ownerBytes)
-    })
-
-    it.each(['owner-unlink', 'tombstone-rmdir', 'backup-unlink'] as const)('preserves owner evidence when release root permissions change before %s', async (checkpoint) => {
-        const { namespace, address } = await selectedNamespace()
-        const releaseRoot = dirname(namespace.paths.stateLock)
-        let ownerBytes: Buffer | undefined
-        const result = await transactState(namespace, address, {
-            ownerId: holderA,
-            beforeRelease: async () => { ownerBytes = await readFile(join(namespace.paths.stateLock, 'owner.json')) },
-            beforeLockMetadata: async (stage) => { if (stage === checkpoint) await chmod(releaseRoot, 0o777) },
-        }, () => lifecycleRecord(0, 7))
-        expect(result).toMatchObject({ kind: 'indeterminate', code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE })
-        const entries = await readdir(releaseRoot)
-        const evidencePaths = entries.flatMap((entry) => entry.endsWith('.owner.json') ? [join(releaseRoot, entry)] : [join(releaseRoot, entry, 'owner.json')])
-        const evidence = await Promise.all(evidencePaths.map((path) => readFile(path).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return undefined; throw error })))
-        expect(evidence.some((bytes) => bytes?.equals(ownerBytes!))).toBe(true)
-        if (checkpoint === 'tombstone-rmdir') {
-            const tombstone = entries.find((entry) => !entry.endsWith('.owner.json'))!
-            expect(await readdir(join(releaseRoot, tombstone))).toEqual([])
-        }
     })
 })
