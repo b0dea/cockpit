@@ -292,13 +292,37 @@ function tomlErrorSummary(error: unknown): string {
 
 const SCHEMA_ISSUES_SHOWN = 3
 
+// Keys a release removed, by where they sit, with what replaced them; a file that still holds one is
+// refused like any unknown key, but named. `*` stands for any one path segment.
+const REMOVED_KEYS: Readonly<Record<string, string>> = {
+    autonomy: 'an agent may do everything except apply a change that widens what agents may do, which a person applies with sync --interactive; declare [environment] seed to let an agent reset',
+    'work.gates': 'work-order steps are the agent\'s, except the few fixed ones that would let it lower the bar its own work is held to',
+    unconfirmed: 'a person reviews the answers init wrote in the cockpit.toml diff',
+    'sibling.*.derives.mcp_sources.*.provenance.confirmed': 'a person reviews inferred values in the cockpit.toml diff',
+}
+
+function removedKey(path: readonly PropertyKey[], key: string): string | undefined {
+    const segments = [...path.map(String), key]
+    const pattern = Object.keys(REMOVED_KEYS).find(candidate => {
+        const parts = candidate.split('.')
+        return parts.length === segments.length && parts.every((part, index) => part === '*' || part === segments[index])
+    })
+    return pattern && `${segments.join('.')} was removed; delete it: ${REMOVED_KEYS[pattern]}`
+}
+
 export function schemaIssueSummary(
-    issues: readonly { path: readonly PropertyKey[]; message: string }[],
+    issues: readonly { path: readonly PropertyKey[]; message: string; code?: string; keys?: readonly string[] }[],
     limit = SCHEMA_ISSUES_SHOWN,
 ): string {
-    const shown = issues.slice(0, limit)
+    // An unknown key the schema used to have is named with what replaced it, one key per entry.
+    const named = issues.flatMap(issue => {
+        if (issue.code !== 'unrecognized_keys' || !issue.keys) return [issue]
+        const removed = issue.keys.flatMap(key => { const message = removedKey(issue.path, key); return message ? [{ path: issue.path, message }] : [] })
+        return removed.length === issue.keys.length ? removed : removed.length ? [...removed, issue] : [issue]
+    })
+    const shown = named.slice(0, limit)
         .map(issue => `${issue.path.length === 0 ? '(root)' : issue.path.map(String).join('.')}: ${issue.message}`)
-    const more = issues.length - shown.length
+    const more = named.length - shown.length
     return `${shown.join('; ')}${more > 0 ? `; and ${more} more` : ''}`
 }
 

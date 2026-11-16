@@ -405,6 +405,14 @@ install_policies = [{ toolchain = "node", lockfile = "package-lock.json", build 
         expect(JSON.stringify(outcome)).not.toContain('ssh://example.invalid/api.git')
     })
 
+    it('names a key a release removed, says to delete it and what replaced it', async () => {
+        const outcome = await loadCockpitConfig(fixture(`unconfirmed = ["guards"]\n${validConfig}\n[autonomy]\nreset = "agent"\n\n[work.gates]\naccept = "person"\n`))
+        expect(outcome).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'CONFIG_SCHEMA_INVALID' }] })
+        const message = outcome.diagnostics[0]!.message
+        for (const key of ['unconfirmed', 'autonomy', 'work.gates']) expect(message, key).toContain(`${key} was removed; delete it: `)
+        expect(message).toContain('declare [environment] seed to let an agent reset')
+    })
+
     it('names port families whose bases overlap across stacks and the step that separates them', async () => {
         const overlapping = await loadCockpitConfig(fixture(validConfig.replace(
             'bases = { APP_PORT = 4100 }', 'bases = { API_HOST_PORT = 4200, WEB_HOST_PORT = 4300 }')))
