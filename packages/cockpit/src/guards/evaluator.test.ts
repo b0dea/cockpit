@@ -461,7 +461,7 @@ describe('resolved guard evaluation', () => {
             expect(decide(command), command).toBe('ask')
         }
         // `-S` signs with a key only when one is attached, so the word after it is the revision.
-        expect(targets('git merge -S evil')).toEqual([{ revision: 'evil' }])
+        expect(targets('git merge -S evil')).toEqual([{ revision: 'evil', from: ':merge-base' }])
         expect(targets('git rebase -S evil')).toContainEqual(expect.objectContaining({ revision: 'evil' }))
         // What does not touch the work tree stays allowed; what later brings it there is judged.
         for (const command of ['git fetch origin', 'git write-tree', 'git hash-object -w src/a.ts',
@@ -519,11 +519,12 @@ describe('resolved guard evaluation', () => {
             ['git restore --source planted deep', { revision: 'planted', from: 'worktree', paths: ['deep'] }],
             ['git restore -s planted -W -S deep', { revision: 'planted', from: 'worktree', paths: ['deep'] }],
             ['git checkout-index -f -- deep/x', { revision: ':index', from: 'worktree', paths: ['deep/x'] }],
-            ['git merge planted', { revision: 'planted' }],
+            // A merge writes what the other side changed since the common ancestor.
+            ['git merge planted', { revision: 'planted', from: ':merge-base' }],
         ] as const) {
             asked.length = 0
             expect(decide(command, ['deep/.claude/settings.json']), command).toBe('deny')
-            expect(asked, command).toEqual([{ from: undefined, paths: undefined, fallback: undefined, ...target }])
+            expect(asked, command).toEqual([{ paths: undefined, fallback: undefined, ...target }])
             expect(decide(command, [], ['tools/skills/probe/SKILL.md']), command).toBe('ask')
             expect(decide(command, []), command).toBe('allow')
         }

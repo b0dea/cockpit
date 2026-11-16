@@ -512,7 +512,12 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
         }
     }
     else {
-        const base = await commit(from ?? 'HEAD')
+        // A merge writes what the other side changed since the common ancestor, which a branch's own retired files keep out.
+        const mergeBase = async () => {
+            const lines = await run(['merge-base', 'HEAD', to])
+            return lines === null ? null : lines.join('').trim() || undefined
+        }
+        const base = from === ':merge-base' ? await mergeBase() : await commit(from ?? 'HEAD')
         if (base === null) return null
         const empty = base ?? (await run(['hash-object', '-t', 'tree', '/dev/null']))?.join('').trim()
         names = empty ? await run([...diff, empty, to, ...pathspecs]) : null
@@ -537,8 +542,12 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
     if (from !== 'worktree' && to !== ':index') {
         const moved = await run([...diff, 'HEAD', ...pathspecs])
         if (moved === null) return null
-        // Only a path the revision itself changes is one the verb writes over what differs from HEAD.
-        const touched = new Set(pairs(names).map(([, name]) => name))
+        // Only a path the revision itself changes is one the verb writes over what differs from HEAD. For a
+        // merge that is any path HEAD and the other side hold differently: where the files on disk differ from
+        // HEAD too, Git's merge rules, not the comparison above, decide what lands there.
+        const headDiff = from === ':merge-base' ? await run([...diff, 'HEAD', to, ...pathspecs]) : names
+        if (headDiff === null) return null
+        const touched = new Set(pairs(headDiff).map(([, name]) => name))
         for (const [, name] of pairs(moved)) {
             const folded = foldGuardSpelling(name)
             if (touched.has(name) && inScope(folded) && (protectedName(name) || plantedAgentControl(folded) || agentInstructionFile(folded))) unsettled.push(join(top, name))
