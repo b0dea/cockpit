@@ -44,9 +44,22 @@ interface GitObservationEvidence {
     readonly adjacency: 'aligned' | 'ahead' | 'behind' | 'diverged' | 'untracked-upstream' | 'upstream-gone'
 }
 
-type GitObservationResult =
+/** What a status observation was taken of, so a comparison refuses evidence from another checkout. */
+interface GitObservationSubject {
+    readonly stackId: StackId
+    readonly checkoutId: CheckoutId
+    readonly source: string
+    readonly checkoutRoot: string
+    readonly executable: Readonly<{ canonicalPath: string; sha256: string }>
+}
+
+type DecodedGitObservation =
     | { readonly kind: 'complete'; readonly evidence: GitObservationEvidence; readonly observations: readonly EnvironmentObservation[] }
     | { readonly kind: 'unavailable'; readonly reason: string }
+
+type GitObservationResult =
+    | Extract<DecodedGitObservation, { kind: 'complete' }> & { readonly subject: GitObservationSubject }
+    | Extract<DecodedGitObservation, { kind: 'unavailable' }>
 
 const OUTPUT_LIMIT = 65_536
 // `git status` lists every changed and untracked file, so a checkout mid-migration needs the bound cockpit's other Git
@@ -170,7 +183,7 @@ export function parseGitBranchStatus(source: string): GitBranchStatus | Readonly
 export function decodeGitObservation(
     bytes: Buffer,
     context: { readonly stackId: StackId; readonly observedAt: string; readonly source: string; readonly checkoutRoot: string },
-): GitObservationResult {
+): DecodedGitObservation {
     if (bytes.byteLength > STATUS_OUTPUT_LIMIT || !/^stack:[a-f0-9]{64}$/.test(context.stackId)
         || !isCanonicalTimestamp(context.observedAt) || typeof context.source !== 'string'
         || context.source.length === 0 || Buffer.byteLength(`${context.source}:working-tree`) > 1_024
@@ -282,7 +295,9 @@ export function observeGit(
     const decoded = decodeGitObservation(authenticated.stdout, { stackId: context.stackId, observedAt: authenticated.receipt.finishedAt,
         source: context.source, checkoutRoot: step.cwd })
     if (decoded.kind !== 'complete') return decoded
-    return { kind: 'complete', evidence: decoded.evidence, observations: decoded.observations }
+    const subject = { ...context, checkoutRoot: step.cwd,
+        executable: { canonicalPath: step.argv[0], sha256: step.consumedFiles[0]?.sha256 ?? '' } }
+    return { kind: 'complete', subject, evidence: decoded.evidence, observations: decoded.observations }
 }
 
 type AcquirePosture = 'auto' | 'manual' | 'none'
@@ -386,7 +401,10 @@ export function createComparisonRemoteRefStep(input: {
         unbounded: 'its remote in cockpit.toml is too long to compare; declare its https or ssh remote',
     }[expected.reason]}`)
     const executable = resolvedGitExecutable(input.executable)
-    if (input.git?.kind !== 'complete' || !executable) {
+    const subject = input.git?.kind === 'complete' ? input.git.subject : undefined
+    if (input.git?.kind !== 'complete' || !executable || subject?.stackId !== input.stackId || subject.checkoutId !== input.checkoutId
+        || subject.source !== input.source || subject.checkoutRoot !== input.checkoutRoot
+        || subject.executable.canonicalPath !== executable.canonicalPath || subject.executable.sha256 !== executable.sha256) {
         return comparisonUnavailable(`Git status evidence is unavailable for sibling ${input.sibling}`)
     }
     const evidence = input.git.evidence

@@ -487,6 +487,32 @@ describe('comparison remote identity evidence', () => {
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 
+    it('refuses Git status evidence taken of another checkout', async () => {
+        const first = await fixture()
+        const second = await fixture()
+        try {
+            for (const { root } of [first, second]) {
+                execFileSync('git', ['remote', 'add', 'origin', 'https://code.invalid/team/service.git'], { cwd: root })
+                execFileSync('git', ['update-ref', 'refs/remotes/origin/main', 'HEAD'], { cwd: root })
+                execFileSync('git', ['branch', '--set-upstream-to=origin/main', 'main'], { cwd: root })
+            }
+            const git = await status(first.root, first.executable)
+            const started = (root: string) => createComparisonRemoteRefStep({
+                executable: first.executable, checkoutRoot: root, env: {}, timeoutMs: 10_000, stackId, checkoutId,
+                source: root, sibling: 'service', acquire: 'manual',
+                declaredRemote: 'https://code.invalid/team/service.git', git,
+            })
+            expect(started(first.root).kind).toBe('probe')
+            expect(started(second.root)).toEqual({
+                kind: 'unavailable', code: 'GIT_COMPARISON_REMOTE_MISMATCH',
+                reason: 'Git status evidence is unavailable for sibling service',
+            })
+        } finally {
+            await rm(first.root, { recursive: true, force: true })
+            await rm(second.root, { recursive: true, force: true })
+        }
+    })
+
     it('rejects repository identity that changes after the status observation', async () => {
         const { root, executable } = await fixture()
         try {
