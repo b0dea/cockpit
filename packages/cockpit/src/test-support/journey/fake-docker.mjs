@@ -197,9 +197,17 @@ function start(container) {
     container.logs += execFileSync('/bin/sh', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, ...container.Config.Env } })
 }
 
+// A stopped container's ports are free when Docker reports it stopped, so each listener is gone
+// before stop returns: a loaded machine otherwise let the next `up` find the port still bound.
 function stop(container) {
     for (const pid of container.listeners ?? []) {
-        try { process.kill(pid) } catch (error) { if (error.code !== 'ESRCH') throw error }
+        try { process.kill(pid) } catch (error) { if (error.code !== 'ESRCH') throw error; continue }
+        const deadline = Date.now() + 10_000
+        for (;;) {
+            try { process.kill(pid, 0) } catch (error) { if (error.code === 'ESRCH') break; throw error }
+            if (Date.now() > deadline) fail(`Error response from daemon: the listener ${pid} did not stop`)
+            sleep(5)
+        }
     }
     container.listeners = []
     container.State = { Status: 'exited', Running: false }
