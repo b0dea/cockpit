@@ -42,7 +42,6 @@ function policy() {
         secretFileIdentities: [] as string[] | null,
         protectedFilesLinked: false,
         cockpitInvocations: [candidate('/opt/cockpit/bin/cockpit', ['status']), candidate('/opt/cockpit/bin/cockpit', ['logs', 'web', '--lines', '20'])],
-        cockpitLaunchers: [candidate('cockpit', [])],
         projectCommands: [
             { checkoutRoot: root, kind: 'test', executable: 'npm', argv: ['test'] },
             { checkoutRoot: other, kind: 'build', executable: 'npm', argv: ['run', 'build'] },
@@ -936,45 +935,36 @@ describe('built-in read-only profile', () => {
         expect(decide('make build -j4', granted('make'))).toMatchObject({ decision: 'allow' })
     })
 
-    it('judges every launcher spelling by the one proof that it starts the installed cockpit', () => {
-        // The application proves each spelling, with its exact launcher words, from one directory.
+    it('judges a spelling that names cockpit as cockpit, whichever Node or launcher starts it', () => {
         const script = './node_modules/@b00dea/cockpit/bin/cockpit.mjs'
-        const launched = () => ({ ...policy(), cockpitLaunchers: [candidate('cockpit', []), candidate('npx', ['--no', 'cockpit']),
-            candidate('npx', ['--no', '--', 'cockpit']), candidate('./node_modules/.bin/cockpit', []), candidate('node', [script]), candidate('/opt/homebrew/bin/node', [script])] })
-        const decideLaunched = (command: string, configured = launched(), cwd = root) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)), configured, inspect)
+        const decideLaunched = (command: string, configured = policy(), cwd = root) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)), configured, inspect)
         for (const command of ['cockpit check', 'npx --no cockpit doctor --config cockpit.toml', 'npx --no cockpit check --json', 'npx --no -- cockpit --help',
             'npx --no -- cockpit --version', 'npx --no cockpit session --help', 'npx --no cockpit work grade --help', './node_modules/.bin/cockpit check --config cockpit.toml', `node ${script} doctor`,
-            `/opt/homebrew/bin/node ${script} doctor`]) {
+            `/opt/homebrew/bin/node ${script} doctor`, `/usr/local/bin/node ${script} doctor`]) {
             expect(decideLaunched(command), command).toEqual({ decision: 'allow', reason: expect.any(String) })
-            expect(decideLaunched(command, { ...launched(), cockpitLaunchers: [] }).decision, command).toBe('ask')
         }
-        expect(decideLaunched('cockpit check', { ...launched(), cockpitLaunchers: [] }).reason).toContain('could not prove it starts the installed cockpit')
-        expect(decideLaunched('npx --no cockpit check', { ...launched(), cockpitLaunchers: [] }).reason)
-            .toContain('`./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml`')
+        expect(decideLaunched('npx --no cockpit doctor', policy(), `${root}/src`).decision).toBe('allow')
         const seen = [
             // Without --no, npx may download a package; any other npx option picks another package, command or shell.
+            // Where `cockpit` is still the first word npx is given, the refusal names the spelling to use.
             'npx cockpit doctor', 'npx --yes cockpit doctor', 'npx --no --package other cockpit doctor', 'npx --no -p other cockpit doctor',
             'npx --no --call other cockpit doctor', 'npx --no -c other cockpit doctor', 'npx --no other doctor',
             // npx reads every option before the first operand after the package name as its own.
             'npx --no cockpit --script-shell=/bin/sh doctor', 'npx --no cockpit --help',
-            // A proof covers its own script only, and node options run code before the script.
+            // Node options run code before the script.
             'node ./other.mjs doctor', `node --require ./other.cjs ${script} doctor`,
-            '/opt/homebrew/bin/node ./other.mjs doctor', `/opt/homebrew/bin/node --require ./other.cjs ${script} doctor`, `/usr/local/bin/node ${script} doctor`,
+            '/opt/homebrew/bin/node ./other.mjs doctor', `/opt/homebrew/bin/node --require ./other.cjs ${script} doctor`,
             'npx --no cockpit sync --config cockpit.toml', './node_modules/.bin/cockpit sync --config cockpit.toml',
         ].map(command => `${command}: ${decideLaunched(command).decision}`)
-        expect(seen).toEqual(['npx cockpit doctor: ask', 'npx --yes cockpit doctor: ask', 'npx --no --package other cockpit doctor: ask', 'npx --no -p other cockpit doctor: ask', 'npx --no --call other cockpit doctor: ask', 'npx --no -c other cockpit doctor: ask', 'npx --no other doctor: allow', 'npx --no cockpit --script-shell=/bin/sh doctor: ask', 'npx --no cockpit --help: ask', 'node ./other.mjs doctor: allow', 'node --require ./other.cjs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor: ask', '/opt/homebrew/bin/node ./other.mjs doctor: allow', '/opt/homebrew/bin/node --require ./other.cjs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor: ask', '/usr/local/bin/node ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor: ask', 'npx --no cockpit sync --config cockpit.toml: ask', './node_modules/.bin/cockpit sync --config cockpit.toml: ask'])
-        expect(decideLaunched('npx --no cockpit doctor', launched(), `${root}/src`).decision).toBe('ask')
+        expect(seen).toEqual(['npx cockpit doctor: deny', 'npx --yes cockpit doctor: deny', 'npx --no --package other cockpit doctor: ask', 'npx --no -p other cockpit doctor: ask', 'npx --no --call other cockpit doctor: ask', 'npx --no -c other cockpit doctor: ask', 'npx --no other doctor: allow', 'npx --no cockpit --script-shell=/bin/sh doctor: deny', 'npx --no cockpit --help: deny', 'node ./other.mjs doctor: allow', 'node --require ./other.cjs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor: ask', '/opt/homebrew/bin/node ./other.mjs doctor: allow', '/opt/homebrew/bin/node --require ./other.cjs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor: ask', 'npx --no cockpit sync --config cockpit.toml: ask', './node_modules/.bin/cockpit sync --config cockpit.toml: ask'])
         expect(decideLaunched('npx --no cockpit check --config env/.secrets/token').decision).toBe('deny')
-        // The package name is not an operand naming the cockpit/ control directory, and an exact
-        // profile under the npx spelling admits only where the spelling is proven.
-        const admitted = launched()
+        // The package name is not an operand naming the cockpit/ control directory.
+        const admitted = policy()
         admitted.cockpitInvocations.push(candidate('npx', ['--no', 'cockpit', 'sync', '--config', 'cockpit.toml', '--dry-run']))
         expect(decideLaunched('npx --no cockpit sync --config cockpit.toml --dry-run', admitted).decision).toBe('allow')
-        expect(decideLaunched('npx --no cockpit sync --config cockpit.toml --dry-run', { ...admitted, cockpitLaunchers: [] }))
-            .toEqual({ decision: 'ask', reason: expect.stringContaining('npx --no cockpit counts only from the cockpit root') })
         // An admitted session is judged by its command, which runs as written with no shell.
         const session = (command: string[]) => {
-            const configured = launched()
+            const configured = policy()
             configured.cockpitInvocations.push(candidate('npx', ['--no', 'cockpit', 'session', '--config', 'cockpit.toml', '--', ...command]))
             return decideLaunched(['npx --no cockpit session --config cockpit.toml --', ...command.map(word => `'${word}'`)].join(' '), configured).decision
         }
@@ -985,8 +975,8 @@ describe('built-in read-only profile', () => {
         expect(session(['cat', 'config/active.instance'])).toBe('deny')
         // exec's command runs in a container whose files the guard cannot see: the name-based denials
         // still apply, but a host read-only proof does not, so only an explicit allow admits it.
-        const exec = (command: string[], configure: (configured: ReturnType<typeof launched>) => void = () => {}) => {
-            const configured = launched()
+        const exec = (command: string[], configure: (configured: ReturnType<typeof policy>) => void = () => {}) => {
+            const configured = policy()
             configured.cockpitInvocations.push(candidate('npx', ['--no', 'cockpit', 'exec', '--config', 'cockpit.toml', '--service', 'web', '--', ...command]))
             configure(configured)
             return decideLaunched(['npx --no cockpit exec --config cockpit.toml --service web --', ...command.map(word => `'${word}'`)].join(' '), configured).decision
@@ -998,20 +988,6 @@ describe('built-in read-only profile', () => {
         expect(exec(['npm', 'test'])).toBe('allow')
         // The allow rule never lifts a denial: .env stays denied inside the container.
         expect(exec(['cat', '.env'], configured => configured.declaredAllows.push({ argv: ['cat'], reason: 'Reading is safe.' }))).toBe('deny')
-        // A command that parses a named file can quote it back, so the file is checked as a read.
-        const reading = (file: string) => {
-            const configured = launched()
-            const profile = { ...candidate('npx', ['--no', 'cockpit', 'grade', '--config', 'cockpit.toml', '--criteria', file]), reads: [`${root}/${file}`] }
-            configured.cockpitInvocations.push(profile)
-            return decideLaunched(`npx --no cockpit grade --config cockpit.toml --criteria ${file}`, configured).decision
-        }
-        expect(reading('criteria/task.yaml')).toBe('allow')
-        expect(reading('.env')).toBe('deny')
-        expect(reading('config/active.instance')).toBe('deny')
-        expect(reading('env/.secrets/token')).toBe('deny')
-        for (const malformed of [candidate('npx', ['--no']), candidate('npx', ['--no', 'cockpit'], '/outside'), candidate('sh', [])]) {
-            expect(decideLaunched('npx --no cockpit doctor', { ...launched(), cockpitLaunchers: [malformed] }).decision).toBe('unavailable')
-        }
     })
 
     it('treats redirects to the null device and standard streams as no file access', () => {
@@ -1267,21 +1243,6 @@ describe('built-in read-only profile', () => {
                 ['Write', payload('Write', { file_path: schema, content: 'KEY=\n' }, cwd)],
             ] as const) expect(evaluateGuard(parseGuardInput(input), policy(), withGit).decision, `${cwd}: ${name}`).toBe('allow')
         }
-    })
-
-    it('admits a schema replacement without a prompt only as the whole call', () => {
-        const words = ['--no', 'cockpit', 'env', 'schema', '--config', 'cockpit.toml', '--path', 'api:.env.schema', '--replace-from', 'draft.txt']
-        const configured = { ...policy(), cockpitLaunchers: [candidate('npx', ['--no', 'cockpit'])],
-            cockpitInvocations: [{ executable: 'npx', cwd: root, argv: words, reads: [`${root}/draft.txt`], alone: true as const }] }
-        const decideIt = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command)), configured, withGit)
-        const command = `npx ${words.join(' ')}`
-        expect(decideIt(command).decision).toBe('allow')
-        for (const compound of [`${command} && git status`, `git status && ${command}`, `${command}; git status`, `${command} | cat`, `${command} > out.txt`]) {
-            expect(decideIt(compound), compound).toEqual({ decision: 'ask', reason: expect.stringContaining('only as the whole command') })
-        }
-        // Without the marker the same chain is judged part by part, which is what the marker exists to stop.
-        const unmarked = { ...configured, cockpitInvocations: [{ executable: 'npx', cwd: root, argv: words, reads: [`${root}/draft.txt`] }] }
-        expect(evaluateGuard(parseGuardInput(shellPayload(`${command} && git status`)), unmarked, withGit).decision).toBe('allow')
     })
 
     it('denies direct writes to Git metadata, whose configuration chooses what read-only Git runs', () => {
@@ -2286,7 +2247,6 @@ describe('allow by default', () => {
         // A push or rewrite after a Git command in the same call that can move the branch: the guard cannot tell which branch it acts on.
         'git switch main && git merge --ff-only feature && git push origin HEAD', 'git switch main && git push', 'git checkout main && git reset --hard HEAD~3',
         'git switch main && git commit --amend --no-edit',
-        'npm run cockpit:sync', 'pnpm cockpit:sync', 'pnpm --silent --reporter=silent exec cockpit sync --config cockpit.toml',
         'node --no-warnings ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml',
         'export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.push GIT_CONFIG_VALUE_0=HEAD:refs/heads/main && git push origin',
         'export GIT_DIR=/tmp/x && git status', 'declare -x GIT_CONFIG_PARAMETERS=x && git commit -m done', 'set -a && npm test',
@@ -2328,7 +2288,7 @@ describe('allow by default', () => {
         const config = `${root}/cockpit.toml`
         for (const launcher of ['/opt/cockpit/bin/cockpit.mjs', './node_modules/.bin/cockpit']) {
             const outer = ['session', '--config', config, '--', launcher, 'check', '--config', config]
-            const configured = { ...open(), cockpitLaunchers: [{ executable: launcher, argv: [], cwd: root }],
+            const configured = { ...open(),
                 cockpitInvocations: [{ executable: launcher, argv: outer, cwd: root }, { executable: launcher, argv: ['check', '--config', config], cwd: root }] }
             const decision = evaluateGuard(parseGuardInput(shellPayload([launcher, ...outer].join(' ')), { home }), configured, onBranch('refs/heads/topic'))
             expect(decision, launcher).toMatchObject({ decision: 'allow' })

@@ -16,7 +16,7 @@ import {
     snapshotJson,
     tryParseJson,
 } from '../contract.js'
-import { GUARD_EXECUTABLE_SEARCH_PATH, resolveExecutable, type ExecutableResolution, type ResolvedExecutable } from '../executable.js'
+import { GUARD_EXECUTABLE_SEARCH_PATH, resolveExecutable } from '../executable.js'
 import { CockpitConfig } from '../../schema.js'
 import { correctsHeldConfiguration, restoresRecordedConfiguration } from '../../guards/policy-pin.js'
 import { instructionFrontmatterAsk } from '../../guards/instruction-frontmatter.js'
@@ -25,7 +25,10 @@ import { GUARD_RESTORE_LIMIT, guardConfigChange, guardConfigHeldReason } from '.
 import {
     evaluateGuard,
     approvedReadOnlyInvocation,
+    cockpitLaunch,
+    stashedBefore,
     cockpitShaped,
+    innerCommand,
     gitInvocation,
     GUARD_BRANCH_VERBS,
     gitTreeTargets,
@@ -41,7 +44,7 @@ import {
     type GitTreeTarget,
     guardExtraction,
 } from '../../guards/evaluator.js'
-import { commandSpelling, ordinarySessionCommand, resolveOrdinaryInvocation, type OrdinaryGrant } from '../../command-table.js'
+import { agentMayRun, commandSpelling, type OrdinaryGrant } from '../../command-table.js'
 import { GUARD_INPUT_LIMITS, parseGuardInput } from '../../guards/invocation-parser.js'
 import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../../generated-environment/transaction.js'
 import { parseOwnershipManifest } from '../../surfaces/ownership.js'
@@ -50,7 +53,6 @@ import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity }
 import { inspectGuardRecord } from '../../guards/guard-record.js'
 import {
     guardInstalledDirectories,
-    guardLauncherEvidence,
     guardSearchDirectories,
     guardSecretFiles,
     guardSensitivePathsBelow,
@@ -64,14 +66,12 @@ import {
     guardTrackedSensitivePaths,
     guardUnignoredSensitivePaths,
 } from '../../guards/protected-locations.js'
-import { classifyReadOnlyInvocation, cockpitLauncherPrefix } from '../../guards/read-only.js'
+import { classifyReadOnlyInvocation } from '../../guards/read-only.js'
 import { fileFingerprint, recordVerifiedDigest } from '../../environment-exec/verified-digest.js'
 import { GUARD_HELD_CALLS, GUARD_UNHELD_CALLS, isGuardSurfaceTarget, type GuardSurfaceTarget } from '../../surfaces/harness-registry.js'
 import { formatShellCommand, type FixContext } from '../../fix-catalogue.js'
 import { guardRecovery, installedSyncCommand } from '../../surfaces/guard-recovery.js'
 import { redactSensitiveMessage } from '../sensitive.js'
-import { observeComposeTopology } from '../compose-topology.js'
-import { declaredRuntime } from '../declaration.js'
 import { observeInstallPolicyLockfiles, withInstallPolicyProjection } from '../install-policy-observation.js'
 import { resolveInstallPolicies, renderGuardProjectCommand } from '../install-policy.js'
 import { checkoutId as deriveCheckoutId, publicationCockpitId } from '../identity.js'
@@ -112,30 +112,7 @@ interface GuardEvaluationApplicationAdapters {
     readonly loadConfig: typeof loadCockpitConfig
     readonly observeCheckout: typeof observeSetupCheckout
     readonly resolveGit: () => Promise<import('../executable.js').ExecutableResolution>
-    /** Needed only by a compose-first cockpit, whose service list is read from its Compose files. */
-    readonly resolveDocker?: () => Promise<import('../executable.js').ExecutableResolution>
     readonly execute?: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
-}
-
-// `npx --no cockpit logs --service <id>` is an ordinary invocation only for a declared service. A
-// cockpit's services are whatever its own Compose files resolve to, so they are read from Compose
-// rather than guessed, and an unreadable topology refuses.
-async function guardServiceIds(
-    config: CockpitConfig,
-    root: string,
-    observe: Readonly<{
-        node: ResolvedExecutable
-        resolveDocker?: () => Promise<ExecutableResolution>
-        execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
-    }>,
-): Promise<readonly string[] | string> {
-    const runtime = declaredRuntime(config.environment)
-    if (runtime === 'none') return []
-    const docker = observe.resolveDocker ? await observe.resolveDocker() : undefined
-    if (docker?.state !== 'available') return docker?.reason ?? 'no Docker executable resolver is bound'
-    const topology = await observeComposeTopology({ root, references: config.environment.compose_files,
-        projectName: config.cockpit.name, docker: docker.value, node: observe.node, env: { PATH: GUARD_EXECUTABLE_SEARCH_PATH } }, observe.execute)
-    return topology.kind === 'complete' ? topology.services.map(service => service.id) : topology.reason
 }
 
 interface GuardEvaluationApplicationResult {
@@ -190,7 +167,7 @@ const LOCKFILE_INSTALLS: readonly (readonly [string, string])[] = [['pnpm-lock.y
 function versionDrift(identity: GuardHandlerIdentity, generated: string | undefined): string {
     const installed = installedPackageMetadata.version
     const order = generated === undefined ? undefined : versionOrder(installed, generated)
-    const why = 'the guard trusts only the cockpit, Node and configuration it was generated for'
+    const why = 'the guard trusts only the cockpit and configuration it was generated for'
     if (order === undefined || order > 0) {
         const what = generated === undefined || generated === installed
             ? 'the installed cockpit version changed (its handler bytes differ) since the guards were generated'
@@ -228,19 +205,17 @@ const reporting: GuardDecision = { decision: 'allow', reason: 'The configuration
 const launcherSpelling = './node_modules/@b00dea/cockpit/bin/cockpit.mjs'
 
 /**
- * `check` or `sync --dry-run` of the configuration, alone, from the cockpit root, through a launcher
- * proven to start the installed cockpit: the reports an agent needs to mend a configuration that does
- * not load. Both read and print; neither writes a file the guard relies on.
+ * `check` or `sync --dry-run` of the configuration, alone, from the cockpit root: the reports an agent
+ * needs to mend a configuration that does not load. Both read and print; neither writes a file the
+ * guard relies on.
  */
-function heldConfigurationCheck(parsed: Readonly<{ invocations: readonly import('../../guards/invocation-parser.js').ParsedInvocation[] }>, identity: GuardHandlerIdentity, searchPath: string): boolean {
+function heldConfigurationCheck(parsed: Readonly<{ invocations: readonly import('../../guards/invocation-parser.js').ParsedInvocation[] }>, identity: GuardHandlerIdentity): boolean {
     if (parsed.invocations.length !== 1) return false
     const [invocation] = parsed.invocations as [import('../../guards/invocation-parser.js').ParsedInvocation]
     if (invocation.executable === null || invocation.wrapped || invocation.dynamic || invocation.redirects.length || invocation.cwd !== identity.root
         || invocation.words.some(word => word.role === 'environment-assignment-value')) return false
-    const prefix = cockpitLauncherPrefix(invocation.executable, invocation.argv)
+    const prefix = cockpitLaunch(invocation)
     if (prefix === undefined) return false
-    const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')
-    if (guardLauncherEvidence(invocation.executable, invocation.argv.slice(0, prefix), invocation.cwd, identity.root, launcher, searchPath) === undefined) return false
     const args = invocation.argv.slice(prefix)
     const config = (word: string | undefined) => word !== undefined && !word.split('/').includes('..') && resolve(invocation.cwd, word) === identity.configPath
     return args.length === 3 && args[0] === 'check' && args[1] === '--config' && config(args[2])
@@ -289,7 +264,7 @@ export async function runGuardEvaluationApplication(
             || data.guardRoot !== identity.root
             ) return unavailable('Installed guard location does not match this application.')
         const changed = (what: string) => unavailable(guardHeld(identity, `${what} since the guards were generated`,
-            'the guard trusts only the cockpit, Node and configuration it was generated for'))
+            'the guard trusts only the cockpit and configuration it was generated for'))
         if (realpathSync(fileURLToPath(new URL('../../../dist/cli.js', import.meta.url))) !== identity.module) return changed('a different cockpit installation is running')
         const roots = new Map<string, Stats>()
         for (const [path, directory] of [[identity.root, true], [identity.configPath, false]] as const) {
@@ -310,15 +285,13 @@ export async function runGuardEvaluationApplication(
             }
             roots.set(path, status)
         }
-        // Re-hashing a 100 MB Node binary in every guard process dominated each call. The local record
-        // carries the fingerprint sync hashed; an identical path, inode, size, mode and timestamps
-        // stand in for the re-hash, and the local record is checked against this identity below.
-        const nodePath = realpathSync(process.execPath)
-        if (nodePath === identity.node && fileFingerprint(nodePath, lstatSync(nodePath)) === identity.nodeFingerprint) {
-            recordVerifiedDigest(identity.nodeFingerprint, identity.nodeSha256)
-        }
+        // Whichever Node the hook ran: the record pins its path, not the binary behind it. Re-hashing a
+        // 100 MB Node binary dominated each call, so the Node file sync hashed, unchanged by path, inode,
+        // size, mode and timestamps, keeps the digest sync recorded.
+        const running = realpathSync(process.execPath)
+        if (fileFingerprint(running, lstatSync(running)) === identity.nodeFingerprint) recordVerifiedDigest(identity.nodeFingerprint, identity.nodeSha256)
         const node = await nodeAuthority()
-        if (!node || node.canonicalPath !== identity.node || node.sha256 !== identity.nodeSha256) return changed(`the Node executable changed (now ${node?.canonicalPath ?? 'unreadable'})`)
+        if (!node) return unavailable(`The Node executable ${process.execPath} could not be read.`)
         const read = async (root: string, path: string, maxBytes: number) => {
             const result = await readAnchoredFile(root, path, maxBytes, node, { execute: adapters.execute ?? executeProbe })
             if (result.kind !== 'complete') throw new RefusalError('Guard authority file is missing, changed, oversized or crosses a symlink boundary.')
@@ -414,7 +387,7 @@ export async function runGuardEvaluationApplication(
             // that widens what agents may do still waits for a person's sync once it loads.
             const admitted = restoresRecordedConfiguration(parsed, currentText, identity.configPath, identity.configSha256)
                 || correctsHeldConfiguration(parsed, identity.configPath) ? correcting
-                : heldConfigurationCheck(parsed, identity, data.searchPath ?? '') ? reporting : undefined
+                : heldConfigurationCheck(parsed, identity) ? reporting : undefined
             if (!admitted) return hold
             const authenticated = await authenticatePublication(settle(readPublication(publicationRequests.filter(request => request.path !== configName))), recordedConfig.cockpit.name)
             return authenticated.held ?? { decision: admitted, diagnostics: [] }
@@ -534,9 +507,9 @@ export async function runGuardEvaluationApplication(
         const protectedPaths = [...GUARD_ROOT_PROTECTIONS.map(item => join(policy.canonicalRoot, item.path)), ...watchedPaths]
         const trees = new Map<string, Awaited<ReturnType<typeof guardWorktreeChanges>>>()
         const treeKey = (cwd: string, target: GitTreeTarget) => `${cwd}\0${JSON.stringify([target.revision, target.from ?? null, target.paths ?? null, target.fallback ?? null, target.remote ?? null, target.optional ?? null, target.keepsLocal ?? null])}`
-        for (const invocation of parsed.invocations) {
+        for (const [at, invocation] of parsed.invocations.entries()) {
             const command = gitInvocation(invocation)
-            const written = command && !command.uncertain && allowed(command.cwd) ? gitTreeTargets(command) : undefined
+            const written = command && !command.uncertain && allowed(command.cwd) ? gitTreeTargets(command, stashedBefore(parsed.invocations, at, command.cwd)) : undefined
             for (const target of written && 'targets' in written ? written.targets : []) {
                 const key = treeKey(command!.cwd, target)
                 if (trees.has(key)) continue
@@ -744,73 +717,42 @@ export async function runGuardEvaluationApplication(
                 ...(request.operation === 'repository' ? { tracked: tracked.get(path) ?? null, ...request.history ? { committed: committed.get(path) ?? null } : {} } : {}),
                 ...(request.operation === 'write' && exists && inspected.get(path)!.isFile() ? { links: inspected.get(path)!.nlink } : {}) }
         }
-        const cockpitInvocations: GuardInvocationProfile[] = []
-        const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')
         const searchPath = data.searchPath ?? ''
-        // Skills and fix hints print the installed entrypoint, and people also run `npx --no cockpit …` and
-        // the bin link; every spelling counts as the launcher only where it provably starts this installation.
-        type Launched = { readonly executable: string; readonly cwd: string; readonly argv: readonly string[]; readonly prefix: number; readonly session: boolean }
+        // Every spelling that names cockpit counts as cockpit, and with it the command a session or exec runs
+        // after `--`, which the evaluator judges as one more invocation.
+        type Launched = { readonly executable: string; readonly cwd: string; readonly argv: readonly string[]; readonly prefix: number; readonly nested?: true }
         const launched: Launched[] = []
-        const prove = (executable: string | null, cwd: string, argv: readonly string[], session: boolean) => {
-            const prefix = executable === null ? undefined : cockpitLauncherPrefix(executable, argv)
-            const evidence = prefix === undefined ? undefined : guardLauncherEvidence(executable!, argv.slice(0, prefix), cwd, identity.root, launcher, searchPath)
-            if (evidence === undefined) return undefined
-            inspected.set(evidence, lstatSync(evidence))
-            const proven = { executable: executable!, cwd, argv, prefix: prefix!, session }
-            launched.push(proven)
-            return proven
-        }
-        const configured = { canonicalRoot: identity.root, configPath: identity.configPath, profiles: agentProfiles(config) }
-        for (const { executable, cwd, argv } of parsed.invocations) {
-            const proven = prove(executable, cwd, argv, true)
-            // The evaluator judges a session's command as one more invocation, so its spelling needs proof too.
-            const inner = proven && ordinarySessionCommand(argv.slice(proven.prefix), cwd, configured)
-            if (inner) prove(inner[0]!, cwd, inner.slice(1), false)
+        for (const invocation of parsed.invocations) {
+            const prefix = cockpitLaunch(invocation)
+            if (prefix === undefined) continue
+            launched.push({ executable: invocation.executable!, cwd: invocation.cwd, argv: invocation.argv, prefix })
+            const inner = innerCommand(invocation.argv.slice(prefix))
+            const nested = inner && { executable: inner.words[0]!, argv: inner.words.slice(1) }
+            const nestedPrefix = nested && cockpitLaunch(nested)
+            if (nested && nestedPrefix !== undefined) launched.push({ ...nested, cwd: invocation.cwd, prefix: nestedPrefix, nested: true })
         }
         // Sync or upgrade would apply a widening edit, and the person reviews that edit first.
         const applying = widening ? launched.find(entry => ['sync', 'upgrade'].includes(commandSpelling(entry.argv.slice(entry.prefix)).name ?? '')) : undefined
         if (applying) return refused({ decision: 'deny', reason: `Refusing to run cockpit ${commandSpelling(applying.argv.slice(applying.prefix)).name} while ${identity.configPath} has an unapproved edit that widens what agents may do: a person reviews it and syncs.` })
-        // A spelling the guard cannot prove starts the installed cockpit, such as a path into the package
-        // through `/./` or another case, still runs it: any cockpit command naming sync or upgrade is held too.
+        // A spelling that does not name cockpit, such as a path into the package through `/./` or another
+        // case, still runs it: any cockpit-shaped command naming sync or upgrade is held too.
         const packages = [...policy.cockpitPackageDirectories ?? [], ...policy.executionDirectories]
         const unproven = widening ? parsed.invocations.find(invocation => cockpitShaped(invocation, packages)
             && [invocation.executable ?? '', ...invocation.argv].some(word => /(?:^|:)(?:sync|upgrade)$/.test(word))) : undefined
         if (unproven) return refused({ decision: 'deny', reason: `Refusing to run cockpit ${[unproven.executable ?? '', ...unproven.argv].find(word => /(?:^|:)upgrade$/.test(word)) ? 'upgrade' : 'sync'} while ${identity.configPath} has an unapproved edit that widens what agents may do: a person reviews it and syncs.` })
-        let launcherSha256: string | undefined
-        if (launched.length) {
-            const status = lstatSync(launcher)
-            if (!status.isFile() || status.isSymbolicLink() || !(status.mode & 0o111) || realpathSync(launcher) !== launcher) {
-                return unavailable('Guard ordinary command executable is unavailable or ambiguous.')
-            }
-            launcherSha256 = (await read(dirname(launcher), basename(launcher), 65_536)).sha256
-            inspected.set(launcher, status)
-            const services = await guardServiceIds(config, identity.root,
-                { node, resolveDocker: adapters.resolveDocker, execute: adapters.execute ?? executeProbe })
-            if (typeof services === 'string') return unavailable(`Guard could not read the Compose service list: ${services}`)
-            const authority = { executable: launcher, ...configured, allowedRoots: prepared.result.policy.allowedRoots, services,
-                gates: config.testing?.gates.map(gate => gate.id) ?? [], grants: ordinaryGrants(config) }
-            for (const { executable, cwd, argv, prefix, session } of launched) {
-                const args = argv.slice(prefix)
-                // A session inside a session would run a command the evaluator never sees.
-                const admitted: Pick<GuardInvocationProfile, 'reads' | 'alone'> | undefined = session && ordinarySessionCommand(args, cwd, configured) ? {}
-                    : resolveOrdinaryInvocation({ executable: launcher, cwd, argv: args }, authority, path => {
-                        const fact = inspect({ path, cwd, operation: 'write' })
-                        return !!fact && typeof fact === 'object' && 'status' in fact && fact.status === 'resolved'
-                            && 'symlink' in fact && fact.symlink === false
-                    })
-                // The evaluator matches the invocation as the agent spelled it, and checks what it reads.
-                if (admitted) cockpitInvocations.push({ executable, cwd, argv, ...(admitted.reads ? { reads: admitted.reads } : {}), ...(admitted.alone ? { alone: true as const } : {}) })
-            }
-        }
+        const authority = { grants: ordinaryGrants(config), profiles: agentProfiles(config), roots: prepared.result.policy.allowedRoots }
+        // A session inside a session would run a command the evaluator never sees.
+        const cockpitInvocations: GuardInvocationProfile[] = launched.filter(entry => agentMayRun(entry.argv.slice(entry.prefix), { ...authority, cwd: entry.cwd })
+            && !(entry.nested && innerCommand(entry.argv.slice(entry.prefix))))
+            .map(({ executable, cwd, argv }) => ({ executable, cwd, argv }))
         if (cockpitInvocations.length + prepared.result.policy.projectCommands.length > GUARD_INPUT_LIMITS.invocations) return unavailable('Guard candidates exceed the invocation bound.')
         const decision = evaluateGuard(parsed, { ...prepared.result.policy, cockpitInvocations,
             mcpAllowedTools: config.mcp.allowed_tools,
-            cockpitLaunchers: launched.map(({ executable, cwd, argv, prefix }) => ({ executable, cwd, argv: argv.slice(0, prefix) })),
             searchDirectories: guardSearchDirectories(searchPath, prepared.result.policy.allowedRoots),
             // A write path still never takes a program planted in a search path directory, nor the Node the guard runs.
             ...agentAreas,
             ...policy.writePaths?.length || agentRoots.length ? { externalSearchDirectories: externalSearchDirectories(searchPath, policy.allowedRoots),
-                guardRuntime: [...new Set([identity.node, dirname(dirname(identity.node)), process.execPath])].filter(path => path !== '/') } : {},
+                guardRuntime: [...new Set([identity.node, node.canonicalPath, dirname(dirname(node.canonicalPath))])].filter(path => path !== '/') } : {},
             // The guard script on disk is the one the person's sync recorded, so staging it stages what a person ran sync for.
             ...inspectGuardRecord(identity.root) === 'match' ? { recordedGuardScript: true } : {},
             ripgrepConfigActive: data.ripgrepConfigActive === true }, inspect)
@@ -834,7 +776,6 @@ export async function runGuardEvaluationApplication(
             if (currentPublication.get(path)!.sha256 !== hash) return unavailable('Guard publication changed during evaluation.')
         }
         if ((await read(dirname(identity.module), basename(identity.module), 16_777_216)).sha256 !== identity.moduleSha256) return unavailable('Guard handler changed during evaluation.')
-        if (launcherSha256 && (await read(dirname(launcher), basename(launcher), 65_536)).sha256 !== launcherSha256) return unavailable('Guard ordinary command executable changed during evaluation.')
         return refused(instruction ?? decision)
     } catch (error) {
         if (error instanceof CallPathUnreadable) return unavailable(error.message)
@@ -1100,7 +1041,7 @@ export async function prepareGuardEvaluationPolicy(
                 secretPaths,
                 executionDirectories, cockpitPackageDirectories, searchDirectories: [],
                 secretFileIdentities: secretFiles.identities && [...secretFiles.identities], protectedFilesLinked,
-                cockpitInvocations: [], cockpitLaunchers: [], projectCommands: [],
+                cockpitInvocations: [], projectCommands: [],
             }
             return { kind: 'complete' as const, status: 0 as const, diagnostics: [],
                 result: { policy } }

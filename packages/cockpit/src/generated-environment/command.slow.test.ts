@@ -444,7 +444,6 @@ it('consumes vendor and exact build/test authority through installed hook regist
     expect(invoke('cat .env.schema')).toMatchObject(permitted)
     const launcher = fileURLToPath(new URL('../../bin/cockpit.mjs', import.meta.url))
     expect(invoke(`${JSON.stringify(launcher)} check --config ${JSON.stringify(configPath)}`, root)).toMatchObject(permitted)
-    expect(invoke(`${JSON.stringify(launcher)} check --config ${JSON.stringify(configPath)} --unknown`, root).stdout).toContain('permissionDecision":"ask')
     expect(invoke(`${JSON.stringify(launcher)} reset --config ${JSON.stringify(configPath)}`, root).stdout).toContain('permissionDecision":"ask')
     // `git restore` and `sed -i` leave identical bytes in a new file. The guard authenticates the
     // configuration by its content, so that replacement must not hold every tool call.
@@ -470,7 +469,7 @@ it('consumes vendor and exact build/test authority through installed hook regist
     expect(invoke('npm run build')).toMatchObject({ status: 0, stderr: '', stdout: expect.stringMatching(/"permissionDecision":"deny".*drifted/) })
 }, 120_000)
 
-it('admits the npx and installed-path launcher spellings only while they run the installed cockpit', async () => {
+it('admits every launcher spelling that names cockpit, and asks only for what changes what agents may do', async () => {
     const { root, configPath } = await surfaceConsumer('launcher-spellings', { custom: `
 [testing]
 stages = [{ id = "quick", command = ["sh", "-c", "echo ok"], requires_stack = false }]
@@ -505,56 +504,41 @@ gates = [{ id = "quick", tier = "targeted", stages = ["quick"], changes = "Synth
         // The guard reads the declared gate ids from the configuration it authenticated.
         'npx --no cockpit test-run --config cockpit.toml --gate quick --json', './node_modules/.bin/cockpit work status --config cockpit.toml --json']
     for (const command of proven) expect(decision(command), command).toBe('allow')
-    const unproven = ['npx cockpit doctor --config cockpit.toml', 'npx --no -p other cockpit doctor --config cockpit.toml',
-        'npx --no cockpit session --config cockpit.toml -- npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt',
-        'npx --no cockpit --script-shell=/bin/sh doctor --config cockpit.toml', 'npx --no cockpit session --config cockpit.toml -- npx --no cockpit session --config cockpit.toml -- true',
-    ].map(command => `${command}: ${decision(command)}`)
-    expect(unproven).toEqual(['npx cockpit doctor --config cockpit.toml: ask', 'npx --no -p other cockpit doctor --config cockpit.toml: ask', 'npx --no cockpit session --config cockpit.toml -- npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt: ask', 'npx --no cockpit --script-shell=/bin/sh doctor --config cockpit.toml: ask', 'npx --no cockpit session --config cockpit.toml -- npx --no cockpit session --config cockpit.toml -- true: ask'])
+    // Bare cockpit, a draft named with other commands, a gate the command refuses itself, and npx from a
+    // subdirectory run as any program does.
+    for (const command of ['cockpit check --config cockpit.toml', 'npx --no cockpit test-run --config cockpit.toml --gate undeclared',
+        'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt && git status',
+        'npx --no cockpit session --config cockpit.toml -- npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt']) {
+        expect(decision(command), command).toBe('allow')
+    }
+    expect(decision('npx --no cockpit doctor --config ../cockpit.toml', join(root, 'app'))).toBe('allow')
+    // An agent's sync, and setup's writes into sibling repositories, run unprompted: sync itself refuses a widening.
+    for (const command of ['npx --no cockpit sync --config cockpit.toml', 'npx --no cockpit setup --config cockpit.toml --write-instruction-files',
+        'npx --no cockpit setup --config cockpit.toml --write-instruction-pointers']) expect(decision(command), command).toBe('allow')
+    // A spelling whose launcher takes options of its own is refused with the spelling to use; one that names another package asks.
+    const unnamed = ['npx cockpit doctor --config cockpit.toml', 'npx --no -p other cockpit doctor --config cockpit.toml',
+        'npx --no cockpit --script-shell=/bin/sh doctor --config cockpit.toml'].map(command => `${command}: ${decision(command)}`)
+    expect(unnamed).toEqual(['npx cockpit doctor --config cockpit.toml: deny', 'npx --no -p other cockpit doctor --config cockpit.toml: ask', 'npx --no cockpit --script-shell=/bin/sh doctor --config cockpit.toml: deny'])
     const asked = ['npx --no cockpit env schema --config cockpit.toml --path app:.env.local',
         'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from .env',
-        'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt && git status',
-        'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt; git status',
-        'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt | cat',
-        'npx --no cockpit reset --config cockpit.toml', 'npx --no cockpit test-run --config cockpit.toml --gate undeclared',
+        'npx --no cockpit reset --config cockpit.toml',
+        // No seed is declared here to refill the data a reset deletes, so an applied reset waits for a person.
+        'npx --no cockpit reset --config cockpit.toml --apply',
         'npx --no cockpit work accept --config cockpit.toml --work-order WO-001 --interactive', `node ${join(root, 'app/server.mjs')} doctor --config cockpit.toml`,
         // A session runs only what the agent could run directly.
         'npx --no cockpit session --config cockpit.toml -- rm -rf fixtures',
         // A session inside a session would run a command the guard never judged.
         './node_modules/.bin/cockpit session --config cockpit.toml -- ./node_modules/.bin/cockpit session --config cockpit.toml -- rm -rf fixtures',
+        'npx --no cockpit session --config cockpit.toml -- npx --no cockpit session --config cockpit.toml -- true',
     ].map(command => `${command.replaceAll(root, '<root>')}: ${decision(command)}`)
-    expect(asked).toEqual(['npx --no cockpit env schema --config cockpit.toml --path app:.env.local: deny', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from .env: deny', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt && git status: ask', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt; git status: ask', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from draft.txt | cat: ask', 'npx --no cockpit reset --config cockpit.toml: ask', 'npx --no cockpit test-run --config cockpit.toml --gate undeclared: ask', 'npx --no cockpit work accept --config cockpit.toml --work-order WO-001 --interactive: ask', 'node <root>/app/server.mjs doctor --config cockpit.toml: allow', 'npx --no cockpit session --config cockpit.toml -- rm -rf fixtures: allow', './node_modules/.bin/cockpit session --config cockpit.toml -- ./node_modules/.bin/cockpit session --config cockpit.toml -- rm -rf fixtures: ask'])
+    expect(asked).toEqual(['npx --no cockpit env schema --config cockpit.toml --path app:.env.local: deny', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from .env: deny', 'npx --no cockpit reset --config cockpit.toml: ask', 'npx --no cockpit reset --config cockpit.toml --apply: ask', 'npx --no cockpit work accept --config cockpit.toml --work-order WO-001 --interactive: ask', 'node <root>/app/server.mjs doctor --config cockpit.toml: allow', 'npx --no cockpit session --config cockpit.toml -- rm -rf fixtures: allow', './node_modules/.bin/cockpit session --config cockpit.toml -- ./node_modules/.bin/cockpit session --config cockpit.toml -- rm -rf fixtures: ask', 'npx --no cockpit session --config cockpit.toml -- npx --no cockpit session --config cockpit.toml -- true: ask'])
     expect(decision('npx --no cockpit session --config cockpit.toml -- curl https://api.vendor.example.test/messages')).toBe('deny')
     // A command that writes the configuration runs: a widening edit is held until a person's sync applies it.
     expect(decision(`/usr/bin/sed -i 's/allow = \\[\\]/allow = ["*"]/' cockpit.toml`)).toBe('allow')
     expect(decision('node /tmp/w.js cockpit.toml')).toBe('allow')
-    // Bare cockpit counts only when the command search path finds the installed package.
-    expect(decision('cockpit check --config cockpit.toml')).toBe('ask')
-    expect(decision('cockpit check --config cockpit.toml', root, `${dirname(bin)}:${basePath}`)).toBe('allow')
-    // npx resolves from the directory it runs in; only the root's own resolution is proven.
-    expect(decision('npx --no cockpit doctor --config ../cockpit.toml', join(root, 'app'))).toBe('ask')
-    // npm applies the root .npmrc, whose script-shell or node-options run other code first, and
-    // runs a bin the root package.json declares in place of the installed one.
-    await writeFile(join(root, '.npmrc'), 'script-shell=/bin/sh\n')
-    expect(decision('npx --no cockpit doctor --config cockpit.toml')).toBe('ask')
-    expect(decision('./node_modules/.bin/cockpit doctor --config cockpit.toml')).toBe('allow')
-    await rm(join(root, '.npmrc'))
-    await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'cockpit', private: true, bin: 'planted.mjs' }))
-    expect(decision('npx --no cockpit doctor --config cockpit.toml')).toBe('ask')
-    await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'cockpit', private: true, directories: { bin: 'planted' } }))
-    expect(decision('npx --no cockpit doctor --config cockpit.toml')).toBe('ask')
-    // npm init writes directories.doc when the root holds docs/, which sync creates; only directories.bin declares commands.
-    await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'cockpit', private: true, directories: { doc: 'docs', test: 'tests' } }))
-    expect(decision('npx --no cockpit doctor --config cockpit.toml')).toBe('allow')
-    await rm(join(root, 'package.json'))
-    expect(decision('npx --no cockpit doctor --config cockpit.toml')).toBe('allow')
-    // A file planted where the link was is not the installed cockpit under either spelling.
-    await rm(bin)
-    await writeFile(bin, '#!/bin/sh\n', { mode: 0o755 })
-    expect(decision('npx --no cockpit doctor --config cockpit.toml')).toBe('ask')
-    expect(decision('./node_modules/.bin/cockpit doctor --config cockpit.toml')).toBe('ask')
 }, 120_000)
 
-it('emits path-proven launcher remedies for a pnpm-style install', async () => {
+it('runs every printed spelling under a pnpm-style install, its shell shim included', async () => {
     const { root, configPath } = await surfaceConsumer('launcher-guidance')
     expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
     await writeFile(join(root, 'app/package-lock.json'), '{}')
@@ -576,24 +560,15 @@ it('emits path-proven launcher remedies for a pnpm-style install', async () => {
     await symlink(dirname(dirname(launcher)), join(root, 'node_modules/@b00dea/cockpit'))
     await writeFile(join(root, 'node_modules/.bin/cockpit'),
         '#!/bin/sh\nexec node "$(dirname "$0")/../@b00dea/cockpit/bin/cockpit.mjs" "$@"\n', { mode: 0o755 })
-    expect(invoke('npx --no cockpit check --config cockpit.toml').permissionDecision).toBe('ask')
-    expect(invoke('./node_modules/.bin/cockpit check --config cockpit.toml').permissionDecision).toBe('ask')
+    expect(invoke('npx --no cockpit check --config cockpit.toml').permissionDecision).toBe('allow')
+    expect(invoke('./node_modules/.bin/cockpit check --config cockpit.toml').permissionDecision).toBe('allow')
     for (const procedure of ['setup', 'explain', 'fix', 'work']) {
         const guidance = await readFile(join(root, `.agents/skills/cockpit-${procedure}/procedures/${procedure}.md`), 'utf8')
         const command = guidance.match(/`([^`]+ check --config cockpit\.toml)`/)?.[1]
         expect(command, procedure).toBeDefined()
         expect(invoke(command!).permissionDecision, `${procedure}: ${command}`).toBe('allow')
     }
-    const refused = invoke('npx --no cockpit check --config cockpit.toml')
-    const remedy = refused.permissionDecisionReason.match(/`([^`]+ check --config cockpit\.toml)`/)?.[1]
-    expect(remedy).toBe('./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml')
-    expect(invoke(remedy!).permissionDecision).toBe('allow')
     expect(settings.permissions.allow).toContain('Bash(./node_modules/@b00dea/cockpit/bin/cockpit.mjs check *)')
-    // Substituting the package path is still unproven; guidance is not an authority grant.
-    await rm(join(root, 'node_modules/@b00dea/cockpit'))
-    await mkdir(join(root, 'node_modules/@b00dea/cockpit/bin'), { recursive: true })
-    await writeFile(join(root, 'node_modules/@b00dea/cockpit/bin/cockpit.mjs'), '#!/bin/sh\n', { mode: 0o755 })
-    expect(invoke(remedy!).permissionDecision).toBe('ask')
 }, 120_000)
 
 it('admits a writing sync and setup\'s sibling instruction writes unprompted, and asks for an applied reset where no seed refills the data', async () => {

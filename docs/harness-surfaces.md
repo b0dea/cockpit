@@ -180,8 +180,7 @@ Claude Code's default mode runs no shell command without an allow rule, so the g
 `.claude/settings.json` allows, by prefix, the cockpit commands the shipped skills tell an agent to
 run and the [guard admits](safety-and-autonomy.md#cockpit-commands-an-agent-can-run), spelled as
 `./node_modules/@b00dea/cockpit/bin/cockpit.mjs <command>`, `npx --no cockpit <command>` or
-`./node_modules/.bin/cockpit <command>`. The direct package entrypoint also works with pnpm;
-its `.bin` shell shim remains unproven by the guard. Commands that are
+`./node_modules/.bin/cockpit <command>`. Commands that are
 always a person's, such as `init` and `sibling add`, have no rule. A command the policy decides,
 such as `sync`, has one: the guard hook still runs first, and its ask or deny wins. Claude Code
 ignores a project's allow rules until a person has trusted the workspace by starting Claude Code
@@ -446,8 +445,9 @@ asks you to name that version.
 
 An agent may run `upgrade` exactly where it may run a writing `sync`, so it is refused
 (`GUARD_CONFIG_WIDENED`) while an unsynced widening waits. `--dry-run` is never gated. Until
-`sync` finishes, the guard holds every guarded agent tool call, because it trusts only the cockpit,
-Node and `cockpit.toml` it was generated for. A built-in that one of your overlays replaces and the
+`sync` finishes, the guard holds every guarded agent tool call, because it trusts only the cockpit
+and `cockpit.toml` it was generated for. A Node upgrade or a second Node install does not hold
+calls: the hook runs Node by the path sync found on the search path. A built-in that one of your overlays replaces and the
 release changed is reported as `OVERRIDDEN_CORE_CHANGED`. Then review `git diff` and commit
 `package.json`, the lockfile and the regenerated files together.
 

@@ -1,4 +1,4 @@
-import { claudeActiveLines } from '../../../libexec/native-selftest-input.mjs'
+import { claudeActiveLines } from '../../surfaces/claude-imports.js'
 import { cockpitCommand, type FixContext } from '../../fix-catalogue.js'
 import { proposeGeneratedEnvironmentRepair } from '../../repair.js'
 import { createHash } from 'node:crypto'

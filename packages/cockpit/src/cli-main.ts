@@ -12,7 +12,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { createInterface } from 'node:readline/promises'
 import { parseArgs } from 'node:util'
 import { createInvocationRecord, EXIT_CODES } from './invocation.js'
-import { commandGroups, commandSpelling, commandStages, commands, describePublicOption, internalCommands, isWorkHandler, isRecordedAnswerField, resolveOrdinaryInvocation, schemaFileReference, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
+import { commandGroups, commandSpelling, commandStages, commands, describePublicOption, internalCommands, isWorkHandler, isRecordedAnswerField, schemaFileReference, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
 import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS, isGuardSurfaceTarget } from './surfaces/harness-registry.js'
 import { cockpitCommand, initCommand, type FixContext } from './fix-catalogue.js'

@@ -402,12 +402,24 @@ export async function prepareSurfaces(
     const nodeFingerprint = fileFingerprint(prepared.node.canonicalPath, await lstat(prepared.node.canonicalPath))
     if (verifiedDigest(nodeFingerprint) !== prepared.node.sha256) return refuse('GENERATED_EXECUTABLE_UNAVAILABLE',
         'the Node executable changed while sync was running', 'guard', 'run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` again in a terminal')
+    // The hook runs this Node by the path the search path names it, so a package manager's link that an
+    // upgrade re-points keeps the guard working; a Node the search path does not name first runs by its own path.
+    let node = prepared.node.canonicalPath
+    for (const entry of (process.env.PATH ?? '').split(':').filter(entry => entry.startsWith('/'))) {
+        const candidate = join(entry, 'node')
+        let resolved: string
+        try { resolved = await realpath(candidate) } catch (error) {
+            if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'EACCES', 'ELOOP')) continue
+            return refuse('GENERATED_EXECUTABLE_UNAVAILABLE', `${candidate} on the search path could not be resolved: ${errorCause(error)}`, 'guard')
+        }
+        if (resolved === node) node = candidate
+        break
+    }
     const guardHandler: GuardHandlerIdentity = { root: prepared.root,
         rootInode: String(rootStat.ino),
         configPath: prepared.configPath, configSha256: prepared.sourceSha256,
         configInode: String(configStat.ino),
-        node: prepared.node.canonicalPath, nodeSha256: prepared.node.sha256, nodeFingerprint,
-        module: modulePath, moduleSha256: moduleRead.sha256 }
+        node, nodeSha256: prepared.node.sha256, nodeFingerprint, module: modulePath, moduleSha256: moduleRead.sha256 }
     const restrictions = expandRestrictions({
         canonicalProjectRoot: prepared.root,
         restrictedMcpServers: Object.keys(config.mcp.allowed_tools).sort(compareCodeUnits),

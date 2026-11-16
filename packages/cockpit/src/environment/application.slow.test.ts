@@ -9,7 +9,6 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import * as generatedCurrentnessOwner from './generated-application/sync.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { fileFingerprint } from '../environment-exec/verified-digest.js'
-import { GUARD_EXECUTABLE_SEARCH_PATH, resolveDockerExecutable } from './executable.js'
 import { evaluateGuard, GUARD_ROOT_PROTECTIONS, guardIdentity } from '../guards/evaluator.js'
 import { parseGuardInput } from '../guards/invocation-parser.js'
 import { encodeGuardLocalIdentity, GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
@@ -1114,19 +1113,14 @@ describe('guard policy construction', () => {
         const forced = { ...request, searchPath: '/usr/bin:/bin', payload: shellPayload('ls --force', root) }
         expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({ decision: { decision: 'allow' }, diagnostics: [] })
         expect(await runGuardEvaluationApplication(sync, adapters)).toMatchObject({ decision: { decision: 'allow' } })
-        // Node named by its absolute path is proven as bare `node` is, by the search path the agent runs
-        // with: it must be the `node` of one of its absolute entries, and the script the installed launcher.
+        // Any Node, by any path, runs a script that names cockpit as cockpit; node options run code first.
         const script = './node_modules/@b00dea/cockpit/bin/cockpit.mjs'
         const homebrew = '/opt/homebrew/bin:/usr/bin:/bin'
-        const preview = async (node: string, searchPath = homebrew, launched = script) => (await runGuardEvaluationApplication({ ...request, searchPath,
+        const preview = async (node: string, launched = script) => (await runGuardEvaluationApplication({ ...request, searchPath: homebrew,
             payload: shellPayload(`${node} ${launched} sync --config cockpit.toml --dry-run`, root) }, adapters)).decision.decision
-        expect(await preview('node')).toBe('allow')
-        expect(await preview('/opt/homebrew/bin/node')).toBe('allow')
-        expect(await preview('/usr/bin/node')).toBe('allow')
-        for (const [node, searchPath, launched] of [['/opt/homebrew/bin/node', '/usr/bin:/bin', script], [`${root}/node`, `${homebrew}:${root}/tools/bin`, script],
-            [`${tmpdir()}/node`, homebrew, script], ['/opt/homebrew/bin/../bin/node', homebrew, script], ['/opt/homebrew/bin/node', homebrew, `--require ./app/other.cjs ${script}`],
-            ['/opt/homebrew/bin/node', homebrew, './node_modules/@b00dea/cockpit/dist/cli.js'], ['/opt/homebrew/bin/node', homebrew, './node_modules/@b00dea/missing/bin/cockpit.mjs']]) {
-            expect(await preview(node!, searchPath, launched), `${node} ${launched} with ${searchPath}`).not.toBe('allow')
+        for (const node of ['node', '/opt/homebrew/bin/node', '/usr/bin/node', `${tmpdir()}/node`]) expect(await preview(node), node).toBe('allow')
+        for (const launched of [`--require ./app/other.cjs ${script}`, './node_modules/@b00dea/cockpit/dist/cli.js']) {
+            expect(await preview('/opt/homebrew/bin/node', launched), launched).not.toBe('allow')
         }
         expect((await runGuardEvaluationApplication(forced, adapters)).decision.reason ?? '').not.toContain('Forced writes require review.')
         const restricted = parse(readFileSync(configPath, 'utf8')) as { guards: { deny: unknown[] } }
@@ -1289,7 +1283,6 @@ describe('guard policy construction', () => {
             // The running package lives outside this checkout, so no installed directory is in reach; the
             // package itself is carried wherever it is, since a path into it runs cockpit.
             executionDirectories: [], cockpitPackageDirectories: [realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), '../..'))], searchDirectories: [], secretFileIdentities: [], protectedFilesLinked: false,
-            cockpitLaunchers: [],
             cockpitInvocations: [], projectCommands: [
                 { executable: 'npm', checkoutRoot: join(root, 'app'), kind: 'build', argv: ['run', 'build'] },
                 { executable: 'npm', checkoutRoot: join(root, 'app'), kind: 'test', argv: ['test', '--', 'unit.test.ts'] },
@@ -1382,34 +1375,6 @@ describe('guard policy construction', () => {
         }
     })
 
-    it('admits logs only for services the declared Compose files resolve to', async () => {
-        const { configPath } = fixture()
-        const root = realpathSync(dirname(configPath))
-        const source = CockpitConfig.parse(parse(readFileSync(new URL('../../../../fixtures/registries/generated-environment.toml', import.meta.url), 'utf8')))
-        const environment = source.environment
-        mkdirSync(join(root, 'app'), { recursive: true })
-        writeFileSync(join(root, 'app/package-lock.json'), '{}')
-        writeFileSync(join(root, 'compose.yml'), 'services:\n  api:\n    image: busybox\n  worker:\n    image: busybox\n')
-        writeFileSync(configPath, stringify({ ...source, cockpit: { ...source.cockpit, name: 'synthetic-cockpit', siblings_root: root },
-            environment: { ...environment, compose_files: ['compose.yml'] } }))
-        expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
-        const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
-        const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')
-        const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
-            resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }),
-            resolveDocker: () => resolveDockerExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }) }
-        const decide = async (service: string) => (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'claudecode', cwd: root, searchPath: '/usr/bin:/bin',
-            payload: shellPayload(`${launcher} logs --config ${realpathSync(configPath)} --service ${service}`, root) }, adapters)).decision.decision
-        // Docker is not a prerequisite of this suite; without it no service name can be admitted.
-        const docker = await adapters.resolveDocker()
-        if (docker.state !== 'available' && docker.reason === 'Executable was not found in the supplied search path: docker') {
-            expect([await decide('worker'), await decide('app')]).toEqual(['unavailable', 'unavailable'])
-            return
-        }
-        expect(await decide('worker')).toBe('allow')
-        expect(await decide('app')).toBe('ask')
-    }, 120_000)
-
     it('admits --profile only for a declared default profile that mounts no operator-gated sibling', async () => {
         const { configPath } = fixture()
         const root = realpathSync(dirname(configPath))
@@ -1426,16 +1391,9 @@ describe('guard policy construction', () => {
         const launcher = resolve(dirname(identity.module), '../bin/cockpit.mjs')
         const config = realpathSync(configPath)
         const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
-            resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }),
-            resolveDocker: () => resolveDockerExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }) }
+            resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }) }
         const decide = async (command: string) => (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'claudecode', cwd: root,
             searchPath: '/usr/bin:/bin', payload: shellPayload(command, root) }, adapters)).decision.decision
-        // Docker is not a prerequisite of this suite; without it the guard cannot list services and admits no cockpit command.
-        const docker = await adapters.resolveDocker()
-        if (docker.state !== 'available' && docker.reason === 'Executable was not found in the supplied search path: docker') {
-            expect(await decide(`${launcher} up --config ${config} --profile jobs`)).toBe('unavailable')
-            return
-        }
         expect(await decide(`${launcher} up --config ${config} --profile jobs`)).toBe('allow')
         expect(await decide(`${launcher} session --config ${config} --profile jobs -- ${launcher} check --config ${config}`)).toBe('allow')
         // An operator gate keeps a live-data lane a person's, and an undeclared profile was never theirs to give.

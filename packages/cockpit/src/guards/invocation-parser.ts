@@ -536,7 +536,7 @@ const interprets = (item: ParsedInvocation) => item.executable !== null && (INTE
 
 /**
  * Where the program a launcher at `at` runs starts, or undefined when the words there launch nothing the guard unwraps. A
- * cockpit launcher stays whole: the application proves which of its spellings start the installed cockpit.
+ * cockpit launcher stays whole: the evaluator reads which of its words are cockpit's own.
  */
 function launchedCommand(args: readonly Token[], at: number): { readonly index: number; readonly dropped?: number } | undefined {
     const words = args.map((token) => token.value)
