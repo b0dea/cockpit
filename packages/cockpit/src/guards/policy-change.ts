@@ -226,7 +226,7 @@ export async function inspectGuardConfigChange(root: string, configPath: string,
     if (change.kind === 'non-widening') return [{ severity: 'warning' as const, target: 'guard',
         code: 'GUARD_CONFIG_UNSYNCED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_UNSYNCED,
         message: 'cockpit.toml changed since the guards were generated without widening what agents may do; the guard judges agent calls under it, while the generated files still follow the configuration last synced until it is synced',
-        fix: `run ${cockpitCommand('sync', { config: configPath })}; an agent may run it. If sync refuses the edit, correct or revert it: meanwhile calls are judged under it, or under the configuration last synced where the guard cannot build its policy from it` }]
+        fix: `run ${cockpitCommand('sync', { config: configPath })}; an agent may run it while the guard can build its policy from the edit. Where it cannot, calls are judged under the configuration last synced and an agent's sync is refused: correct or revert the edit, or a person runs sync with --interactive` }]
     return [{ severity: 'error' as const, target: 'guard',
         code: 'GUARD_CONFIG_WIDENED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED,
         message: `cockpit.toml changed since the guards were generated and ${guardConfigHeldReason(change)}; ${change.kind === 'widening'

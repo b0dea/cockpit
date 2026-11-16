@@ -1154,6 +1154,29 @@ describe('guard policy construction', () => {
             reason: `Refusing to run cockpit sync while calls are judged under the configuration last synced: a person reviews ${canonicalConfig} and syncs.${notice}` } })
     }, 120_000)
 
+    it('admits an agent\'s cockpit command only on the guard\'s own configuration, however it is named', async () => {
+        const { root, configPath, request, adapters } = await installedGuardRequest()
+        const launcher = `${root}/node_modules/@b00dea/cockpit/bin/cockpit.mjs`
+        const decide = async (command: string) => (await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin', payload: shellPayload(command, root) }, adapters)).decision
+        mkdirSync(join(root, 'sub'), { recursive: true })
+        writeFileSync(join(root, 'sub/cockpit.toml'), readFileSync(configPath))
+        symlinkSync(configPath, join(root, 'alias.toml'))
+        try {
+            for (const command of [`${launcher} check --config cockpit.toml`, `${launcher} sync --config=./cockpit.toml`, `${launcher} sync --config ${configPath}`,
+                `${launcher} check --config alias.toml`, `${launcher} init . --target codexcli`]) {
+                expect((await decide(command)).decision, command).toBe('allow')
+            }
+            // Another configuration has no guard of this one's, and sync would publish guards and settings from it.
+            for (const command of [`${launcher} sync --config sub/cockpit.toml`, `${launcher} check --config=sub/cockpit.toml`,
+                `${launcher} reset --apply --config sub/other.toml`, `${launcher} init sub --target codexcli`,
+                `${launcher} check --config cockpit.toml --config sub/cockpit.toml`]) {
+                const decision = await decide(command)
+                expect(decision.decision, command).toBe('ask')
+                expect(decision.reason, command).toContain(`not ${configPath}, the configuration this guard was generated from`)
+            }
+        } finally { rmSync(join(root, 'sub'), { recursive: true, force: true }); rmSync(join(root, 'alias.toml'), { force: true }) }
+    }, 120_000)
+
     it('judges every call under the configuration last synced whatever state cockpit.toml is in, until it loads again', async () => {
         const { root, configPath, request, adapters } = await installedGuardRequest()
         const recorded = readFileSync(configPath)
@@ -1183,11 +1206,30 @@ describe('guard policy construction', () => {
         // Without a record of the configuration last synced there is nothing to judge by, so the guard holds.
         const record = join(root, GUARD_LOCAL_PATHS.generatedConfig)
         renameSync(record, `${record}.away`)
-        rmSync(configPath)
+        writeFileSync(configPath, `${recorded}\n`)
         try {
-            expect(await decide(write('app/.env.example'))).toMatchObject({ decision: 'unavailable',
+            const held = await decide(write('app/.env.example'))
+            expect(held).toMatchObject({ decision: 'unavailable',
                 reason: expect.stringContaining(`the configuration last synced is missing from ${GUARD_LOCAL_PATHS.generatedConfig} or does not load there`) })
+            // Plain sync refuses in this state, so the hold names the sync a person runs.
+            expect(held.reason).toContain(`sync --config ${configPath} --interactive\` in a terminal, outside the agent`)
         } finally { renameSync(`${record}.away`, record); repair() }
+
+        // An edit that widens nothing but whose policy cannot be built is judged under the record instead.
+        const failing = (when: (path: string) => boolean) => ({ ...adapters, observeCheckout: (async (input: Parameters<typeof adapters.observeCheckout>[0]) =>
+            when((input as { source: { path: string } }).source.path) ? { state: 'unavailable', reason: 'synthetic checkout failure' } : adapters.observeCheckout(input)) as typeof adapters.observeCheckout })
+        const deny = async (using: typeof adapters) => (await runGuardEvaluationApplication({ ...request, payload: write('app/config/runtime.env') }, using)).decision
+        writeFileSync(configPath, `${recorded}\n`)
+        try {
+            const fallback = await deny(failing(path => path === configPath))
+            expect(fallback).toMatchObject({ decision: 'deny', reason: expect.stringContaining('changed since the guards were generated, but the guard cannot build its policy from it (') })
+            expect(fallback.reason).toContain('synthetic checkout failure')
+            // A failure the record shares has nothing to do with the edit, so it is reported as it is.
+            const shared = await deny(failing(() => true))
+            expect(shared).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('synthetic checkout failure') })
+            expect(shared.reason).not.toContain('cannot build its policy from it')
+            expect(shared.reason).not.toContain('judged under the configuration last synced')
+        } finally { repair() }
     }, 120_000)
 
     it.each([

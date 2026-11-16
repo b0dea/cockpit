@@ -1,6 +1,6 @@
 import { SURFACE_TARGETS } from './surfaces/contract.js'
 import { parseArgs, type ParseArgsConfig } from 'node:util'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { isSensitiveGuardName, WRAPPING_COMMANDS } from './guards/evaluator.js'
 import { GUARD_HANDLER_ARGV } from './guards/harness-adapter.js'
 
@@ -511,6 +511,24 @@ export const internalCommands: readonly InternalCommandDefinition[] = Object.fre
 })])
 
 export type OrdinaryGrant = 'browser-preapproval' | 'seeded-reset'
+
+/**
+ * The configuration file the cockpit command `args` spell would load, as the CLI resolves it from `cwd`:
+ * its --config, or for init the cockpit.toml of the root it names. Undefined when it loads none, such as
+ * a command missing --config, which the CLI refuses itself; 'unclear' when its words do not settle one.
+ */
+export function commandConfiguration(args: readonly string[], cwd: string): string | undefined | 'unclear' {
+    const spelling = commandSpelling(args)
+    const definition = commands.find(row => row.name === spelling.name)
+    if (!definition) return undefined
+    const separator = spelling.rest.indexOf('--')
+    const own = separator < 0 ? spelling.rest : spelling.rest.slice(0, separator)
+    if (own.filter(word => word === '--config' || word.startsWith('--config=')).length > 1) return 'unclear'
+    const { values, positionals } = parseArgs({ args: [...own], options: definition.options, strict: false, allowPositionals: true })
+    if (definition.name === 'init') return join(resolve(cwd, String(positionals[0] ?? '.')), 'cockpit.toml')
+    if (values.config === undefined) return undefined
+    return typeof values.config === 'string' && values.config !== '' ? resolve(cwd, values.config) : 'unclear'
+}
 
 /**
  * Whether an agent may run the cockpit command `args` spell (the words after the launcher) in `cwd`

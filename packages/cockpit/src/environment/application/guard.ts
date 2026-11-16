@@ -43,7 +43,7 @@ import {
     type GitTreeTarget,
     guardExtraction,
 } from '../../guards/evaluator.js'
-import { agentMayRun, commandSpelling, type OrdinaryGrant } from '../../command-table.js'
+import { agentMayRun, commandConfiguration, commandSpelling, type OrdinaryGrant } from '../../command-table.js'
 import { GUARD_INPUT_LIMITS, parseGuardInput } from '../../guards/invocation-parser.js'
 import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../../generated-environment/transaction.js'
 import { parseOwnershipManifest } from '../../surfaces/ownership.js'
@@ -122,8 +122,8 @@ interface GuardEvaluationApplicationResult {
 
 // Every refusal below holds all of the agent's guarded calls, `git restore` included, so each says what
 // failed, why that blocks everything, and the human action that clears it. Regeneration is a human
-// step on purpose: guard policy comes from cockpit.toml, and an agent able to apply its own edit
-// could loosen its guard.
+// step on purpose: guard policy comes from the configuration sync recorded, and an agent able to
+// record its own edit could loosen its guard.
 function recoveryFile(path: string, mode: number): boolean {
     try {
         if (!statSync(path).isFile()) return false
@@ -325,10 +325,12 @@ export async function runGuardEvaluationApplication(
             return recorded.kind === 'complete' && recorded.result.source.path === recordPath && recorded.result.source.sha256 === identity.configSha256
                 ? recorded.result : undefined
         }
-        const unrecorded = (why: string) => unavailable(guardHeld(identity, `${why}, and the configuration last synced is missing from ${GUARD_LOCAL_PATHS.generatedConfig} or does not load there`,
-            'guard policy comes from that record'))
-        const underRecord = (why: string, until: string) => ` ${why}; calls are judged under the configuration last synced until ${until}.`
         const personSyncs = `a person runs \`${installedSyncCommand(identity.root, identity.configPath)} --interactive\` in a terminal, outside the agent, and confirms it`
+        // Plain sync refuses a configuration it cannot compare with the last one, so the fix names the sync
+        // that asks a person; one with no cockpit.toml to read keeps the recovery for a missing file.
+        const unrecorded = (why: string) => unavailable(guardHeld(identity, `${why}, and the configuration last synced is missing from ${GUARD_LOCAL_PATHS.generatedConfig} or does not load there`,
+            'guard policy comes from that record', recoveryState(identity).config ? `Fix: ${personSyncs}.` : undefined))
+        const underRecord = (why: string, until: string) => ` ${why}; calls are judged under the configuration last synced until ${until}.`
         const loaded = unwrap(await configPending)
         let declared: LoadedConfigProjection
         if (loaded.kind !== 'complete' || loaded.result.source.path !== identity.configPath) {
@@ -362,10 +364,13 @@ export async function runGuardEvaluationApplication(
         // An edit that widens nothing but whose policy cannot be built, such as a sibling that escapes its
         // root, leaves the configuration last synced to judge by, as an edit that does not load does.
         if (built.prepared.kind !== 'complete' && declared === loaded.result && loaded.result.source.sha256 !== identity.configSha256) {
+            // Only a record that builds is a way out: a failure it shares, such as an unreadable checkout, has
+            // nothing to do with the edit and is reported as it is.
             const recorded = await lastSynced()
-            if (recorded) {
+            const fallback = recorded && await build(recorded)
+            if (fallback && fallback.prepared.kind === 'complete') {
                 notice = underRecord(`${identity.configPath} changed since the guards were generated, but the guard cannot build its policy from it (${forwardedReason(built.prepared.diagnostics[0]?.message ?? 'no reason given')})`, 'it is corrected or reverted')
-                built = await build(recorded)
+                built = fallback
             }
         }
         const { checkout, config, prepared } = built
@@ -680,9 +685,21 @@ export async function runGuardEvaluationApplication(
             && [invocation.executable ?? '', ...invocation.argv].some(word => /(?:^|:)(?:sync|upgrade)$/.test(word))) : undefined
         if (unproven) return refused({ decision: 'deny', reason: `Refusing to run cockpit ${[unproven.executable ?? '', ...unproven.argv].find(word => /(?:^|:)upgrade$/.test(word)) ? 'upgrade' : 'sync'} while calls are judged under the configuration last synced: a person reviews ${identity.configPath} and syncs.` })
         const authority = { grants: ordinaryGrants(config), profiles: agentProfiles(config), roots: prepared.result.policy.allowedRoots }
+        // A cockpit command acts on the configuration it loads, so an agent's runs only on this guard's own,
+        // resolved as the CLI resolves it, links included. Another has no guard of this one's to judge an
+        // edit against, and sync would publish guards and settings from a file the agent wrote.
+        const foreignConfiguration = (entry: Launched): string | undefined => {
+            const target = commandConfiguration(entry.argv.slice(entry.prefix), entry.cwd)
+            if (target === undefined) return undefined
+            if (target === 'unclear') return 'a configuration its words do not settle'
+            let loads = target
+            try { loads = realpathSync(target) } catch (error) { if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return target }
+            return loads === identity.configPath ? undefined : target
+        }
+        const foreign = launched.map(foreignConfiguration).find(target => target !== undefined)
         // A session inside a session would run a command the evaluator never sees.
         const cockpitInvocations: GuardInvocationProfile[] = launched.filter(entry => agentMayRun(entry.argv.slice(entry.prefix), { ...authority, cwd: entry.cwd })
-            && !(entry.nested && innerCommand(entry.argv.slice(entry.prefix))))
+            && foreignConfiguration(entry) === undefined && !(entry.nested && innerCommand(entry.argv.slice(entry.prefix))))
             .map(({ executable, cwd, argv }) => ({ executable, cwd, argv }))
         if (cockpitInvocations.length + prepared.result.policy.projectCommands.length > GUARD_INPUT_LIMITS.invocations) return unavailable('Guard candidates exceed the invocation bound.')
         const decision = evaluateGuard(parsed, { ...prepared.result.policy, cockpitInvocations,
@@ -715,7 +732,12 @@ export async function runGuardEvaluationApplication(
             if (currentPublication.get(path)!.sha256 !== hash) return unavailable('Guard publication changed during evaluation.')
         }
         if ((await read(dirname(identity.module), basename(identity.module), 16_777_216)).sha256 !== identity.moduleSha256) return unavailable('Guard handler changed during evaluation.')
-        return refused(instruction ?? decision)
+        // A person may approve working in another cockpit, so the ask says that is what it is about. It holds
+        // for a command that only reads too: one rule, whatever the command.
+        const another = `Runs cockpit on ${foreign}, not ${identity.configPath}, the configuration this guard was generated from and judges by: an agent works in its own cockpit, so a person approves working in another.`
+        const asked: GuardDecision = foreign === undefined || decision.decision === 'deny' || decision.decision === 'unavailable' ? decision
+            : { decision: policy.unresolved === 'deny' ? 'deny' : 'ask', reason: decision.decision === 'ask' ? `${another} ${decision.reason}` : another }
+        return refused(instruction ?? asked)
     } catch (error) {
         if (error instanceof CallPathUnreadable) return unavailable(error.message)
         return unavailable(`Guard authority could not be read or revalidated: ${errorCause(error)}`)
