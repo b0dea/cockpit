@@ -102,7 +102,7 @@ async function exited(pid: number): Promise<void> {
 // The case brings up a stack through the real owners against a Node-scripted Docker, then runs
 // preflight a dozen times with real host processes and sockets, so it runs in the slow tier.
 describe('session-owned host listeners on leased ports', { timeout: 300_000 }, () => {
-    it('accepts a listener only while a live session holding this stack started it', async () => {
+    it('accepts a listener a live session holding this stack started, and warns about any other', async () => {
         const candidate = await fixture({ configuredRuntime: true, unseeded: true })
         await rm(join(candidate.checkout, COMPOSE_OWNERSHIP_FILE))
         const appPort = await freePort()
@@ -158,10 +158,8 @@ else process.exit(64)
         let published: Server | undefined
         // A change made right after the named read, once `earlier` reads of it have passed.
         let after: { readonly step: string; earlier: number; readonly change: () => Promise<void> } | undefined
-        let listenerReads = 0
         const execute = vi.fn(async (step: Parameters<typeof executeProbe>[0]) => {
             const result = await executeProbe(step)
-            if (step.id.startsWith('process:listeners')) listenerReads += 1
             if (after && step.id.startsWith(after.step) && after.earlier-- === 0) {
                 const { change } = after
                 after = undefined
@@ -176,8 +174,13 @@ else process.exit(64)
         }, execute)
         const health = createHealthCommandAdapters({ configPath: candidate.configPath, env, timeoutMs: 5_000 }, execute)
         const preflight = () => runPreflight({ configPath: candidate.configPath }, health)
-        const portCheck = (outcome: Awaited<ReturnType<typeof preflight>>) =>
-            outcome.result.checks.find(({ code }) => code === 'PORT_FAMILY_COLLISION')
+        // A listener no session holding the stack started may be the person's own program, and the
+        // stack runs without that port, so preflight passes and names it.
+        const expectWarned = (outcome: Awaited<ReturnType<typeof preflight>>, reason: string) => {
+            expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: 'complete', status: 0, result: { verdict: 'pass' } })
+            expect(outcome.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'PORT_FAMILY_COLLISION',
+                message: expect.stringMatching(new RegExp(`:${webPort} has a listener no cockpit session started \\(.*${reason}`)) }))
+        }
         const strangers: Server[] = []
         try {
             const plain = await runUp({ configPath: candidate.configPath }, lifecycle('synthetic-plain'))
@@ -198,29 +201,24 @@ else process.exit(64)
             const reused = started.start.startsWith('lstart:') ? 'lstart:2000-01-01T00:00:00.000Z' : started.start.replace(/:[0-9]+$/, ':1')
             const stale = await runUp({ configPath: candidate.configPath }, lifecycle('synthetic-stale', { pid: session.pid, processStart: reused }))
             expect(stale, JSON.stringify(stale)).toMatchObject({ kind: 'complete', status: 0 })
-            const staleHold = await preflight()
-            expect(staleHold).toMatchObject({ kind: 'blocked', status: 2 })
-            expect(portCheck(staleHold), JSON.stringify(staleHold)).toMatchObject({ verdict: 'fail' })
+            expectWarned(await preflight(), 'no live cockpit session holds this stack')
             expect(await runSleep({ configPath: candidate.configPath }, lifecycle('synthetic-stale'))).toMatchObject({ kind: 'complete' })
 
             const live = await runUp({ configPath: candidate.configPath }, lifecycle('synthetic-live', { pid: session.pid, processStart: started.start }))
             expect(live, JSON.stringify(live)).toMatchObject({ kind: 'complete', status: 0 })
             const owned = await preflight()
             expect(owned, JSON.stringify(owned)).toMatchObject({ kind: 'complete', status: 0, result: { verdict: 'pass' } })
+            expect(owned.diagnostics.filter(({ code }) => code === 'PORT_FAMILY_COLLISION')).toEqual([])
 
             // A second listener on the same port from a process no session started.
             strangers.push(await listen(webPort, '::1'))
-            const foreign = await preflight()
-            expect(foreign).toMatchObject({ kind: 'blocked', status: 2 })
-            expect(portCheck(foreign), JSON.stringify(foreign)).toMatchObject({ verdict: 'fail' })
+            expectWarned(await preflight(), 'was not started by a live cockpit session holding this stack')
             await close(strangers.pop()!)
 
             // A live session that does not hold this stack, as another checkout's session would.
             const other = startSession(candidate.root)
             await other.listen(webPort, '::1')
-            const otherSession = await preflight()
-            expect(otherSession).toMatchObject({ kind: 'blocked', status: 2 })
-            expect(portCheck(otherSession), JSON.stringify(otherSession)).toMatchObject({ verdict: 'fail' })
+            expectWarned(await preflight(), 'was not started by a live cockpit session holding this stack')
             process.kill(-other.pid, 'SIGKILL')
             await exited(other.pid)
             expect(await preflight()).toMatchObject({ kind: 'complete', status: 0 })
@@ -238,29 +236,10 @@ else process.exit(64)
                 await writeFile(coordination, coordinationBytes)
             }
 
-            // The session's listener is replaced by a stranger's after its ownership was proven: the
-            // second process-table read closes the first ownership observation.
-            const reads = listenerReads
-            const replaced = await session.listen(webPort, '::1')
-            after = { step: 'process:table', earlier: 1, change: async () => {
-                process.kill(replaced, 'SIGKILL')
-                await exited(replaced)
-                strangers.push(await listen(webPort, '::1'))
-            } }
-            const raced = await preflight()
-            expect(after).toBeUndefined()
-            expect(listenerReads).toBe(reads + 2)
-            expect(raced).toMatchObject({ kind: 'blocked', status: 2 })
-            expect(portCheck(raced), JSON.stringify(raced)).not.toMatchObject({ verdict: 'pass' })
-            await close(strangers.pop()!)
-            expect(await preflight()).toMatchObject({ kind: 'complete', status: 0 })
-
             // The session ends without releasing its hold; its listener outlives it.
             process.kill(session.pid, 'SIGKILL')
             await exited(session.pid)
-            const ended = await preflight()
-            expect(ended).toMatchObject({ kind: 'blocked', status: 2 })
-            expect(portCheck(ended), JSON.stringify(ended)).toMatchObject({ verdict: 'fail' })
+            expectWarned(await preflight(), 'no live cockpit session holds this stack')
         } finally {
             await Promise.all(strangers.map(close))
             if (published) await close(published)

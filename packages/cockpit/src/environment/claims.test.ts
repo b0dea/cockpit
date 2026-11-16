@@ -756,8 +756,7 @@ describe('dead session holders', () => {
         expect(await release()).toMatchObject({ kind: 'complete', released: [{ holderId: holderB, pid: 4242 }] })
     })
     // A listener on a leased port counts as a session's only through its process. Every read that
-    // could not be made, or that saw a process change between the reads around the socket listing,
-    // leaves ownership unproven, never owned. macOS lists sockets with lsof and Linux with ss; both
+    // could not be made leaves ownership unproven, never owned. macOS lists sockets with lsof and Linux with ss; both
     // listings of the same sockets must reach the same verdicts.
     const listings = {
         lsof: { owned: 'p302\nf12\nn127.0.0.1:4100\nf13\nn*:4300\np400\nf9\nn[::1]:4200\n', malformed: 'n127.0.0.1:4100\n' },
@@ -772,7 +771,7 @@ describe('dead session holders', () => {
             malformed: 'ESTAB 0 0 127.0.0.1:4100 127.0.0.1:5000\n',
         },
     } as const
-    it.each(['lsof', 'ss'] as const)('proves a listener a session\'s only from consistent reads of the session, the socket and its process chain (%s)', async (format) => {
+    it.each(['lsof', 'ss'] as const)('proves a listener a session\'s from one read of the session, the socket and its process chain (%s)', async (format) => {
         const session = { pid: 300, processStart: 'lstart:2026-09-07T11:00:00.000Z' }
         const table = '    1     0 Mon Sep  7 09:00:00 2026\n  300     1 Mon Sep  7 11:00:00 2026\n  301   300 Mon Sep  7 11:01:00 2026\n  302   301 Mon Sep  7 11:02:00 2026\n  400     1 Mon Sep  7 11:03:00 2026\n'
         const listing = (text: string) => async () => ({ kind: 'complete' as const, format, text })
@@ -807,14 +806,10 @@ describe('dead session holders', () => {
                 .toMatchObject({ kind: 'complete', ports: [{ port: 4100, owned: false, reason: 'no live cockpit session holds this stack' }] })
         }
 
-        let reads = 0
-        const reused = table.replace('  301   300 Mon Sep  7 11:01:00 2026', '  301   300 Mon Sep  7 11:05:00 2026')
         for (const unproven of [
             host({ listeners: async () => ({ kind: 'failed', reason: 'the socket listing is not installed' }) }),
             host({ processTable: async () => ({ kind: 'failed', reason: 'ps is not installed' }) }),
             host({ listeners: listing(listings[format].malformed) }),
-            host({ processTable: async () => ({ kind: 'complete', text: reads++ === 0 ? table : reused }) }),
-            host({}, ['Mon Sep  7 11:00:00 2026', 'Mon Sep  7 11:30:00 2026']),
             // A session whose start cannot be read may be running its own listener.
             { ...host(), process: { ...host().process, psStart: async () => ({ kind: 'failed' as const, reason: 'ps was refused' }) } },
         ]) expect(await observe(unproven)).toMatchObject({ kind: 'unavailable' })

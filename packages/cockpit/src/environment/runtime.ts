@@ -29,7 +29,6 @@ import {
     isIssuedListenerHost,
     observeSessionListeners,
     type ListenerHost,
-    type SessionListenerObservation,
 } from './claims.js'
 import { stackId as deriveStackId } from './identity.js'
 import {
@@ -2336,6 +2335,18 @@ export function portMismatchRemedy(mismatches: readonly string[]): string {
     return remedy(count)
 }
 
+/** The listeners on unpublished leased ports that a passing port check found no cockpit session started. */
+export function portListenersOutsideStack(check: {
+    readonly code: string
+    readonly owner: string
+    readonly verdict: string
+    readonly measured?: unknown
+}): readonly string[] {
+    if (check.owner !== OWNER || check.code !== ENVIRONMENT_CODES.PORT_FAMILY_COLLISION || check.verdict !== 'pass') return []
+    const outside = (check.measured as { listenersOutsideStack?: unknown } | null | undefined)?.listenersOutsideStack
+    return Array.isArray(outside) ? outside.filter((line): line is string => typeof line === 'string') : []
+}
+
 export async function observeRuntimePortFamily(input: {
     readonly topology: RuntimeTopologyEvidence
     readonly services: readonly RuntimeServiceEvidence[]
@@ -2408,23 +2419,27 @@ export async function observeRuntimePortFamily(input: {
         const observed = await observePortListeners({ bindings: listeners, timeoutMs: timeoutMs as number })
         if (observed.kind !== 'complete') return unavailable(observed.reason)
         let mismatched = observed.rows.filter((row, index) => row.listening !== (listeners[index]?.expected === 'listening'))
-        // A listener on an unpublished leased port is the stack's own only when the session holding
-        // the stack started it; the same proof is read again before the verdict is issued.
+        // A listener on an unpublished leased port is the stack's own when the session holding the
+        // stack started it. One that no such session started may be the person's own program, and the
+        // stack runs without that port, so it is reported beside a passing check rather than failed.
         const hostListener = captured?.sessionListeners as ListenerHost | undefined
         if (hostListener !== undefined && !isIssuedListenerHost(hostListener)) return unavailable('session listener observation is not authentic')
         const hosted = mismatched.filter(({ listening }) => listening).map(({ port, probeHost }) => ({ port, address: probeHost }))
-        const observeOwners = async (): Promise<SessionListenerObservation> => {
+        const outside: string[] = []
+        if (hosted.length > 0 && hostListener) {
             const holders = await readPortLeaseHolders({ projection: lease, namespace })
-            if (!holders) return { kind: 'unavailable', reason: 'retained port lease changed during listener ownership observation' }
-            return observeSessionListeners({ listeners: hosted, holders, host: hostListener! })
+            if (!holders) return unavailable('retained port lease changed during listener ownership observation', observed.observedAt)
+            const owners = await observeSessionListeners({ listeners: hosted, holders, host: hostListener })
+            if (owners.kind === 'unavailable') return unavailable(owners.reason, observed.observedAt)
+            for (const { port, address } of hosted) {
+                const foreign = owners.ports.find((owner) => owner.port === port && !owner.owned)
+                if (foreign) outside.push(`${address === '::1' ? '[::1]' : address}:${port} has a listener no cockpit session started (${foreign.reason})`)
+            }
+            mismatched = mismatched.filter(({ listening }) => !listening)
         }
-        const owners = hosted.length > 0 && hostListener ? await observeOwners() : undefined
-        if (owners?.kind === 'unavailable') return unavailable(owners.reason, observed.observedAt)
-        const foreign = new Map(owners?.ports.filter(({ owned }) => !owned).map(({ port, reason }) => [port, reason]) ?? [])
-        if (owners) mismatched = mismatched.filter(({ port, listening }) => !listening || foreign.has(port))
         if (mismatched.length > 0) {
             const named = mismatched.map(({ probeHost, port, listening }) => listening
-                ? `${probeHost === '::1' ? `[${probeHost}]` : probeHost}:${port} has a listener outside the stack${foreign.has(port) ? ` (${foreign.get(port)})` : ''}`
+                ? `${probeHost === '::1' ? `[${probeHost}]` : probeHost}:${port} has a listener outside the stack`
                 : `${probeHost === '::1' ? `[${probeHost}]` : probeHost}:${port} has no stack listener`)
             return {
                 code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, owner: OWNER, stackId: topology.stackId,
@@ -2450,19 +2465,14 @@ export async function observeRuntimePortFamily(input: {
                 return unavailable('runtime service identity changed during listener observation', observed.observedAt)
             }
         }
-        if (owners) {
-            const current = await observeOwners()
-            if (current.kind !== 'complete' || current.identity !== owners.identity || current.ports.some(({ owned }) => !owned)) {
-                return unavailable('a session listener on a leased port changed during observation', observed.observedAt)
-            }
-        }
         if (!await revalidatePortLeaseProjection({ projection: lease, namespace })) {
             return unavailable('retained port lease changed during service revalidation', observed.observedAt)
         }
+        const value = outside.length > 0 ? { listenersOutsideStack: outside } : true
         return {
             code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, owner: OWNER, stackId: topology.stackId,
-            source: `${topology.runtime.projectName}:runtime-ports`, observed: { state: 'available', value: true, observedAt: observed.observedAt },
-            expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'running-stack' },
+            source: `${topology.runtime.projectName}:runtime-ports`, observed: { state: 'available', value, observedAt: observed.observedAt },
+            expectation: { kind: 'equal', value }, applicability: { state: 'required', posture: 'running-stack' },
             freshness: { state: 'current' }, remedy: 'restore the retained port lease and the exact declared runtime publication',
         }
     } catch (error) {

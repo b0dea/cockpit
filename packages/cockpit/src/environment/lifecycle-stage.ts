@@ -347,7 +347,7 @@ async function inspect(input: StableInput): Promise<LifecycleStageResolution> {
         expectation: { kind: 'equal', value: true },
         applicability: { state: 'required', posture: 'environment' },
         freshness: { state: 'current' },
-        remedy: 'restore or seed lifecycle state without deleting its durable history',
+        remedy: 'run up to bring the stack up',
     }
     return { kind: 'complete', authority, observation }
 }

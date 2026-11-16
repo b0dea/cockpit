@@ -256,7 +256,7 @@ export interface ProbedListener {
 }
 
 export type SessionListenerObservation =
-    | Readonly<{ kind: 'complete'; ports: readonly SessionListenerPort[]; identity: string }>
+    | Readonly<{ kind: 'complete'; ports: readonly SessionListenerPort[] }>
     | Readonly<{ kind: 'unavailable'; reason: string }>
 
 type ProcessEntry = Readonly<{ ppid: number; start: string }>
@@ -322,30 +322,17 @@ const COVERS: Readonly<Record<ProbedListener['address'], readonly string[]>> = {
 
 const MAX_ANCESTRY = 512
 
-type AncestryWalk =
-    | Readonly<{ kind: 'reached'; chain: readonly string[] }>
-    | Readonly<{ kind: 'unreached' }>
-    | Readonly<{ kind: 'changed'; pid: number }>
-
-// Follows `pid`'s parents to one of `roots`. Every process on the way must be the same process, by
-// parent and start, in both reads of the process table.
-function walkAncestry(
-    pid: number,
-    roots: ReadonlySet<number>,
-    before: ReadonlyMap<number, ProcessEntry>,
-    after: ReadonlyMap<number, ProcessEntry>,
-): AncestryWalk {
-    const chain: string[] = []
+// Whether `pid` or one of its parents in the process table is one of `roots`. A process the table
+// does not list has exited since the listing, and is not read as anyone's.
+function reachesAncestor(pid: number, roots: ReadonlySet<number>, table: ReadonlyMap<number, ProcessEntry>): boolean {
     let current = pid
     for (let depth = 0; depth < MAX_ANCESTRY && current > 1; depth += 1) {
-        const first = before.get(current)
-        const second = after.get(current)
-        if (!first || !second || first.ppid !== second.ppid || first.start !== second.start) return { kind: 'changed', pid: current }
-        chain.push(`${current}:${second.start}`)
-        if (roots.has(current)) return { kind: 'reached', chain }
-        current = second.ppid
+        if (roots.has(current)) return true
+        const entry = table.get(current)
+        if (!entry) return false
+        current = entry.ppid
     }
-    return { kind: 'unreached' }
+    return false
 }
 
 /**
@@ -357,21 +344,12 @@ export async function observeProcessAncestry(input: {
     readonly ancestor: Required<HolderProcess>
     readonly host: ListenerHost
 }): Promise<'ancestor' | 'unrelated' | Readonly<{ unknown: string }>> {
-    const confirmed = async () => {
-        const observed = await observeProcessStart(input.ancestor.pid, input.host.process)
-        return observed.state === 'unknown' ? { unknown: observed.reason }
-            : observed.state === 'present' && observed.start === input.ancestor.processStart
-    }
-    const first = await confirmed()
-    if (first !== true) return first === false ? 'unrelated' : first
-    const before = parseProcessTable(await input.host.processTable())
-    const after = parseProcessTable(await input.host.processTable())
-    if (!before || !after) return { unknown: 'the running processes could not be listed' }
-    const walk = walkAncestry(input.pid, new Set([input.ancestor.pid]), before, after)
-    if (walk.kind === 'changed') return { unknown: `process ${walk.pid} changed while its ancestry was read` }
-    const second = await confirmed()
-    if (second !== true) return second === false ? 'unrelated' : second
-    return walk.kind === 'reached' ? 'ancestor' : 'unrelated'
+    const observed = await observeProcessStart(input.ancestor.pid, input.host.process)
+    if (observed.state === 'unknown') return { unknown: observed.reason }
+    if (observed.state !== 'present' || observed.start !== input.ancestor.processStart) return 'unrelated'
+    const table = parseProcessTable(await input.host.processTable())
+    if (!table) return { unknown: 'the running processes could not be listed' }
+    return reachesAncestor(input.pid, new Set([input.ancestor.pid]), table) ? 'ancestor' : 'unrelated'
 }
 
 /**
@@ -379,10 +357,9 @@ export async function observeProcessAncestry(input: {
  * An address, a port or a sibling's directory says nothing about who serves it; the proof is the
  * process. A session holder counts only when its recorded pid still runs with its recorded start
  * identity, and a listener only when its parent chain reaches that pid and one of the session's
- * sockets covers every loopback address the probe found answering. The process table is read
- * on both sides of the socket listing, and every process on the chain must be the same process in
- * both reads, so a pid that exits and is reused between the listing and the chain is not read as
- * the session's. Anything that cannot be read is unavailable, never owned.
+ * sockets covers every loopback address the probe found answering. The sessions, the sockets and
+ * the process table are each read once; a listener read wrongly here is reported, never failed.
+ * Anything that cannot be read is unavailable, never owned.
  */
 export async function observeSessionListeners(input: {
     readonly listeners: readonly ProbedListener[]
@@ -395,62 +372,36 @@ export async function observeSessionListeners(input: {
         holder.pid !== undefined && holder.processStart !== undefined)
     // A session whose start cannot be read may be running; reading it as gone would blame its own
     // listener on a stranger, so that leaves ownership unavailable.
-    const liveSessions = async (): Promise<ReadonlySet<number> | string> => {
-        const live = new Set<number>()
-        for (const holder of sessions) {
-            const observed = await observeProcessStart(holder.pid, input.host.process)
-            if (observed.state === 'unknown') return `cockpit session process ${holder.pid} could not be confirmed running (${observed.reason})`
-            if (observed.state === 'present' && observed.start === holder.processStart) live.add(holder.pid)
-        }
-        return live
+    const live = new Set<number>()
+    for (const holder of sessions) {
+        const observed = await observeProcessStart(holder.pid, input.host.process)
+        if (observed.state === 'unknown') return unavailable(`cockpit session process ${holder.pid} could not be confirmed running (${observed.reason})`)
+        if (observed.state === 'present' && observed.start === holder.processStart) live.add(holder.pid)
     }
-    const live = await liveSessions()
-    if (typeof live === 'string') return unavailable(live)
     if (live.size === 0) {
-        return { kind: 'complete', identity: '', ports: probedPorts.map((port) => ({ port, owned: false,
+        return { kind: 'complete', ports: probedPorts.map((port) => ({ port, owned: false,
             reason: 'no live cockpit session holds this stack' })) }
     }
-    const before = parseProcessTable(await input.host.processTable())
     const listening = parseListeners(await input.host.listeners(probedPorts), probedPorts)
-    const after = parseProcessTable(await input.host.processTable())
-    if (!before || !after) return unavailable('the running processes could not be listed')
+    const table = parseProcessTable(await input.host.processTable())
+    if (!table) return unavailable('the running processes could not be listed')
     if (!listening) return unavailable('the processes listening on the leased ports could not be identified')
-    const stillLive = await liveSessions()
-    if (typeof stillLive === 'string') return unavailable(stillLive)
-    if (stillLive.size !== live.size || [...live].some((pid) => !stillLive.has(pid))) {
-        return unavailable('a cockpit session holding this stack changed while its listeners were identified')
-    }
-    const ports: SessionListenerPort[] = []
-    const identity: string[] = []
-    for (const port of probedPorts) {
+    const ports = probedPorts.map((port): SessionListenerPort => {
         const sockets = listening.get(port)!
         // lsof lists only this user's processes, so a probed address no visible socket covers is
         // served by a process it cannot see.
         const hidden = input.listeners.find((probed) => probed.port === port
             && !sockets.some(({ address }) => COVERS[probed.address].includes(address)))
-        if (hidden) {
-            ports.push({ port, owned: false, reason: `its listener on ${hidden.address === '::1' ? '[::1]' : hidden.address} belongs to a process this user cannot see` })
-            continue
-        }
+        if (hidden) return { port, owned: false, reason: `its listener on ${hidden.address === '::1' ? '[::1]' : hidden.address} belongs to a process this user cannot see` }
         const unseen = sockets.find(({ pid }) => pid === undefined)
-        if (unseen) {
-            ports.push({ port, owned: false, reason: `its listener on ${unseen.address.includes(':') ? `[${unseen.address}]` : unseen.address} belongs to a process this user cannot see` })
-            continue
-        }
-        const pids = [...new Set(sockets.map(({ pid }) => pid!))].sort((left, right) => left - right)
-        identity.push(`${port}:${sockets.map(({ pid, address }) => `${pid}@${address}`).sort().join(',')}`)
-        let foreign: number | undefined
-        for (const pid of pids) {
-            const walk = walkAncestry(pid, live, before, after)
-            if (walk.kind === 'changed') return unavailable(`process ${walk.pid} changed while the listeners on port ${port} were identified`)
-            if (walk.kind === 'unreached') { foreign = pid; break }
-            identity.push(...walk.chain.map((link) => `${port}:${link}`))
-        }
-        ports.push(foreign === undefined
+        if (unseen) return { port, owned: false, reason: `its listener on ${unseen.address.includes(':') ? `[${unseen.address}]` : unseen.address} belongs to a process this user cannot see` }
+        const foreign = [...new Set(sockets.map(({ pid }) => pid!))].sort((left, right) => left - right)
+            .find((pid) => !reachesAncestor(pid, live, table))
+        return foreign === undefined
             ? { port, owned: true, reason: 'a live cockpit session holding this stack started its listener' }
-            : { port, owned: false, reason: `process ${foreign} was not started by a live cockpit session holding this stack` })
-    }
-    return { kind: 'complete', ports, identity: identity.join('\n') }
+            : { port, owned: false, reason: `process ${foreign} was not started by a live cockpit session holding this stack` }
+    })
+    return { kind: 'complete', ports }
 }
 
 function describeHolder(holder: ClaimHolder): string {
