@@ -139,6 +139,23 @@ fi
             )
         } finally { rmSync(fixture.directory, { recursive: true, force: true }) }
     })
+
+    it('names a probe that ran out of time, and does not tell the reader to start a runtime that answered slowly', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-runtime-slow-'))
+        const path = join(directory, 'docker')
+        const source = '#!/bin/sh\nsleep 10\n'
+        writeFileSync(path, source, { mode: 0o700 })
+        try {
+            const observed = await observeDockerRuntime({
+                executable: { canonicalPath: path, invocationPath: path, sha256: sha(source), executionMode: 'verified-path' as const },
+                cwd: directory, env: { PATH: process.env.PATH ?? '' }, timeoutMs: 1_000,
+            }, (step) => executeProbe(step))
+
+            expect(observed).toEqual({ kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
+                reason: 'Docker server version probe failed or returned unauthenticated output: it timed out after 1 s',
+                fix: expect.stringContaining('too busy') })
+        } finally { rmSync(directory, { recursive: true, force: true }) }
+    })
 })
 
 describe('runtime plan construction', () => {

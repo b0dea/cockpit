@@ -230,6 +230,24 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         }
     })
 
+    it('names a runtime probe that ran out of time on a busy machine instead of telling the reader to start Docker', async () => {
+        const candidate = await fixture({ configuredRuntime: true, unseeded: true })
+        const docker = join(candidate.root, 'docker')
+        await writeFile(docker, (await readFile(docker, 'utf8')).replace('#!/bin/sh\n', '#!/bin/sh\nif [ "$1" = "version" ]; then /bin/sleep 20; fi\n'))
+        const doctor = await runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:${process.env.PATH}`, HOME: candidate.home },
+            timeoutMs: 3_000,
+        }, executeProbe))
+
+        expect(doctor.diagnostics).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: 'EXECUTION_TIMEOUT', target: 'runtime:docker-server-version',
+                message: 'the runtime:docker-server-version probe timed out after 3 s, so the checks it answers were not observed' }),
+            expect.objectContaining({ code: 'RUNTIME_UNAVAILABLE', message: expect.stringContaining('it timed out after 3 s'),
+                fix: expect.stringContaining('too busy') }),
+        ]))
+    })
+
     it('names a cockpit root that is not a Git checkout instead of an unavailable observation', async () => {
         const candidate = await fixture({ configuredRuntime: true, unseeded: true })
         await rm(join(candidate.checkout, '.git'), { recursive: true, force: true })

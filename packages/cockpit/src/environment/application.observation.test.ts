@@ -750,7 +750,7 @@ describe('observation application runners', () => {
         expect(result.result.checks.find(({ code }) => code === ENVIRONMENT_CODES.CLAIM_STATE_UNHEALTHY)).toMatchObject({ verdict: 'pass' })
         expect(result.result.checks.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)).toMatchObject({ verdict: 'unavailable' })
         expect(result.diagnostics).toContainEqual(expect.objectContaining({
-            code: 'EVIDENCE_UNAVAILABLE', message: 'runtime observation producer failed', target: 'runtime',
+            code: 'EVIDENCE_UNAVAILABLE', message: 'runtime observation producer failed: runtime observation is malformed', target: 'runtime',
         }))
     })
 

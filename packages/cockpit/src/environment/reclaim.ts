@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { lstat, readFile, realpath } from 'node:fs/promises'
 import { lstatSync } from 'node:fs'
+import { setTimeout as delay } from 'node:timers/promises'
 import { isAbsolute, normalize, relative, resolve, sep } from 'node:path'
 import { admitLocalDockerEndpoint } from './docker-endpoint.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
@@ -1397,15 +1398,35 @@ export async function planReset(input: PlanResetInput): Promise<ResetPlan | Plan
 // Docker's answer for a resource it no longer has; the read after the removals decides what is gone.
 const ALREADY_GONE = /^Error(?: response from daemon)?: No such (?:container|volume|network|image)\b/m
 
-/** Runs each removal in order, and stops at the first that fails for any reason but the resource being gone. */
-export async function removeTargets(targets: readonly RemovalTarget[], execute: Executor): Promise<PlanRefusal | undefined> {
+// Docker's answer while it is still removing a resource, as a removal that timed out on a loaded
+// daemon leaves it. Docker finished such a removal minutes later, so it is waited for, within a bound.
+const REMOVAL_IN_PROGRESS = /^Error(?: response from daemon)?: removal of (?:container|volume)\b.* is already in progress/m
+const PENDING_REMOVAL_CHECKS = 18
+const PENDING_REMOVAL_INTERVAL_MS = 10_000
+
+/**
+ * Runs each removal in order, and stops at the first that fails for any reason but the resource being gone.
+ * A Docker removal that timed out or is still in progress is retried until Docker finishes it or the bound runs out.
+ */
+export async function removeTargets(targets: readonly RemovalTarget[], execute: Executor, wait: (ms: number) => Promise<unknown> = delay): Promise<PlanRefusal | undefined> {
     for (const target of targets) {
-        const outcome = await execute(target.step)
-        if (outcome.kind !== 'complete' && !(target.kind !== 'host-path' && ALREADY_GONE.test(Buffer.from(outcome.stderr).toString('utf8')))) {
-            return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH,
-                `removing ${target.kind} ${target.name} (${target.id}) failed (${outcome.code}); what was removed before it stays removed`, target.id,
-                'resolve what blocks that removal, then run the same command again: it removes only what is still there')
+        const pending = (outcome: ExecuteProbeOutcome) => target.kind !== 'host-path' && outcome.kind !== 'complete'
+            && (outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT || REMOVAL_IN_PROGRESS.test(Buffer.from(outcome.stderr).toString('utf8')))
+        let outcome = await execute(target.step)
+        for (let check = 0; check < PENDING_REMOVAL_CHECKS && pending(outcome); check++) {
+            await wait(PENDING_REMOVAL_INTERVAL_MS)
+            outcome = await execute(target.step)
         }
+        if (outcome.kind === 'complete' || target.kind !== 'host-path' && ALREADY_GONE.test(Buffer.from(outcome.stderr).toString('utf8'))) continue
+        if (pending(outcome)) {
+            const waited = Math.round(PENDING_REMOVAL_CHECKS * PENDING_REMOVAL_INTERVAL_MS / 60_000)
+            return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH,
+                `Docker had not finished removing ${target.kind} ${target.name} (${target.id}) after ${waited} min of retries (each attempt may run ${Math.ceil(target.step.timeoutMs / 1000)} s); what was removed before it stays removed`,
+                target.id, `the Docker daemon is answering slowly, often from load; once Docker no longer lists ${target.id}, run the same command again: it removes only what is still there`)
+        }
+        return refusal(ENVIRONMENT_CODES.RECLAIM_ACCOUNTING_MISMATCH,
+            `removing ${target.kind} ${target.name} (${target.id}) failed (${outcome.code}); what was removed before it stays removed`, target.id,
+            'resolve what blocks that removal, then run the same command again: it removes only what is still there')
     }
     return undefined
 }
