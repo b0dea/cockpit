@@ -414,7 +414,8 @@ export function liveHolderMessage(holders: readonly ClaimHolder[]): string {
     const pids = holders.flatMap(({ pid }) => pid === undefined ? [] : [pid])
     // A pid can have been reused, and a hold may stand on a pid alone, so stopping one is only safe once confirmed.
     return `another cockpit session holds this stack (${holders.map(describeHolder).join(', ')}), or its process could not be confirmed gone, and down and reset never displace a running session; `
-        + `let its command finish${pids.length > 0 ? ` or, once \`ps -p ${pids.join(',')}\` shows it is that session, stop it with \`kill ${pids.join(' ')}\`` : ''}, then retry`
+        // The command a session runs is not repeated here: its arguments can carry credentials.
+        + `let its command finish${pids.length > 0 ? ` or, once \`ps -o pid,ppid,command -p ${pids.join(',')}\` shows it is that session and not one your own agent started (an MCP server, say), stop it with \`kill ${pids.join(' ')}\`` : ''}, then retry`
 }
 
 type ReleaseDeadSessionHoldersResult =

@@ -706,8 +706,8 @@ describe('dead session holders', () => {
             claimedAt: '2026-09-07T12:00:00.000Z', ...pid === undefined ? {} : { pid } }) as Parameters<typeof liveHolderMessage>[0][number]
         const message = liveHolderMessage([holder(4242), holder(4343)])
         expect(message).toContain('or its process could not be confirmed gone')
-        expect(message).toContain('once `ps -p 4242,4343` shows it is that session, stop it with `kill 4242 4343`')
-        expect(liveHolderMessage([holder()])).not.toMatch(/kill|ps -p/)
+        expect(message).toContain('once `ps -o pid,ppid,command -p 4242,4343` shows it is that session and not one your own agent started (an MCP server, say), stop it with `kill 4242 4343`')
+        expect(liveHolderMessage([holder()])).not.toMatch(/kill|ps -/)
     })
 
     // macOS's Seatbelt refuses to run /bin/ps, which is setuid, even under an allow-all profile, and a

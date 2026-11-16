@@ -354,8 +354,8 @@ time `ps` reports), so the next `up`, `sleep`, `down` or `reset` from the checko
 is gone, or its ID now belongs to another process, and releases the hold. When it was the last hold,
 the command's own hold takes the running stack over. A hold whose process still runs is kept, and so
 is one whose start could not be read while its process ID is in use: the `CLAIM_CO_TENANT` refusal
-names each holder and process ID, so you can confirm with `ps -p` that it is that session, end it
-and retry. A process ID can be reused, so a hold standing on one alone may name another process.
+names each holder and process ID, so you can confirm with `ps -o pid,ppid,command -p <pid>` that it
+is that session and not one your own agent started, such as an MCP server, then end it and retry. A process ID can be reused, so a hold standing on one alone may name another process.
 
 The wrapper passes this identity to its command in `COCKPIT_SESSION_PROCESS`, so a hold that a
 `sleep` and then an `up` inside the session re-add stays tied to the wrapper. `up` refuses with
