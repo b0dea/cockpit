@@ -629,7 +629,9 @@ function gitShellRefusal(argv: readonly string[]): string | undefined {
 }
 
 // What the whole command does beside its invocations: a job in the background, or a loop.
-interface Seen { background: boolean; loop: boolean }
+interface Seen { background: boolean; loop: boolean; fetchedValue?: true }
+// A word that sets a variable before the command it precedes, as `NAME=value cmd`.
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
 interface Context { readonly options: GuardParseOptions; readonly definitions: Set<string>; readonly depth: number; readonly seen: Seen }
 
 function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvocation[] {
@@ -673,7 +675,7 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
     // The program a launcher runs inherits these.
     const assigned: Token[] = []
     const assignments = () => {
-        while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(args[cursor]?.value ?? '')) {
+        while (ASSIGNMENT.test(args[cursor]?.value ?? '')) {
             const token = args[cursor++]
             // Bash and zsh do not brace-expand an assignment, so the expanded words misstate it.
             if (token.braced) refuse(`Unsupported brace expansion in the assignment ${shown(token.value)}. Write the value out.`)
@@ -994,14 +996,19 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         if (result.length === GUARD_INPUT_LIMITS.invocations) forbid('Guard invocation limit exceeded.')
         result.push(item)
     }
-    // A substitution runs before its command, in the same directory, and a fetched one is code from the network.
-    const substituted = (items: readonly Token[], directory: string) => {
-        const inner = items.flatMap((token) => token.substitutions ?? []).flatMap((text) => parseShell(text, directory, deeper))
-        if (inner.some(fetches)) forbid(FETCHED_CODE)
+    // A substitution runs before its command, in the same directory. A download's text that becomes the command, or a
+    // word of an interpreter's, is code from the network; held in a value or printed, it is data, unless the call also
+    // runs an interpreter or a command named by a value, which the parse checks once the whole call is read.
+    const substituted = (items: readonly Token[], directory: string, command = false) => items.flatMap((token) => {
+        const inner = (token.substitutions ?? []).flatMap((text) => parseShell(text, directory, deeper))
+        if (!inner.some(fetches)) return inner
+        const first = items.find((item) => item.kind === 'word' && !ASSIGNMENT.test(item.value))
+        if (command && (token === first || items.some((item) => item.kind === 'word' && INTERPRETERS.test(posix.basename(item.value))))) forbid(FETCHED_CODE)
+        context.seen.fetchedValue = true
         return inner
-    }
+    })
     const stage = (directory: string): ParsedInvocation[] => {
-        if (!compound) return [...substituted(current, directory), ...invocation(current, directory, context)]
+        if (!compound) return [...substituted(current, directory, true), ...invocation(current, directory, context)]
         // Redirects after a compound command apply to every command inside, so they are judged once as a bare redirect.
         const redirected = compound.redirects.length ? [...substituted(compound.redirects, directory), ...invocation(compound.redirects, directory, context)] : []
         if (compound.kind === 'subshell') return [...parseTokens(compound.body, directory, deeper, true), ...redirected]
@@ -1260,7 +1267,11 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
         const seen: Seen = { background: false, loop: false }
         let unreadable: { text: string; reason: string } | undefined
         const shell = (command: string): ParsedInvocation[] => {
-            try { return parseShell(command, cwd, { options, definitions: new Set(), depth: 0, seen }) }
+            try {
+                const parsed = parseShell(command, cwd, { options, definitions: new Set(), depth: 0, seen })
+                if (seen.fetchedValue && parsed.some((item) => interprets(item) || item.words.some((word) => word.role === 'executable' && word.dynamic))) forbid(FETCHED_CODE)
+                return parsed
+            }
             catch (error) {
                 if (!(error instanceof RefusalError) || error instanceof ForbiddenConstruct) throw error
                 unreadable = { text: command, reason: error.message }
