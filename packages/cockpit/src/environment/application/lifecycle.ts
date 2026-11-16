@@ -33,6 +33,7 @@ import {
     releasePortFamily,
     type LeasePortFamilyResult,
     type PortLeaseProjection,
+    leaseVariables,
 } from '../ports.js'
 import { consumeLifecycleIssuance, admitUpProgress, planAdmittedUp } from '../lifecycle.js'
 import {
@@ -729,12 +730,7 @@ function sessionChildEnvironment(
     env: Readonly<Record<string, string>>,
     up: Extract<UpCommandResult, { kind: 'complete' }>['result'],
 ): Readonly<Record<string, string>> {
-    return {
-        ...env,
-        ...Object.fromEntries(Object.entries(up.ports).map(([name, port]) => [name, String(port)])),
-        ...Object.fromEntries(up.entrypoints.map(({ name, value }) =>
-            [`COCKPIT_ENTRYPOINT_${name.toUpperCase().replaceAll('-', '_')}`, value])),
-    }
+    return { ...env, ...leaseVariables(up.ports, up.entrypoints) }
 }
 
 // A session over a stack an earlier up from this checkout still holds ends with the containers running,
