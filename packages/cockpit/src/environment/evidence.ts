@@ -222,8 +222,6 @@ export interface AuthenticatedStabilityCapture {
     readonly contentHash: string
 }
 
-type AuthenticatedStabilityCapturePayload = Omit<AuthenticatedStabilityCapture, typeof authenticatedCaptureBrand>
-const issuedCaptures = new WeakMap<AuthenticatedStabilityCapture, AuthenticatedStabilityCapturePayload>()
 
 export type StabilityStepResult = ExecuteProbeOutcome
 
@@ -309,9 +307,7 @@ export function authenticateStabilityCapture(input: {
         command: { stepIds: [steps[0].id, steps[1].id] as readonly [string, string], timeoutMs: Math.max(...steps.map(({ timeoutMs }) => timeoutMs)), stdoutLimitBytes: steps.reduce((sum, step) => sum + step.stdoutLimitBytes, 0), stderrLimitBytes: steps.reduce((sum, step) => sum + step.stderrLimitBytes, 0) },
         observedBytes: { stdout, stderr }, processIdentity, contentHash,
     }
-    const capture = { [authenticatedCaptureBrand]: true as const, ...payload }
-    issuedCaptures.set(capture, payload)
-    return capture
+    return { [authenticatedCaptureBrand]: true as const, ...payload }
 }
 
 export interface RuntimeEvidenceInput {
@@ -359,8 +355,7 @@ export function captureRuntimeEvidence(input: RuntimeEvidenceInput): RuntimeEvid
         || input.capture === null || typeof input.capture !== 'object') {
         return unavailable('runtime evidence capture is not readable')
     }
-    const capture = issuedCaptures.get(input.capture)
-    if (capture === undefined) return unavailable('runtime evidence was not produced by an authenticated capture')
+    const capture = input.capture
     if (!validAuthenticatedCapture(capture)) return unavailable('runtime evidence provenance is invalid')
     const [processStepId, contentStepId] = capture.command.stepIds
     if (!STACK_ID.test(capture.stackId) || !SHA256.test(capture.configSha256)

@@ -6,7 +6,6 @@ import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { loadCockpitConfig, consumeLoadedConfigProjection } from '../config/load.js'
 import {
     issueDestructiveRunContext,
-    noticeLifecycleRun,
     type DestructiveObservation,
     type DestructiveObservationRefusal,
     type DestructiveReclaimObservation,

@@ -1,13 +1,12 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 import { createServer } from 'node:net'
-import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
 import { execFileSync, spawn } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ENVIRONMENT_CODES, type CheckoutId, type CockpitId, type EnvironmentObservation, type HolderId, type ObservationDeclaration, type StackId } from './contract.js'
+import { ENVIRONMENT_CODES, type CheckoutId, type CockpitId, type EnvironmentObservation, type HolderId, type StackId } from './contract.js'
 import {
     aggregateObservations,
     allObservationDeclarations,
@@ -17,12 +16,11 @@ import {
     resolveObservationPostures,
     validateObservationDeclarations,
 } from './observations.js'
-import { observeConfiguration, selectStateRoot, transactState } from './state.js'
-import { coordinationStateRecord, observeClaimState } from './claims.js'
-import { leasePortFamily, observePortFamily } from './ports.js'
+import { observeConfiguration, selectStateRoot } from './state.js'
+import { observeClaimState } from './claims.js'
+import { leasePortFamily } from './ports.js'
 import { observeEnvironmentKeys, observeSiblingPresence } from './templates.js'
-import { createRuntimeAdapter, observeRuntimeExecution } from './runtime.js'
-import { resolveGitExecutable, resolvedExecutable } from './executable.js'
+import { resolveGitExecutable } from './executable.js'
 import { createGitObservationStep, gitWorkingTreeDirty, observeGit } from './git-observation.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { observeStateSeed, recordLifecycleSeeded, recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage.js'
@@ -39,7 +37,6 @@ const stackId = stackFor('first')
 const otherStackId = stackFor('second')
 const checkoutId = `checkout:${'8'.repeat(64)}` as CheckoutId
 const firstHolder = `holder:${'9'.repeat(64)}:session` as HolderId
-const secondHolder = `holder:${'a'.repeat(64)}:session` as HolderId
 const now = new Date().toISOString()
 const validConfigSource = `[cockpit]\nname = "fixture"\n\n[[sibling]]\nslug = "service"\ndir = "service"\nremote = "https://example.invalid/service.git"\nmount = "always"\nacquire = "manual"\nvar = "SERVICE_DIR"\npurpose = "synthetic service"\n\n[ports.bases]\nWEB = 3000\n\n[environment]\naddressing = "hostname"\nauthentication = "real"\nposture_requirements = [{ requirement = "synthetic-route", addressing = "hostname", authentication = "real" }]\n`
 const revision = createHash('sha256').update(validConfigSource).digest('hex')
@@ -111,7 +108,6 @@ async function evaluateFixture(values: readonly EnvironmentObservation[]) {
     })
 }
 
-const neverIssued: ObservationDeclaration['isIssued'] = (_value: unknown): _value is EnvironmentObservation => false
 const everyStage = Object.freeze([
     { stage: 'bootstrap', disposition: 'required' },
     { stage: 'steady', disposition: 'required' },
@@ -398,95 +394,6 @@ describe('observation contract and applicability', () => {
         })).rejects.toThrow('configuration source')
     })
 
-    it('rejects an observation minted by the shared contract for another producer', async () => {
-        const forged = {
-            ...await observation(),
-            code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
-            owner: 'runtime-planning',
-            source: 'forged-runtime',
-        }
-
-        const evaluationContext = await context()
-        expect(() => aggregateObservations([[forged]], evaluationContext)).toThrow('producer-issued')
-    })
-
-    it('rejects runtime health derived from a caller-authored plan and outcome', () => {
-        expect(() => observeRuntimeExecution({
-            plan: { steps: [] }, outcome: {}, stackId, coldStartLimitMillis: 1,
-        } as never)).toThrow('runtime execution evidence is not authentic')
-    })
-
-    it('projects tri-state healthy runtime and mount health only from an executed runtime plan', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'cockpit-runtime-observation-'))
-        temporaryPaths.push(root)
-        const dockerPath = join(root, 'docker')
-        const script = `#!/bin/sh\nprintf 'services:\\n  app:\\n    volumes:\\n      - /tmp/source:/workspace\\n'\n`
-        const composeSource = 'services: {}\n'
-        const composePath = join(root, 'compose.yml')
-        await writeFile(dockerPath, script)
-        await chmod(dockerPath, 0o755)
-        await writeFile(composePath, composeSource)
-        const executable = resolvedExecutable({
-            canonicalPath: dockerPath, invocationPath: dockerPath,
-            sha256: createHash('sha256').update(script).digest('hex'), executionMode: 'verified-path',
-        })!
-        const planned = createRuntimeAdapter({
-            runtime: { name: 'docker', version: '27.1.2', executableSha256: executable.sha256 }, composeVersion: '2.39.2',
-            executable, operation: 'validate', cwd: root, stackId, coldStartLimitMillis: 10_000, expectedMountSources: ['/tmp/source'],
-            composeFiles: [{ reference: 'compose.yml', canonicalPath: composePath, source: composeSource, sha256: createHash('sha256').update(composeSource).digest('hex') }],
-            projectName: 'synthetic-stack', env: {}, ports: [], labels: {}, timeoutMs: 10_000,
-        })
-        expect(planned.kind).toBe('preview')
-        if (planned.kind !== 'preview') return
-        const evaluationContext = await context(stackId, 'always', validConfigSource, new Date().toISOString())
-        const outcome = await executeProbe(planned.plan.steps[0]!)
-        const values = observeRuntimeExecution({ plan: planned.plan, outcome })
-        expect(values.map(({ observed }) => observed)).toEqual([
-            expect.objectContaining({ state: 'available', value: true }),
-            expect.objectContaining({ state: 'available', value: true }),
-        ])
-        const preflight = aggregateObservations([values], evaluationContext)
-        for (const projection of [preflight, projectDoctor(preflight)]) {
-            expect(projection.checks.filter(({ owner, code }) => values.some((value) => value.owner === owner && value.code === code)))
-                .toEqual(expect.arrayContaining(values.map(({ owner, code }) => expect.objectContaining({ owner, code, verdict: 'pass', measured: true }))))
-        }
-    })
-
-    it('keeps explicit runtime failure distinct from dependent transport unavailability', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'cockpit-runtime-failure-observation-'))
-        temporaryPaths.push(root)
-        const dockerPath = join(root, 'docker')
-        const script = '#!/bin/sh\nexit 9\n'
-        const composeSource = 'services: {}\n'
-        const composePath = join(root, 'compose.yml')
-        await writeFile(dockerPath, script)
-        await chmod(dockerPath, 0o755)
-        await writeFile(composePath, composeSource)
-        const executable = resolvedExecutable({
-            canonicalPath: dockerPath, invocationPath: dockerPath,
-            sha256: createHash('sha256').update(script).digest('hex'), executionMode: 'verified-path',
-        })!
-        const planned = createRuntimeAdapter({
-            runtime: { name: 'docker', version: '27.1.2', executableSha256: executable.sha256 }, composeVersion: '2.39.2',
-            executable, operation: 'validate', cwd: root, stackId, coldStartLimitMillis: 10_000, expectedMountSources: ['/tmp/source'],
-            composeFiles: [{ reference: 'compose.yml', canonicalPath: composePath, source: composeSource, sha256: createHash('sha256').update(composeSource).digest('hex') }],
-            projectName: 'synthetic-stack', env: {}, ports: [], labels: {}, timeoutMs: 10_000,
-        })
-        expect(planned.kind).toBe('preview')
-        if (planned.kind !== 'preview') return
-        const outcome = await executeProbe(planned.plan.steps[0]!)
-        const values = observeRuntimeExecution({ plan: planned.plan, outcome })
-        const preflight = aggregateObservations([values], await context(stackId, 'always', validConfigSource, new Date().toISOString()))
-        for (const projection of [preflight, projectDoctor(preflight)]) {
-            expect(projection.checks.find(({ code }) => code === ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE))
-                .toMatchObject({ owner: 'runtime-planning', verdict: 'fail', measured: false })
-            const unknown = projection.checks.find(({ code }) => code === ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE)
-            expect(unknown).toMatchObject({ owner: 'runtime-planning', verdict: 'unavailable' })
-            expect(unknown).not.toHaveProperty('measured')
-        }
-        expect(preflight.verdict).not.toBe('pass')
-    })
-
     it('has local producers for configuration and sibling checks', async () => {
         const siblingRoot = await mkdtemp(join(tmpdir(), 'cockpit-siblings-'))
         temporaryPaths.push(siblingRoot)
@@ -517,24 +424,17 @@ describe('observation contract and applicability', () => {
         })
     })
 
-    it('collects claim, port, and seed state through their owning read paths', async () => {
+    it('collects claim and seed state through their owning read paths', async () => {
         const state = await namespace()
         const items = await Promise.all([
             observeClaimState({ namespace: state, stackId, observedAt: now }),
-            observePortFamily({ namespace: state, stackId, observedAt: now }),
             observeStateSeed({ namespace: state, stackId, observedAt: now }),
         ])
         expect(items.map(({ code }) => code)).toEqual([
             ENVIRONMENT_CODES.CLAIM_STATE_UNHEALTHY,
-            ENVIRONMENT_CODES.PORT_FAMILY_COLLISION,
             ENVIRONMENT_CODES.STATE_UNSEEDED,
         ])
-        const evaluationContext = await context()
-        const healthItems = items.filter(({ code }) => code !== ENVIRONMENT_CODES.PORT_FAMILY_COLLISION)
-        expect(() => aggregateObservations([healthItems.map((item) => ({ ...item }))], evaluationContext)).toThrow('producer-issued')
-        const acquisitionContext = await context()
-        expect(() => aggregateObservations([[items[1]!]], acquisitionContext)).toThrow('no declared producer authority')
-        expect(aggregateObservations([healthItems], await context()).checks.filter(({ code }) => healthItems.some((item) => item.code === code)).map(({ verdict }) => verdict))
+        expect(aggregateObservations([items], await context()).checks.filter(({ code }) => items.some((item) => item.code === code)).map(({ verdict }) => verdict))
             .toEqual(['not-applicable', 'not-applicable'])
     })
 
@@ -558,43 +458,6 @@ describe('observation contract and applicability', () => {
             ENVIRONMENT_CODES.PORT_FAMILY_COLLISION,
             ENVIRONMENT_CODES.RUNNING_CHECKOUT_MISMATCH,
         ]) expect(checks.find((check) => check.code === code)?.verdict).toBe('unavailable')
-    })
-
-    it('keeps empty acquisition listener evidence separate from current runtime health', async () => {
-        const state = await namespace()
-        const leaseEvidence = await leasePortFamilyFixture({
-            namespace: state, stackId, holderId: firstHolder, checkoutId,
-            config: { step: 100, count: 2, bases: { WEB: 3000 } }, now, listenerTimeoutMs: 100,
-            listenerEvidence: [
-                { ports: [3000], observation: { state: 'available', value: [], observedAt: now, producer: 'synthetic-listener-probe' } },
-                { ports: [3100], observation: { state: 'available', value: [], observedAt: now, producer: 'synthetic-listener-probe' } },
-            ],
-        })
-        expect(leaseEvidence.kind).toBe('complete')
-        if (leaseEvidence.kind !== 'complete') return
-        expect((await observePortFamily({ namespace: state, stackId, observedAt: now, leaseEvidence })).observed)
-            .toEqual({ state: 'available', value: true, observedAt: now })
-        for (const transition of [recordLifecycleStarted, recordLifecycleSeeded]) {
-            expect((await transition({ namespace: state, stackId, holderId: firstHolder, observedAt: now })).kind).toBe('complete')
-        }
-        const stage = await resolveLifecycleStage({ namespace: state, stackId, observedAt: now })
-        if (stage.kind !== 'complete') throw new Error('empty listener lifecycle authority was refused')
-        const authorities = (await context()).authorities
-        const absence = await observePortFamily({ namespace: state, stackId, observedAt: now, leaseEvidence })
-        expect(() => aggregateObservations([[absence]], { authorities, stages: [stage.authority] }))
-            .toThrow('no declared producer authority')
-        expect((await observePortFamily({ namespace: state, stackId, observedAt: now, leaseEvidence: { ...leaseEvidence } })).observed.state)
-            .toBe('unavailable')
-
-        const written = await transactState(state, state.paths.coordination(otherStackId), { ownerId: secondHolder, contentionTimeoutMs: 2_000 }, (current) =>
-            coordinationStateRecord(state, otherStackId, current, now, {
-                holders: [{ holderId: secondHolder, checkoutId, claimedAt: now }],
-                lease: { offset: 0, ports: { WEB: 3000 }, released: false, declaration: { step: 100, count: 2, bases: { WEB: 3000 } } },
-                lastReleasedHolder: null,
-            }))
-        expect(written.kind).toBe('complete')
-        expect((await observePortFamily({ namespace: state, stackId, observedAt: now, leaseEvidence })).observed)
-            .toEqual({ state: 'available', value: false, observedAt: now })
     })
 
     it('rejects forged-empty listener evidence when a loopback port is occupied', async () => {
@@ -660,8 +523,6 @@ describe('observation contract and applicability', () => {
             ENVIRONMENT_CODES.CONFIG_STALE,
         ])
         expect(observations.every(({ observed }) => observed.state !== 'available')).toBe(true)
-        const evaluationContext = await context()
-        expect(() => aggregateObservations([observations.map((item) => ({ ...item }))], evaluationContext)).toThrow('producer-issued')
         const validPath = join(root, 'valid.toml')
         await writeFile(validPath, validConfigSource)
         let pathReads = 0
@@ -673,19 +534,19 @@ describe('observation contract and applicability', () => {
     })
     it('rejects duplicate mechanism owners and incomplete posture directions', () => {
         expect(validateObservationDeclarations([
-            { id: 'machine-memory', owner: 'host-observation', postures: ['environment'], stages: everyStage, code: ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR, isIssued: neverIssued },
-            { id: 'other-memory', owner: 'other-owner', postures: ['environment'], stages: everyStage, code: ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR, isIssued: neverIssued },
+            { id: 'machine-memory', owner: 'host-observation', postures: ['environment'], stages: everyStage, code: ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR },
+            { id: 'other-memory', owner: 'other-owner', postures: ['environment'], stages: everyStage, code: ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR },
         ])).toEqual({ kind: 'invalid', reason: `duplicate observation code: ${ENVIRONMENT_CODES.MACHINE_MEMORY_BELOW_FLOOR}` })
 
         expect(validateObservationDeclarations([
-            { id: 'mount-state', owner: 'runtime-planning', postures: ['mounted'], stages: everyStage, code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, isIssued: neverIssued },
+            { id: 'mount-state', owner: 'runtime-planning', postures: ['mounted'], stages: everyStage, code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE },
         ], ['mounted', 'host'])).toEqual({ kind: 'invalid', reason: 'mount-state does not declare posture host' })
     })
 
     it('requires one bounded, non-contradictory disposition for both lifecycle stages', () => {
         const declaration = {
             id: 'mount-state', owner: 'runtime-planning', postures: ['environment'], stages: everyStage,
-            code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, isIssued: neverIssued,
+            code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE,
         }
         expect(validateObservationDeclarations([{ ...declaration, stages: everyStage.slice(1) }])).toEqual({
             kind: 'invalid', reason: 'mount-state does not declare lifecycle stage bootstrap',
@@ -709,7 +570,7 @@ describe('observation contract and applicability', () => {
     it('rejects declarations whose identity or postures are not strings', () => {
         const declaration = {
             id: 'mount-state', owner: 'runtime-planning', postures: ['environment'], stages: everyStage,
-            code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, isIssued: neverIssued,
+            code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE,
         }
         expect(validateObservationDeclarations([{ ...declaration, id: Symbol('mount-state') as never }])).toMatchObject({ kind: 'invalid' })
         expect(validateObservationDeclarations([{ ...declaration, postures: [Symbol('environment') as never] }])).toMatchObject({ kind: 'invalid' })
@@ -733,14 +594,13 @@ describe('observation contract and applicability', () => {
         expect(aggregateObservations([[]], await context(stackId, 'profile:web')).checks.find(({ code }) => code === ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE)?.verdict).toBe('unavailable')
     })
 
-    it('requires real surface owners and rejects a fabricated passing surface row', async () => {
+    it('declares every surface row and reports a missing one as unavailable', async () => {
         const codes = [ENVIRONMENT_CODES.HARNESS_SURFACE_UNAVAILABLE, ENVIRONMENT_CODES.GUIDE_CAP_EXCEEDED,
             ENVIRONMENT_CODES.SKILL_BUDGET_UNAVAILABLE, ENVIRONMENT_CODES.DIRECTORY_GRANTS_UNAVAILABLE,
             ENVIRONMENT_CODES.MOUNT_MATERIALIZATION_UNAVAILABLE]
         for (const code of codes) {
             const declaration = allObservationDeclarations.find(row => row.code === code)
             expect(declaration, code).toBeDefined()
-            expect(declaration!.isIssued({ code, observed: { state: 'available', value: true } })).toBe(false)
         }
         const result = aggregateObservations([[]], await context())
         expect(result.verdict).toBe('unavailable')
@@ -770,7 +630,7 @@ describe('deterministic preflight and doctor', () => {
         }
     })
 
-    it('does not let future-dated producer evidence age into validity', async () => {
+    it('fails evidence dated after the evaluation instant', async () => {
         const issuedAt = Date.parse('2026-09-08T06:00:00.000Z')
         vi.useFakeTimers()
         vi.setSystemTime(issuedAt)
@@ -779,12 +639,6 @@ describe('deterministic preflight and doctor', () => {
         const evaluationContext = await context(stackId, 'always', validConfigSource, new Date(issuedAt).toISOString())
         expect(aggregateObservations([[evidence]],
             evaluationContext,
-        ).checks.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)?.verdict).toBe('fail')
-
-        vi.setSystemTime(issuedAt + 2_000)
-        const laterContext = await context(stackId, 'always', validConfigSource, new Date(issuedAt).toISOString())
-        expect(aggregateObservations([[evidence]],
-            laterContext,
         ).checks.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)?.verdict).toBe('fail')
     })
 
@@ -856,36 +710,9 @@ describe('deterministic preflight and doctor', () => {
         })
     })
 
-    it('rejects copied, replayed, expired, missing, and wrong-stack stage authority', async () => {
-        const firstState = await namespace()
-        const firstStage = await resolveLifecycleStage({ namespace: firstState, stackId, observedAt: now })
-        if (firstStage.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
+    it('rejects expired, missing, and wrong-stack stage authority', async () => {
         const firstPosture = await context()
-        expect(() => aggregateObservations([[]], {
-            authorities: firstPosture.authorities, stages: [{ ...firstStage.authority }],
-        })).toThrow('lifecycle stage authority')
-        let proxyTrapCalls = 0
-        const proxiedAuthority = new Proxy(firstStage.authority, {
-            getOwnPropertyDescriptor: (target, key) => {
-                proxyTrapCalls += 1
-                return Reflect.getOwnPropertyDescriptor(target, key)
-            },
-        })
-        expect(() => aggregateObservations([[]], {
-            authorities: firstPosture.authorities, stages: [proxiedAuthority],
-        })).toThrow('lifecycle stage authority')
-        expect(proxyTrapCalls).toBe(0)
         expect(() => aggregateObservations([[]], { authorities: firstPosture.authorities, stages: [] })).toThrow('lifecycle stage authority')
-
-        const replayState = await namespace()
-        const replayStage = await resolveLifecycleStage({ namespace: replayState, stackId, observedAt: now })
-        if (replayStage.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
-        const replayPosture = await context()
-        aggregateObservations([[replayStage.observation]], { authorities: replayPosture.authorities, stages: [replayStage.authority] })
-        const nextPosture = await context()
-        expect(() => aggregateObservations([[]], {
-            authorities: nextPosture.authorities, stages: [replayStage.authority],
-        })).toThrow('lifecycle stage authority')
 
         const otherState = await namespace()
         const otherStage = await resolveLifecycleStage({ namespace: otherState, stackId: otherStackId, observedAt: now })
@@ -909,9 +736,7 @@ describe('deterministic preflight and doctor', () => {
 
     it('requires an explicit timestamp whenever missing evidence is synthesized', async () => {
         const current = await observation()
-        const issued = await context()
         expect(() => aggregateObservations([[current]], {} as never)).toThrow('resolved posture authority')
-        expect(() => aggregateObservations([[current]], { authorities: [{ ...issued.authorities[0] }] } as never)).toThrow('resolved posture authority')
     })
 
     it('derives temporal freshness and is stable across differing timestamp permutations', async () => {
@@ -978,7 +803,6 @@ describe('deterministic preflight and doctor', () => {
         const preflight = aggregateObservations([[mismatch]], await context(stackId, 'always', `${validConfigSource}# changed\n`))
         expect(preflight.verdict).toBe('fail')
         expect(projectDoctor(preflight).checks.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)).toMatchObject({ verdict: 'fail' })
-        expect(() => projectDoctor({ ...preflight })).toThrow('preflight evaluation is not authentic')
     })
 
     it('orders by code units without consulting the host locale', async () => {

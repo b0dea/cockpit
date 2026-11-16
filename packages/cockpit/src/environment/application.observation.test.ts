@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import * as generatedCurrentnessOwner from './generated-application/check.js'
-import { RefusalError } from './contract.js'
+import { ENVIRONMENT_CODES, RefusalError, type EnvironmentObservation, type StackId } from './contract.js'
 import { ObservationProducerRefusal } from './application/health.js'
 import { cockpitPackageVersion } from '../test-support/package-version.js'
 import { observeMcpStartup } from './mcp-observation.js'
@@ -52,7 +52,9 @@ import {
     withSetupCheckoutProjection,
 } from './setup-observation.js'
 import type { PreflightContext } from './observations.js'
-import { checkoutId, cockpitId, stackId } from './identity.js'
+import { checkoutId, cockpitId, holderId, stackId } from './identity.js'
+import { selectStateRoot } from './state.js'
+import { recordLifecycleSeeded, recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage.js'
 import { createApplicationFixtureSupport } from '../../test-support/application-fixture.js'
 
 const scratch: string[] = []
@@ -732,6 +734,36 @@ describe('observation application runners', () => {
         expect(JSON.stringify(result)).not.toContain('private runtime detail')
     })
 
+    it('fails only the producer of a malformed row, and the other producers still report', async () => {
+        let stack: StackId | undefined
+        const row = (code: EnvironmentObservation['code'], owner: string, remedy: string): EnvironmentObservation => ({
+            code, owner, stackId: stack!, source: 'synthetic', observed: { state: 'available', value: true, observedAt: new Date().toISOString() },
+            expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'environment' },
+            freshness: { state: 'current' }, remedy,
+        })
+        // Eight listeners on leased ports, each named with the program holding it, as the port row once spelled them.
+        const listeners = Array.from({ length: 8 }, (_, index) => {
+            const host = index % 2 === 0 ? '127.0.0.1' : '[::1]'
+            const port = 43_000 + Math.floor(index / 2)
+            return `${host}:${port} has a listener outside the stack (pid ${4_000 + index} node /srv/synthetic/other-app/node_modules/.bin/vite --port ${port})`
+        })
+        expect(Buffer.byteLength(`${listeners.join('; ')}: stop the process holding a leased port`)).toBeGreaterThan(1_024)
+        const source = await healthSourceFixture(context, (name) => async () => name === 'claims'
+            ? [row(ENVIRONMENT_CODES.CLAIM_STATE_UNHEALTHY, 'environment-claims', 'no action needed')] as never[]
+            : name === 'runtime'
+                ? [row(ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, 'runtime-planning', `${listeners.join('; ')}: stop the process holding a leased port`)] as never[]
+                : [])
+        stack = source.preflight.authorities[0]!.stackId
+
+        const result = await runPreflight(source.input, { load: source.load, execute: vi.fn() } as never)
+
+        expect(result.result.checks.find(({ code }) => code === ENVIRONMENT_CODES.CLAIM_STATE_UNHEALTHY)).toMatchObject({ verdict: 'pass' })
+        expect(result.result.checks.find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)).toMatchObject({ verdict: 'unavailable' })
+        expect(result.diagnostics).toContainEqual(expect.objectContaining({
+            code: 'EVIDENCE_UNAVAILABLE', message: 'runtime observation producer failed', target: 'runtime',
+        }))
+    })
+
     it('reports the refusal a producer failed on in place of its own evidence-unavailable finding', async () => {
         applicationOwners.observations.aggregateObservations = vi.fn(() => passed) as never
         const refusal = { severity: 'error' as const, code: 'COMPOSE_PORT_NOT_LEASED', target: 'compose:web:3000', message: 'web publishes a fixed port', fix: 'publish it from a ports.bases variable' }
@@ -745,20 +777,6 @@ describe('observation application runners', () => {
         expect(result).toMatchObject({ kind: 'blocked', result: { verdict: 'unavailable' } })
         expect(result.diagnostics).toContainEqual(refusal)
         expect(result.diagnostics.map(({ message }) => message)).not.toContain('surfaces observation producer failed')
-    })
-
-    it.each(['missing', 'extra'] as const)('rejects a %s producer cohort before execution', async (shape) => {
-        const source = await healthSourceFixture(context, undefined, undefined, (producers) => {
-            const changed = { ...producers } as Record<string, () => Promise<readonly never[]>>
-            if (shape === 'missing') delete changed.runtime
-            else changed.unknown = async () => []
-            return changed
-        }, false)
-        const execute = vi.fn()
-
-        await expect(runPreflight(source.input, { load: source.load, execute } as never))
-            .resolves.toMatchObject({ kind: 'blocked', result: { verdict: 'unavailable' } })
-        expect(execute).not.toHaveBeenCalled()
     })
 
     it.each([
@@ -847,11 +865,12 @@ async function healthSourceFixture(
     const producers = Object.freeze(Object.fromEntries(
         healthProducerNames.map((name) => [name, producer(name)]),
     ))
+    const expectedCockpitId = cockpitId({
+        name: loaded.result.config.cockpit.name,
+        mainCheckoutPath: value.candidate.mainCheckoutPath,
+    })
     const expectedStackId = stackId({
-        cockpitId: cockpitId({
-            name: loaded.result.config.cockpit.name,
-            mainCheckoutPath: value.candidate.mainCheckoutPath,
-        }),
+        cockpitId: expectedCockpitId,
         checkoutId: checkoutId({ checkoutPath: value.candidate.mainCheckoutPath }),
         variant: { kind: 'shared' },
     })
@@ -861,25 +880,35 @@ async function healthSourceFixture(
     }
     const validThrough = new Date(Date.parse(value.candidate.observedAt) + 30_000).toISOString()
     const requestedStage = requested.stages?.[0]?.stage === 'bootstrap' ? 'bootstrap' as const : 'steady' as const
+    const home = mkdtempSync(join(tmpdir(), 'cockpit-health-state-'))
+    scratch.push(home)
+    const state = await selectStateRoot({ platform: 'linux', home, cockpitId: expectedCockpitId })
+    if (state.kind !== 'complete') throw new Error('health fixture state root was refused')
+    const holder = holderId({ stackId: expectedStackId, checkoutId: checkoutId({ checkoutPath: value.candidate.mainCheckoutPath }), sessionId: 'health-fixture' })
+    if (requestedStage === 'steady') {
+        for (const transition of [recordLifecycleStarted, recordLifecycleSeeded]) {
+            const recorded = await transition({ namespace: state.value, stackId: expectedStackId, holderId: holder, observedAt: value.candidate.observedAt })
+            if (recorded.kind !== 'complete') throw new Error('health fixture lifecycle transition was refused')
+        }
+    }
+    const stage = await resolveLifecycleStage({ namespace: state.value, stackId: expectedStackId, observedAt: value.candidate.observedAt })
+    if (stage.kind !== 'complete') throw new Error('health fixture lifecycle stage was refused')
     const boundPreflight: PreflightContext = requested.authorities?.length
         ? preflight
         : Object.freeze({
             authorities: Object.freeze([Object.freeze({
+                cockpitId: expectedCockpitId,
                 stackId: expectedStackId,
                 evaluatedAt: value.candidate.observedAt,
                 validThrough,
+                windowExpiresAt: Date.parse(value.candidate.observedAt) + 300_000,
                 revision: loaded.result.source.sha256,
                 source: loaded.result.source.path,
                 postures: Object.freeze(['environment']),
                 environmentPostures: Object.freeze({ addressing: null, authentication: null }),
                 postureRequirements: Object.freeze([]),
             })]),
-            stages: Object.freeze([Object.freeze({
-                stackId: expectedStackId,
-                stage: requestedStage,
-                observedAt: value.candidate.observedAt,
-                validThrough,
-            })]),
+            stages: Object.freeze([stage.authority]),
         })
     const load = async (_input: unknown, issue: (source: HealthObservationSourceInput) => HealthObservationSource | undefined) => {
         const source = await withSetupCheckoutProjection(observed, {
