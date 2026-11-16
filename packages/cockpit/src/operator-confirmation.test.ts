@@ -4,7 +4,8 @@ import type { GeneratedEnvironmentSyncHandlerInput, OperatorPolicy } from './env
 
 const policy = async (): Promise<OperatorPolicy> => ({ configSha256: 'a'.repeat(64), widened: ['guards.allow'], unrecorded: false, seeded: false, approveMcp: async () => 'a'.repeat(64) })
 const preview = async (input: GeneratedEnvironmentSyncHandlerInput) => ({ status: 0, diagnostics: [], result: input.dryRun
-    ? { dryRun: true, sourceSha256: 'a'.repeat(64), mcpApprovals: [{ name: 'docs', sha256: 'd'.repeat(64), approved: false, sources: ['web:.mcp.json'], runs: 'node docs-server.mjs' }] }
+    ? { dryRun: true, sourceSha256: 'a'.repeat(64), mcpApprovals: [{ name: 'docs', sha256: 'd'.repeat(64), approved: false, sources: ['web:.mcp.json'], runs: 'node docs-server.mjs',
+        environment: ['AWS_SECRET_ACCESS_KEY', 'DOCS_TOKEN (optional)'], headers: ['Authorization: Bearer ${GITHUB_TOKEN}'] }] }
     : null })
 
 it('shows one preview of what widens and the MCP servers it enables, and applies it on one typed yes', async () => {
@@ -31,6 +32,8 @@ it('shows one preview of what widens and the MCP servers it enables, and applies
     expect(prompts).toHaveLength(1)
     expect(shown.join('')).toContain('guards.allow')
     expect(shown.join('')).toContain('node docs-server.mjs')
+    // Everything the approval digest covers is shown, by name: the environment it is given and the headers it sends.
+    for (const field of ['AWS_SECRET_ACCESS_KEY', 'DOCS_TOKEN (optional)', 'Authorization: Bearer ${GITHUB_TOKEN}']) expect(shown.join('')).toContain(field)
     // The person reads what changes and answers yes; no digest is shown to copy.
     expect(shown.join('')).not.toContain('d'.repeat(64))
     stdin.destroy()

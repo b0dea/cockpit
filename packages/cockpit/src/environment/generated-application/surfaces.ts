@@ -186,7 +186,11 @@ export async function prepareSurfaces(
         const command = (launch: Readonly<{ command: string; args: readonly string[]; cwd: string }>) =>
             `${[launch.command, ...launch.args].join(' ')} (in ${relative(prepared.root, launch.cwd) || '.'})`
         const runs = 'url' in row ? `${row.url}${row.helper ? `, with headers from ${command(row.helper)}` : ''}` : command(row)
-        return { name, sha256, approved: config.mcp.approved[name] === sha256, runs,
+        // Every other field the digest covers, by name: the environment a local server is given, and the
+        // headers a remote one sends, whose values are references to environment variables, never their values.
+        const environment = 'url' in row ? [] : [...[...row.envNames].sort(), ...[...row.optionalEnvNames ?? []].sort().map(name => `${name} (optional)`)]
+        const headers = 'url' in row ? Object.entries(row.headers).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0).map(([header, value]) => `${header}: ${value}`) : []
+        return { name, sha256, approved: config.mcp.approved[name] === sha256, runs, environment, headers,
             sources: rows.map(({ source }) => source.kind === 'sibling' ? `${source.slug}:${source.path}` : source.path) }
     })
     const approved = approveDeclaredMcp ? { ...config.mcp.approved, ...declaredDigests } : config.mcp.approved

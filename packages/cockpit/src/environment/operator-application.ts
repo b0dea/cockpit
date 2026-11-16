@@ -27,7 +27,7 @@ interface OperatorAdmission {
 }
 
 /** A declared MCP server at sync: what it runs, the digest a person's yes records, and whether cockpit.toml approves it. */
-export type McpApproval = Readonly<{ name: string; sha256: string; approved: boolean; sources: readonly string[]; runs: string }>
+export type McpApproval = Readonly<{ name: string; sha256: string; approved: boolean; sources: readonly string[]; runs: string; environment: readonly string[]; headers: readonly string[] }>
 
 /**
  * What the one fixed rule reads from cockpit.toml as it is on disk: the fields by which it widens
@@ -213,7 +213,8 @@ function previewedApprovals(outcome: OperatorCommandOutcome): readonly McpApprov
     if (outcome.status !== 0 || result?.dryRun !== true) return undefined
     const rows = result.mcpApprovals ?? []
     return Array.isArray(rows) && rows.every(row => typeof row?.name === 'string' && typeof row.sha256 === 'string' && /^[a-f0-9]{64}$/.test(row.sha256)
-        && typeof row.approved === 'boolean' && typeof row.runs === 'string' && Array.isArray(row.sources)) ? rows as McpApproval[] : undefined
+        && typeof row.approved === 'boolean' && typeof row.runs === 'string' && Array.isArray(row.sources)
+        && [row.environment, row.headers].every(list => Array.isArray(list) && list.every((item: unknown) => typeof item === 'string'))) ? rows as McpApproval[] : undefined
 }
 
 // The one place sync's decision lives. A dry run writes nothing and passes untouched. An agent's sync
@@ -240,7 +241,8 @@ export async function runSyncOperatorApplication(
     // The yes records the servers cockpit.toml does not approve yet, and the person also sees each one an
     // unsynced edit approved: a digest typed into the file by an agent starts the same process.
     const approvals = declared.filter(row => !row.approved)
-    const mcpServers = declared.filter(row => !row.approved || policy.widened.includes(`mcp.approved.${row.name}`))
+    // Where the change since the last sync cannot be shown, every server the yes leaves enabled is listed.
+    const mcpServers = declared.filter(row => !row.approved || policy.unrecorded || policy.widened.includes(`mcp.approved.${row.name}`))
     const changed = () => refusal(ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION, 'cockpit.toml changed during review; nothing was written', input.configPath,
         'run sync --interactive again and review the fresh preview')
     if ((preview.result as { sourceSha256?: unknown }).sourceSha256 !== policy.configSha256) return changed()

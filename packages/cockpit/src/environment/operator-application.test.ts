@@ -161,7 +161,7 @@ describe('operator application admission', () => {
     })
 
     it('applies a widening and enables MCP servers only on one yes, recording the approvals and binding the sync to the bytes that hold them', async () => {
-        const server: McpApproval = { name: 'docs', sha256: 'd'.repeat(64), approved: false, sources: ['web:.mcp.json'], runs: 'node docs-server.mjs (in web)' }
+        const server: McpApproval = { name: 'docs', sha256: 'd'.repeat(64), approved: false, sources: ['web:.mcp.json'], runs: 'node docs-server.mjs (in web)', environment: [], headers: [] }
         const interactive = { interactive: true, json: false, ci: undefined, terminal: true }
         const run = async (yes: boolean) => {
             const approveMcp = vi.fn(async () => 'e'.repeat(64))
@@ -200,6 +200,16 @@ describe('operator application admission', () => {
         expect(approveMcp).not.toHaveBeenCalled()
     })
 
+    it('lists every server the yes leaves enabled where the change since the last sync cannot be shown', async () => {
+        const typed: McpApproval = { name: 'maps', sha256: 'd'.repeat(64), approved: true, sources: ['web:.mcp.json'], runs: 'node maps.mjs (in web)', environment: [], headers: [] }
+        const confirmWidening = vi.fn(async () => true)
+        const synchronize = vi.fn(async (input: GeneratedEnvironmentSyncHandlerInput) => ({ status: 0, diagnostics: [],
+            result: input.dryRun ? { dryRun: true, sourceSha256: 'a'.repeat(64), mcpApprovals: [typed] } : null }))
+        expect((await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, { interactive: true, json: false, ci: undefined, terminal: true },
+            { synchronize, confirmWidening, policy: async () => policyOf({ unrecorded: true }) })).status).toBe(0)
+        expect(confirmWidening).toHaveBeenCalledExactlyOnceWith({ widens: [], unrecorded: true, mcpServers: [typed] })
+    })
+
     it('leaves an agent\'s sync to the team sync, which refuses a widening, and asks nothing', async () => {
         const synchronize = vi.fn(async (_input: GeneratedEnvironmentSyncHandlerInput) => ({ status: 0, diagnostics: [], result: null }))
         const confirmWidening = vi.fn()
@@ -212,7 +222,7 @@ describe('operator application admission', () => {
     })
 
     it('refuses when cockpit.toml changes while the person reviews it', async () => {
-        const server: McpApproval = { name: 'docs', sha256: 'd'.repeat(64), approved: false, sources: ['web:.mcp.json'], runs: 'node docs-server.mjs (in web)' }
+        const server: McpApproval = { name: 'docs', sha256: 'd'.repeat(64), approved: false, sources: ['web:.mcp.json'], runs: 'node docs-server.mjs (in web)', environment: [], headers: [] }
         const synchronize = vi.fn(async (input: GeneratedEnvironmentSyncHandlerInput) => ({ status: 0, diagnostics: [],
             result: input.dryRun ? { dryRun: true, sourceSha256: 'a'.repeat(64), mcpApprovals: [server] } : null }))
         // The file on disk after the approvals were written is not the one they were written to.

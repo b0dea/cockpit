@@ -231,7 +231,8 @@ changed is no longer approved. A declared server absent from the list, or whose 
 rendered disabled for every harness (for Claude Code through `disabledMcpjsonServers`, because it
 ignores `disabled` in `.mcp.json`), and `sync` and `check` report `MCP_NOT_APPROVED` with the digest
 to approve. A person approves with the one yes at `sync --interactive`, which shows each server's
-name, what it runs and where it is declared, and writes the entry; nobody types or copies a hash.
+name, what it runs, the environment variable names it is given or the headers it sends (their
+references, never values), and where it is declared, and writes the entry; nobody types or copies a hash.
 An approval whose name no source declares refuses every sync (`MCP_APPROVAL_UNKNOWN`) until the entry is deleted, so a yes never covers a server it did not show. Cockpit rejects conflicting
 commands for one server, credential-like arguments, environment values that are not same-name
 references, and working directories outside the declared sibling.

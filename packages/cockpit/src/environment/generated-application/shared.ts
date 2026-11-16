@@ -180,7 +180,7 @@ export interface PreparedEnvironment {
     // Declared MCP servers left out of `[mcp].approved`: rendered disabled, and said so on every sync and check.
     readonly unapprovedMcpServers: readonly Readonly<{ name: string; sources: readonly string[]; sha256: string }>[]
     // Every server a preview with approveDeclaredMcp rendered approved, and whether `[mcp].approved` already approves it.
-    readonly mcpApprovals: readonly Readonly<{ name: string; sha256: string; approved: boolean; sources: readonly string[]; runs: string }>[]
+    readonly mcpApprovals: readonly Readonly<{ name: string; sha256: string; approved: boolean; sources: readonly string[]; runs: string; environment: readonly string[]; headers: readonly string[] }>[]
     // Declared remote servers a listed tool cannot carry the credential of: left out of that tool's file.
     readonly mcpTransportGaps: readonly Readonly<{ name: string; targets: readonly string[]; reason: string }>[]
     // Every declared MCP server as rendered, so doctor can check what each one needs to start.
