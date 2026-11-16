@@ -1,8 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { constants as osConstants } from 'node:os'
 import { isDeepStrictEqual } from 'node:util'
-import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
-import { cleanupFencedExecution, repairFencedExecution } from '../../environment-exec/execute.js'
+import { basename, dirname, isAbsolute, resolve, sep } from 'node:path'
 import {
     ENVIRONMENT_CODES,
     type EnvironmentCommandOutcome,
@@ -18,7 +17,6 @@ import {
     earlierNameRefusalMessage,
     findStackUnderEarlierName,
     recordLifecycleSeeded,
-    recordLifecycleStarted,
     type CurrentLifecycleRecord,
     type LifecycleRecordValue,
     type RuntimeInputs,
@@ -36,7 +34,7 @@ import {
     type LeasePortFamilyResult,
     type PortLeaseProjection,
 } from '../ports.js'
-import { consumeLifecycleIssuance, planSleep, admitUpProgress, planAdmittedUp } from '../lifecycle.js'
+import { consumeLifecycleIssuance, admitUpProgress, planAdmittedUp } from '../lifecycle.js'
 import {
     admitRuntimeServiceHealth,
     revalidateRuntimeService,
@@ -52,15 +50,12 @@ import {
 } from '../runtime.js'
 import { admitFailureLogs, failureLogExcerpt, planFailureLogs } from '../logs.js'
 import {
-    inspectSleepDrainRecovery,
-    settleInterruptedDrainRepair,
-    recoverSleepDrainReservation,
-    reserveDrain,
-    reserveDrainAttempt,
     observeProcessStart,
     processHost,
     releaseDeadSessionHolders,
+    releaseStoppedStack,
     decodeCoordinationRecord,
+    withStackTeardown,
 } from '../claims.js'
 import { readState } from '../state.js'
 import { observationSatisfiesExpectation } from '../observations.js'
@@ -86,10 +81,8 @@ import {
     exactCommandConfigPath,
     invalidateCompletedLifecycle,
     lifecycleSuggestion,
-    publishDrainOutcome,
     publishLifecycleRecord,
     readLifecycleRecord,
-    repairRequired,
     unheldStack,
 } from './lifecycle-state.js'
 import { lifecycleRefusal, ownerDiagnostic, uniqueDiagnostics } from './shared.js'
@@ -446,7 +439,7 @@ async function executeUpRound(
                   ) }
         }
         const issuance = consumeLifecycleIssuance(planned.plan)
-        if (!issuance || issuance.drainRequest !== null || issuance.reclaim !== null) {
+        if (!issuance) {
             return { kind: 'complete' as const, result: lifecycleRefusal(
                 ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
                 'lifecycle plan authority is unavailable',
@@ -471,14 +464,6 @@ async function executeUpRound(
             ...(runtime.activeProfiles.length > 0 ? { activeProfiles: runtime.activeProfiles } : {}),
         }
         if (!stored || resetProgress || stored.value.holderId !== context.holderId && !completedCoTenant) {
-            // The first lifecycle data starts its durable history, as `setup` does (an existing
-            // `started` is unchanged), so lifecycle data without history keeps meaning that history
-            // was lost. Publishing data alone let a first `up` pass and every resume refuse.
-            if (!stored) {
-                const started = await recordLifecycleStarted({ namespace: context.namespace, stackId: context.stackId,
-                    holderId: context.holderId, observedAt: new Date().toISOString() })
-                if (started.kind === 'refusal') return { kind: 'complete' as const, result: forwardedRefusal(started.diagnostics) }
-            }
             const publication = await publishLifecycleRecord(
                 context,
                 stored?.record ?? null,
@@ -687,7 +672,7 @@ async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAd
         let result = round.result
         if (result.kind === 'complete') {
             const seeded = await recordLifecycleSeeded({ namespace: context.namespace, stackId: context.stackId,
-                holderId: context.holderId, observedAt: new Date().toISOString() })
+                holderId: context.holderId })
             if (seeded.kind === 'refusal') return forwardedRefusal(seeded.diagnostics)
             // The stack stays up when its seed fails: the containers are healthy, and the next up
             // runs the seed again because no success was recorded.
@@ -876,7 +861,8 @@ export async function runSleep(
         )
     }
     const context = loaded.result
-    const outcome = await sleepWithContext(context, adapters)
+    const locked = await withStackTeardown(context.namespace, context.stackId, context.holderId, () => sleepWithContext(context, adapters))
+    const outcome: SleepCommandResult = 'status' in locked ? locked : forwardedRefusal(locked.diagnostics)
     // A stopped stack runs nothing a later doctor could call stale.
     const forgotten = outcome.kind === 'complete' && outcome.result.change === 'stopped' ? await forgetStackInputs(dirname(context.source.path)) : []
     return withLifecycleRunNotices(context, forgotten.length === 0 ? outcome : { ...outcome, diagnostics: uniqueDiagnostics([...outcome.diagnostics, ...forgotten]) })
@@ -892,42 +878,17 @@ async function remainingHolderKind(context: LifecycleRunContext): Promise<'this-
     return coordination.holders.every((holder) => holder.checkoutId === context.checkoutId) ? 'this-checkout' : 'other-checkouts'
 }
 
+// Sleep stops the stack only when this checkout is its last holder; otherwise it gives up this
+// checkout's hold and leaves the stack running for the others. Every step reads the stack as it is
+// now, so a sleep that was interrupted is finished by running it again.
 async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCommandAdapters): Promise<SleepCommandResult> {
-    let recovery = await inspectSleepDrainRecovery({
-        namespace: context.namespace,
-        stackId: context.stackId,
-        holderId: context.holderId,
+    const reaped = await releaseDeadSessionHolders({
+        namespace: context.namespace, stackId: context.stackId,
+        successor: { holderId: context.holderId, checkoutId: context.checkoutId },
+        now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, processHost(adapters.execute)),
     })
-    if (recovery.kind === 'repairable') {
-        const terminated = await repairFencedExecution(recovery.fence)
-        if (terminated.kind !== 'complete') return repairRequired(context)
-        const repaired = await settleInterruptedDrainRepair({ namespace: context.namespace, record: recovery.record, evidence: terminated.evidence })
-        if (repaired.kind !== 'complete') return repairRequired(context)
-        if (!await cleanupFencedExecution(recovery.fence)) return lifecycleRefusal(
-            ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
-            'the interrupted sleep executor stopped but its durable execution fence could not be removed',
-            recovery.fence.markerPath,
-        )
-        recovery = await inspectSleepDrainRecovery({ namespace: context.namespace, stackId: context.stackId, holderId: context.holderId })
-    }
-    if (recovery.kind === 'refusal') return {
-        kind: 'refusal', status: 2, result: null,
-        diagnostics: recovery.diagnostics.map((diagnostic) => diagnostic.code === ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED
-            ? ownerDiagnostic(diagnostic.code,
-                'cockpit cannot prove the interrupted sleep executor stopped, so it will not overlap it with another destructive action; preserve the coordination state for explicit repair',
-                diagnostic.target ?? context.stackId)
-            : diagnostic),
-    }
-
-    if (recovery.kind !== 'recoverable') {
-        const reaped = await releaseDeadSessionHolders({
-            namespace: context.namespace, stackId: context.stackId,
-            successor: { holderId: context.holderId, checkoutId: context.checkoutId },
-            now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, processHost(adapters.execute)),
-        })
-        if (reaped.kind === 'refusal') return forwardedRefusal(reaped.diagnostics)
-    }
-    const unheld = recovery.kind === 'recoverable' ? undefined : await unheldStack(context)
+    if (reaped.kind === 'refusal') return forwardedRefusal(reaped.diagnostics)
+    const unheld = await unheldStack(context)
     if (unheld) return unheld
     const retained = await observeRetainedPortFamily({
         namespace: context.namespace,
@@ -956,34 +917,8 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
         'retained port projection is unavailable',
         context.stackId,
     )
-    const result = await adapters.withRuntimeReadiness(context, async (runtime) => {
-        const generation = recovery.kind === 'recoverable'
-            ? recovery.generation : randomBytes(32).toString('hex')
-        const planned = planSleep({
-            runtime: runtime.lifecycle,
-            ports,
-            operationGeneration: generation,
-            runtimeStopValidForMs: recovery.kind === 'recoverable'
-                ? recovery.runtimeStopValidForMs : 60_000,
-        })
-        if (planned.kind === 'refusal') return {
-            kind: 'refusal' as const, status: 2 as const, result: null,
-            diagnostics: planned.diagnostics,
-        }
-        const issuance = consumeLifecycleIssuance(planned.plan)
-        if (!issuance || issuance.reclaim !== null || issuance.portOwnership.holderId !== context.holderId) {
-            return lifecycleRefusal(
-                ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
-                'sleep lifecycle authority is unavailable',
-                context.stackId,
-            )
-        }
-        if (planned.kind === 'release-only') {
-            if (recovery.kind === 'recoverable') return lifecycleRefusal(
-                ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
-                'persisted lifecycle work no longer matches current ownership',
-                context.stackId,
-            )
+    const result = await adapters.withRuntimeReadiness(context, async (runtime): Promise<SleepCommandResult> => {
+        if (ports.ownership.holderCount > 1) {
             const released = await releasePortFamily({
                 namespace: context.namespace,
                 stackId: context.stackId,
@@ -998,55 +933,21 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
             )
             const remainingHolders = await remainingHolderKind(context)
             return {
-                kind: 'complete' as const, status: 0 as const, diagnostics: planned.plan.diagnostics,
-                result: { stackId: context.stackId, change: 'retained' as const, ...(remainingHolders ? { remainingHolders } : {}) },
+                kind: 'complete', status: 0, diagnostics: [],
+                result: { stackId: context.stackId, change: 'retained', ...(remainingHolders ? { remainingHolders } : {}) },
             }
         }
-        if (!issuance.drainRequest) return lifecycleRefusal(
-            ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
-            'sleep drain authority is unavailable',
-            context.stackId,
-        )
-        let reserved
-        if (recovery.kind === 'recoverable') {
-            reserved = await recoverSleepDrainReservation({
-                namespace: context.namespace,
-                record: recovery.record,
-                request: planned.request,
-            })
-        } else {
-            reserved = await reserveDrain({ namespace: context.namespace, request: planned.request })
-        }
-        if (reserved.kind !== 'complete') return lifecycleRefusal(
-            reserved.diagnostics[0]?.code ?? ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
-            reserved.diagnostics[0]?.message ?? 'sleep drain could not be reserved',
-            reserved.diagnostics[0]?.target ?? context.stackId,
-        )
-        const attempted = await reserveDrainAttempt({ namespace: context.namespace, reservation: reserved.reservation })
-        if (attempted.kind !== 'complete') return lifecycleRefusal(
-            attempted.diagnostics[0]?.code ?? ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
-            attempted.diagnostics[0]?.message ?? 'sleep attempt could not be reserved',
-            attempted.diagnostics[0]?.target ?? context.stackId,
-        )
-        const stopped = await stopRuntime({ topology: issuance.topology, attempt: attempted, execute: (step) => adapters.execute(step) })
-        if (stopped.kind === 'unavailable') return repairRequired(context)
-        const { outcome, fence } = stopped
-        if (stopped.kind === 'not-started') {
-            const finalized = await publishDrainOutcome(context, outcome, fence)
-            return finalized ?? lifecycleRefusal(stopped.code, 'runtime stop did not start', context.stackId)
-        }
-        const invalidated = await invalidateCompletedLifecycle(
-            context,
-            planned.request.operationBasis,
-            planned.request.generation,
-            'sleep',
-        )
+        const stopped = await stopRuntime({ topology: runtime.topology, execute: (step) => adapters.execute(step) })
+        if (stopped.kind !== 'stopped') return lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_STEP_FAILED,
+            `the stack could not be stopped: ${stopped.reason}`, context.stackId,
+            `fix what the message names, then run \`${cockpitCommand('sleep', { config: context.source.path })}\` again`)
+        const invalidated = await invalidateCompletedLifecycle(context, 'sleep')
         if (invalidated) return invalidated
-        const finalized = await publishDrainOutcome(context, outcome, fence)
-        if (finalized) return finalized
+        const released = await releaseStoppedStack({ namespace: context.namespace, stackId: context.stackId, holderId: context.holderId })
+        if (released.kind !== 'complete') return forwardedRefusal(released.diagnostics)
         return {
-            kind: 'complete' as const, status: 0 as const, diagnostics: planned.plan.diagnostics,
-            result: { stackId: context.stackId, change: 'stopped' as const },
+            kind: 'complete', status: 0, diagnostics: [],
+            result: { stackId: context.stackId, change: 'stopped' },
         }
     }, ports, forwardedRefusal, 'teardown')
     return result ?? lifecycleRefusal(

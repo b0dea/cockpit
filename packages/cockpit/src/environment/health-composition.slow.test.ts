@@ -11,7 +11,7 @@ import { runDoctor } from './application/doctor.js'
 import { runPreflight } from './application/health.js'
 import { runUp } from './application/lifecycle.js'
 import { checkoutId, cockpitId, holderId, stackId } from './identity.js'
-import { lifecycleHistoryAddress, transactState } from './state.js'
+import { transactState } from './state.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { createHealthCommandAdapters } from './health-composition.js'
 import { observeGeneratedApplicationSurfaces } from './generated-application/surface-observation.js'
@@ -105,13 +105,6 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
 
     it('passes seeded machine-floor health through public routes and refuses changed published surfaces', async () => {
         const candidate = await fixture({ machineOnly: true })
-        const address = candidate.namespace.paths.lifecycle(candidate.stack)
-        const holder = holderId({ stackId: candidate.stack, checkoutId: checkoutId({ checkoutPath: candidate.checkout }), sessionId: 'health-fixture' })
-        expect(await transactState(candidate.namespace, address, { ownerId: holder }, () => ({
-            format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId: address.cockpitId, subjectId: candidate.stack,
-            revision: 0, updatedAt: new Date().toISOString(), value: { holderId: holder,
-                workBasisSha256: '1'.repeat(64), operationGeneration: '2'.repeat(64), completedServices: [] },
-        }))).toMatchObject({ kind: 'complete' })
         const api = join(candidate.checkout, 'siblings/api')
         await run('git', ['init', '--quiet', api])
         await run('git', ['-C', api, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid',
@@ -461,9 +454,8 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
 
     it('preserves a lifecycle owner refusal before observing Docker', async () => {
         const candidate = await fixture({ configuredRuntime: true })
-        const history = lifecycleHistoryAddress(candidate.namespace, candidate.stack)
-        if (!history) throw new Error('fixture lifecycle history address is unavailable')
-        await writeFile(history.path, '{}\n')
+        const lifecycle = candidate.namespace.paths.lifecycle(candidate.stack)
+        await writeFile(lifecycle.path, '{}\n')
         const execute = vi.fn(executeProbe)
         const adapters = createHealthCommandAdapters({
             configPath: candidate.configPath,
@@ -477,9 +469,9 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         for (const outcome of [preflight, doctor]) {
             expect(outcome.result).toMatchObject({ verdict: 'unavailable', checks: [] })
             expect(outcome.diagnostics).toContainEqual({
-                severity: 'error', code: 'STATE_RECORD_MALFORMED', target: history.path,
+                severity: 'error', code: 'STATE_RECORD_MALFORMED', target: lifecycle.path,
                 message: 'state record is malformed or does not match its address',
-                fix: 'inspect lifecycle state and history before explicit recovery or adoption',
+                fix: 'inspect the lifecycle record; once no cockpit command runs for this stack, run down and up to start it afresh',
             })
         }
         expect(execute.mock.calls.some(([step]) => step.argv0 === join(candidate.root, 'docker'))).toBe(false)
@@ -573,7 +565,7 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
             expect.objectContaining({ owner: 'environment-template-seeding', code: 'ENVIRONMENT_KEYS_STALE', verdict: 'pass', measured: true }),
             expect.objectContaining({ owner: 'environment-template-seeding', code: 'ENVIRONMENT_FILE_NOT_FOUND', verdict: 'pass', measured: true }),
         ]))
-        expect(result.result.checks.find(({ owner }) => owner === 'lifecycle-stage')?.measured).toBe(false)
+        expect(result.result.checks.find(({ owner }) => owner === 'lifecycle-stage')?.measured).toBe(true)
     })
 
     it('observes sibling Git, schemas and every declared template from a nested configuration', async () => {

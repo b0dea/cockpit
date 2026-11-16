@@ -1,7 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { realpath } from 'node:fs/promises'
 import { createConnection } from 'node:net'
-import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { basename, dirname, resolve } from 'node:path'
 import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import type { ConsumedLoadedConfig } from '../config/load.js'
 import { cockpitCommand } from '../fix-catalogue.js'
@@ -21,7 +20,6 @@ import { isProcessStart, observeProcessStart, processHost, releaseDeadSessionHol
 import {
     errorCause,
     RefusalError,
-    DOCKER_CLIENT_ENVIRONMENT,
     ENVIRONMENT_CODES,
     snapshotExecutionPlan,
     type EnvironmentCommandOutcome,
@@ -53,6 +51,9 @@ import {
     OBSERVATION_WINDOW_HEADROOM_MS,
     observeDockerRuntime,
     projectRuntimeLifecycle,
+    dockerClientEnvironment,
+    readComposeArtifact,
+    readComposeArtifacts,
     type ComposeArtifact,
     type MachineFloorAuthority,
     type RuntimeLifecycleProjection,
@@ -65,13 +66,11 @@ import {
     withSetupCheckoutProjection,
 } from './setup-observation.js'
 import { selectStateRoot } from './state.js'
-import { readBoundedFile } from '../bounded-read.js'
 import { loadServedSiblings, missingServedCheckout, servedPath, servedSiblingVariables, type ServedSibling } from './sibling-checkouts.js'
 import { recordStackInputs } from './stack-inputs.js'
 
 const OWNER = 'lifecycle-adapter-composition'
 
-const COMPOSE_BYTE_LIMIT = 1_048_576
 const LISTENER_CONCURRENCY = 16
 
 function ownerDiagnostics(code: EnvironmentDiagnostic['code'], message: string, target: string, fix?: string): readonly EnvironmentDiagnostic[] {
@@ -282,46 +281,6 @@ function seedUnavailable(context: LifecycleRunContext, message: string) {
     }] }
 }
 
-function runtimeEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
-    return Object.fromEntries(Object.entries(env)
-        .filter((entry): entry is [string, string] => DOCKER_CLIENT_ENVIRONMENT.has(entry[0]) && typeof entry[1] === 'string'))
-}
-
-function confined(root: string, path: string): boolean {
-    const relation = relative(root, path)
-    return relation === '' || relation !== '..' && !relation.startsWith(`..${sep}`) && !isAbsolute(relation)
-}
-
-async function composeArtifact(root: string, reference: string, expectedSha256?: string): Promise<ComposeArtifact | undefined> {
-    if (typeof reference !== 'string' || reference.length === 0 || reference.includes('\0')) return undefined
-    const expected = resolve(root, reference)
-    if (!confined(root, expected)) return undefined
-    try {
-        const canonicalPath = await realpath(expected)
-        if (canonicalPath !== expected) return undefined
-        const read = readBoundedFile(canonicalPath, COMPOSE_BYTE_LIMIT)
-        if (read.kind !== 'complete') return undefined
-        const bytes = read.bytes
-        const source = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-        const sha256 = createHash('sha256').update(bytes).digest('hex')
-        if (expectedSha256 !== undefined && sha256 !== expectedSha256) return undefined
-        return { reference, canonicalPath, source, sha256 }
-    } catch {
-        // Callers treat any unreadable or changed artifact as no file authority and refuse or report unavailable.
-        return undefined
-    }
-}
-
-async function composeArtifacts(root: string, references: readonly string[]): Promise<readonly ComposeArtifact[] | undefined> {
-    const artifacts: ComposeArtifact[] = []
-    for (const reference of references) {
-        const artifact = await composeArtifact(root, reference)
-        if (!artifact) return undefined
-        artifacts.push(artifact)
-    }
-    return artifacts
-}
-
 async function occupiedPort(port: number, timeoutMs: number): Promise<boolean | undefined> {
     return new Promise((complete) => {
         const socket = createConnection({ host: '127.0.0.1', port })
@@ -496,7 +455,7 @@ export function createLifecycleCommandAdapters(
         if (!input) return undefined
         const docker = await resolveDockerExecutable(input.env)
         if (docker.state !== 'available') return undefined
-        const env = runtimeEnvironment(input.env)
+        const env = dockerClientEnvironment(input.env)
         const project = composeProjectName({ cockpitName: binding.config.cockpit.name, stackId: context.stackId })
         const listing = hostStep('seed:volume-list', docker.value, ['volume', 'ls', '--filter', `label=com.docker.compose.project=${project}`,
             '--format', '{{.Name}}\t{{.Label "com.docker.compose.volume"}}'], binding.checkoutRoot, env, input.timeoutMs, context.stackId)
@@ -581,7 +540,7 @@ export function createLifecycleCommandAdapters(
             const gone = await missingServedCheckout(currentBinding.served)
             if (gone) return refuse?.([gone])
         }
-        const env = runtimeEnvironment(input.env)
+        const env = dockerClientEnvironment(input.env)
         const docker = await resolveDockerExecutable(input.env)
         if (docker.state !== 'available') return refuse?.(runtimeUnavailable(docker.reason, context.stackId))
         // Docker answering with a Compose at or above the floor is all a runtime has to show.
@@ -606,7 +565,7 @@ export function createLifecycleCommandAdapters(
         const activeProfiles = [...new Set([...currentBinding.config.environment.profiles,
             ...input.activeProfiles ?? [], ...recordedProfiles])].filter((profile) => !droppedProfiles.includes(profile)).sort()
         let expectedMountSources: readonly string[]
-        const declared = await composeArtifacts(currentBinding.checkoutRoot, currentBinding.config.environment.compose_files)
+        const declared = await readComposeArtifacts(currentBinding.checkoutRoot, currentBinding.config.environment.compose_files)
         if (!declared) return undefined
         // The cockpit's own Compose files carry no ownership labels; the override `sync`
         // publishes adds them, and it is admitted only while it equals a fresh render.
@@ -617,7 +576,7 @@ export function createLifecycleCommandAdapters(
         })
         if (ownership.kind !== 'complete') return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
             `the ownership override cannot be rendered from environment.compose_files: ${ownership.reason}`, ownership.target))
-        const override = await composeArtifact(currentBinding.checkoutRoot, COMPOSE_OWNERSHIP_FILE,
+        const override = await readComposeArtifact(currentBinding.checkoutRoot, COMPOSE_OWNERSHIP_FILE,
             createHash('sha256').update(ownership.bytes).digest('hex'))
         if (!override) return refuse?.(ownerDiagnostics(ENVIRONMENT_CODES.GENERATED_ENVIRONMENT_UNAVAILABLE,
             `${COMPOSE_OWNERSHIP_FILE} is missing or does not match the current Compose files and cockpit.toml; run ${cockpitCommand('sync')}`,
@@ -715,7 +674,7 @@ export function createLifecycleCommandAdapters(
     const withMachineFloorReadiness: LifecycleCommandAdapterComposition['withMachineFloorReadiness'] = async (context, use, refuse) => {
         const binding = bindings.get(context)
         if (!input || !binding?.machineFloorAuthority || !binding.config.environment.machine) return undefined
-        const env = runtimeEnvironment(input.env)
+        const env = dockerClientEnvironment(input.env)
         const [docker, disk] = await Promise.all([
             resolveDockerExecutable(input.env),
             resolveDiskCapacityExecutable(),

@@ -186,7 +186,6 @@ export const ENVIRONMENT_CODES = Object.freeze({
     PORT_EXTERNAL_REGISTRATION_GAP: 'PORT_EXTERNAL_REGISTRATION_GAP',
     CLAIM_CO_TENANT: 'CLAIM_CO_TENANT',
     CLAIM_LIVENESS_UNKNOWN: 'CLAIM_LIVENESS_UNKNOWN',
-    DRAIN_ATTEMPT_REPAIR_REQUIRED: 'DRAIN_ATTEMPT_REPAIR_REQUIRED',
     INSTALL_POLICY_OBSERVATION_UNAVAILABLE: 'INSTALL_POLICY_OBSERVATION_UNAVAILABLE',
     INSTALL_POLICY_OBSERVATION_INVALID: 'INSTALL_POLICY_OBSERVATION_INVALID',
     INSTALL_POLICY_MISSING: 'INSTALL_POLICY_MISSING',
@@ -371,7 +370,6 @@ export const REFUSAL_CODES = Object.freeze([
     ENVIRONMENT_CODES.PORT_LEASE_EXHAUSTED,
     ENVIRONMENT_CODES.CLAIM_CO_TENANT,
     ENVIRONMENT_CODES.CLAIM_LIVENESS_UNKNOWN,
-    ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
     ENVIRONMENT_CODES.INSTALL_POLICY_OBSERVATION_UNAVAILABLE,
     ENVIRONMENT_CODES.INSTALL_POLICY_OBSERVATION_INVALID,
     ENVIRONMENT_CODES.INSTALL_POLICY_MISSING,
@@ -597,14 +595,7 @@ export interface ExecutionStep {
     expected: readonly ExpectedObservation[]
     consumedFiles: readonly ConsumedFile[]
     filesystemChecks: readonly FilesystemCheck[]
-    executionFence?: ExecutionFence
     compensation: readonly ExecutionStep[]
-}
-
-export interface ExecutionFence {
-    readonly attemptId: string
-    readonly markerPath: string
-    readonly socketPath: string
 }
 
 export interface ExecutionPlan {
@@ -743,7 +734,7 @@ function executionStepSnapshot(snapshot: JsonSnapshot | undefined, traversal: Ex
     if (snapshot === undefined || snapshot === null || typeof snapshot !== 'object' || Array.isArray(snapshot)) return undefined
     const item = snapshot as unknown as ExecutionStep
     const baseKeys = ['id', 'argv', 'argv0', 'cwd', 'env', 'timeoutMs', 'stdoutLimitBytes', 'stderrLimitBytes', 'paths', 'ports', 'labels', 'expected', 'consumedFiles', 'filesystemChecks', 'compensation']
-    const optionalKeys = [item.spawnNotAfter === undefined ? undefined : 'spawnNotAfter', item.executionFence === undefined ? undefined : 'executionFence',
+    const optionalKeys = [item.spawnNotAfter === undefined ? undefined : 'spawnNotAfter',
         item.outputOverflow === undefined ? undefined : 'outputOverflow', item.failureOutput === undefined ? undefined : 'failureOutput']
         .filter((key): key is string => key !== undefined)
     if (!exactKeys(snapshot, [...baseKeys, ...optionalKeys])
@@ -759,10 +750,6 @@ function executionStepSnapshot(snapshot: JsonSnapshot | undefined, traversal: Ex
         || !Array.isArray(item.ports) || new Set(item.ports).size !== item.ports.length || item.ports.some((port) => !Number.isSafeInteger(port) || port < 1 || port > 65_535)
         || !stringRecord(item.labels) || !expectedObservations(item.expected) || !consumedFiles(item.consumedFiles, item.argv)
         || !filesystemChecks(item.filesystemChecks) || item.filesystemChecks.some((check) => item.consumedFiles.some((file) => file.path === check.path))
-        || item.executionFence !== undefined && (!exactKeys(item.executionFence, ['attemptId', 'markerPath', 'socketPath'])
-            || typeof item.executionFence.attemptId !== 'string' || !/^[a-f0-9]{64}$/.test(item.executionFence.attemptId)
-            || !canonicalPaths([item.executionFence.markerPath, item.executionFence.socketPath])
-            || item.executionFence.markerPath === item.executionFence.socketPath || Buffer.byteLength(item.executionFence.socketPath) > 103)
         || !Array.isArray(item.compensation) || item.argv.length > 1_024 || Object.keys(item.env).length > 1_024 || Object.keys(item.labels).length > 1_024
         || item.paths.length > 1_024 || item.ports.length > 1_024 || item.expected.length > 1_024
         || item.consumedFiles.length > 1_024 || item.filesystemChecks.length > 1_024 || item.compensation.length > 1_024

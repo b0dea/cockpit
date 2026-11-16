@@ -78,7 +78,7 @@ export async function observeConfiguration(input: { readonly path: string; reado
 
 const STATE_FORMAT = 'cockpit-state/v1'
 export const SERIALIZED_RECORD_BYTE_LIMIT = 1_048_576
-const RECORD_KINDS = ['coordination', 'lifecycle', 'lifecycle-history', 'data-outcome', 'cache'] as const
+const RECORD_KINDS = ['coordination', 'lifecycle', 'cache'] as const
 const safeSegment = /^[a-z0-9][a-z0-9._-]*$/
 const digest = /^[a-f0-9]{64}$/
 const cockpitIdentity = /^cockpit:[a-z0-9][a-z0-9-]*:[a-f0-9]{64}$/
@@ -241,7 +241,6 @@ export interface StateNamespace {
     readonly paths: {
         readonly coordination: (stackId: StackId) => StateAddress
         readonly lifecycle: (stackId: StackId) => StateAddress
-        readonly dataOutcome: (stackId: StackId) => StateAddress
         readonly stateLock: string
         readonly installLock: (cacheId: string) => string
         readonly cache: (checkoutId: CheckoutId, cacheIdentitySha256: string) => StateAddress
@@ -319,8 +318,17 @@ interface StateLockInspection {
     readonly holderState: LockHolderState | 'invalid'
     readonly description: string
     readonly recovery: string
-    readonly owner?: Readonly<{ bytes: string; value: StateLockOwner; reason: string }>
+    /** The owner bytes judged, or null for a lock directory with no owner record. */
+    readonly owner?: Readonly<{ bytes: string | null; holder: string; reason: string }>
 }
+
+// A command creates the lock directory and writes its owner record in the next moment, and a
+// release removes the record just before the directory. A directory left without a readable record
+// for this long belongs to a command killed in between, and is taken over like a dead holder's.
+const OWNERLESS_LOCK_MS = 10_000
+
+// A lock this command could not release still names it, so once it exits the next command takes it over.
+const LEFT_LOCK_RECOVERY = 'retry once this command has exited; cockpit takes over a lock whose holder is gone'
 
 /** A lock whose holder was shown gone from this host and was taken over. */
 export type StateLockReclaim = Readonly<{ lock: string; holder: string; reason: string }>
@@ -332,7 +340,7 @@ export interface StateTransactionOptions {
     readonly beforePublish?: (temporaryPath: string) => Promise<void>
     readonly beforeCommit?: () => StateTransactionAbort<unknown> | undefined
     readonly beforeRelease?: () => Promise<void>
-    readonly beforeLockMetadata?: (operation: 'owner-unlink' | 'tombstone-rmdir' | 'owner-restore-link' | 'backup-unlink' | 'takeover-link' | 'takeover-rename') => Promise<void>
+    readonly beforeLockMetadata?: (operation: 'takeover-link' | 'takeover-rename') => Promise<void>
     readonly contentionTimeoutMs?: number
 }
 
@@ -539,7 +547,7 @@ function namespace(root: string, cockpitId: CockpitId): StateNamespace {
     const id = checkedIdentity(cockpitId, cockpitIdentity, 'cockpit id')
     const cockpitRoot = join(root, 'cockpits', identitySegment(id))
     const stackAddress = (
-        kind: 'coordination' | 'lifecycle' | 'lifecycle-history' | 'data-outcome',
+        kind: 'coordination' | 'lifecycle',
         stackId: StackId,
     ): StateAddress => {
         const subjectId = checkedIdentity(stackId, stackIdentity, 'stack id')
@@ -548,7 +556,6 @@ function namespace(root: string, cockpitId: CockpitId): StateNamespace {
     const paths: StateNamespace['paths'] = {
         coordination: (stackId) => stackAddress('coordination', stackId),
         lifecycle: (stackId) => stackAddress('lifecycle', stackId),
-        dataOutcome: (stackId) => stackAddress('data-outcome', stackId),
         stateLock: join(cockpitRoot, 'locks', 'state.lock'),
         installLock: (cacheId) => join(cockpitRoot, 'locks', 'install', `cache-${checkedSegment(cacheId, 'cache id')}.lock`),
         cache: (checkoutId, cacheIdentitySha256) => {
@@ -704,9 +711,6 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
                             const parsed = parseCoordinationStateEntry(entry)
                             if (!parsed) throw new RefusalError('coordination store contains an unexpected entry')
                             await inspect(path, 'file')
-                            if (parsed.kind === 'executor' && snapshots.get(path)!.nlink !== 1n) {
-                                throw new RefusalError('coordination executor marker has multiple links')
-                            }
                             bytes += snapshots.get(path)!.size
                             if (bytes > BigInt(SERIALIZED_RECORD_BYTE_LIMIT)) throw new InventoryBoundaryError('coordination inventory exceeds its aggregate byte boundary')
                         }
@@ -747,29 +751,11 @@ export async function withStateNamespaceInventory<T>(value: StateNamespace,
     return { kind: 'complete', value: result }
 }
 
-export function lifecycleHistoryAddress(value: StateNamespace, stackId: StackId): StateAddress | undefined {
-    const authenticated = authenticateStateNamespace(value)
-    if (!authenticated) return undefined
-    const subjectId = checkedIdentity(stackId, stackIdentity, 'stack id') as StackId
-    const lifecycle = authenticated.paths.lifecycle(subjectId)
-    return address(
-        join(authenticated.cockpitRoot, 'records', 'lifecycle-history', `${identitySegment(subjectId)}.json`),
-        authenticated.root,
-        authenticated.cockpitRoot,
-        'lifecycle-history',
-        lifecycle.cockpitId,
-        subjectId,
-    )
-}
-
 export function parseCoordinationStateEntry(name: string):
-Readonly<{ kind: 'record'; stackId: StackId } | { kind: 'temporary' }
-    | { kind: 'executor'; stackId: StackId; attemptId: string }> | undefined {
+Readonly<{ kind: 'record'; stackId: StackId } | { kind: 'temporary' }> | undefined {
     if (/^\.stack_[a-f0-9]{64}\.[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/.test(name)) {
         return { kind: 'temporary' }
     }
-    const executor = /^(stack_[a-f0-9]{64})\.json\.([a-f0-9]{64})\.executor\.json$/.exec(name)
-    if (executor) return { kind: 'executor', stackId: executor[1]!.replace('_', ':') as StackId, attemptId: executor[2]! }
     if (!/^stack_[a-f0-9]{64}\.json$/.test(name)) return undefined
     return { kind: 'record', stackId: name.slice(0, -5).replace('_', ':') as StackId }
 }
@@ -787,14 +773,12 @@ export function snapshotStateNamespace(value: StateNamespace): StateNamespace | 
         if (typeof root !== 'string' || typeof cockpitRoot !== 'string' || !paths || typeof paths !== 'object') return undefined
         const coordination = own(paths, 'coordination')
         const lifecycle = own(paths, 'lifecycle')
-        const dataOutcome = own(paths, 'dataOutcome')
         const stateLock = own(paths, 'stateLock')
         const installLock = own(paths, 'installLock')
         const cache = own(paths, 'cache')
         if (
             typeof coordination !== 'function'
             || typeof lifecycle !== 'function'
-            || typeof dataOutcome !== 'function'
             || typeof stateLock !== 'string'
             || typeof installLock !== 'function'
             || typeof cache !== 'function'
@@ -802,7 +786,7 @@ export function snapshotStateNamespace(value: StateNamespace): StateNamespace | 
         // Recover captured authority only from its original path functions and exact namespace fields.
         const issued = issuedNamespacePaths.get(coordination)
         if (issued && root === issued.root && cockpitRoot === issued.cockpitRoot
-            && lifecycle === issued.paths.lifecycle && dataOutcome === issued.paths.dataOutcome
+            && lifecycle === issued.paths.lifecycle
             && stateLock === issued.paths.stateLock && installLock === issued.paths.installLock
             && cache === issued.paths.cache) return issued
         return {
@@ -811,7 +795,6 @@ export function snapshotStateNamespace(value: StateNamespace): StateNamespace | 
             paths: {
                 coordination,
                 lifecycle,
-                dataOutcome,
                 stateLock,
                 installLock,
                 cache,
@@ -1019,12 +1002,7 @@ function expectedAddressPath(address: StateAddress | BootstrapStateAddress): str
     ) return undefined
     const expectedSubject = address.kind === 'cache' ? checkoutIdentity : stackIdentity
     if (!expectedSubject.test(address.subjectId)) return undefined
-    if (
-        address.kind === 'lifecycle'
-        || address.kind === 'lifecycle-history'
-        || address.kind === 'coordination'
-        || address.kind === 'data-outcome'
-    ) {
+    if (address.kind === 'lifecycle' || address.kind === 'coordination') {
         return join(address.cockpitRoot, 'records', address.kind, `${identitySegment(address.subjectId)}.json`)
     }
     if (address.kind === 'cache' && address.qualifier && digest.test(address.qualifier)) {
@@ -1626,13 +1604,24 @@ async function inspectLock(
     try {
         bytes = new TextDecoder('utf-8', { fatal: true }).decode(await readLockOwner(lockPath, stateRoot))
         const parsed = StateLockSchema.safeParse(JSON.parse(bytes))
-        if (!parsed.success) throw new RefusalError('invalid lock metadata')
+        if (!parsed.success) throw new RefusalError('lock metadata does not match the state-lock format')
         owner = parsed.data
     } catch (error) {
+        // Only a missing, empty or unparsable record is one a command left mid-write; a record that
+        // parses but does not match may name a live holder, and is never taken over.
+        const unreadable = hasErrorCode(error, 'ENOENT') || error instanceof SyntaxError
+        const age = unreadable ? await lockAge(lockPath) : undefined
+        if (age !== undefined && age >= OWNERLESS_LOCK_MS) {
+            let current: string | null = null
+            try { current = await readLockFile(ownerPath, stateRoot) } catch (readError) { if (!hasErrorCode(readError, 'ENOENT')) throw readError }
+            const reason = `its owner record is ${current === null ? 'missing' : 'unreadable'} and nothing has written it for ${Math.round(age / 1000)}s`
+            return { holderState: 'dead', description: `state is locked by a command that stopped while taking or releasing the lock; ${reason}`,
+                recovery: 'retry; cockpit takes over a lock whose holder is gone', owner: { bytes: current, holder: 'a command that stopped mid-lock', reason } }
+        }
         return {
             holderState: 'invalid',
             description: `state lock metadata is missing or malformed: ${errorCause(error)}`,
-            recovery: `inspect ${ownerPath}; once no cockpit command runs on this host, a person removes ${lockPath}`,
+            recovery: age !== undefined ? 'retry; the command taking or releasing the lock finishes in a moment' : `inspect ${ownerPath}`,
         }
     }
     const cached = judged?.get(bytes)
@@ -1650,7 +1639,18 @@ async function inspectLock(
         holderState: judgement.state,
         description: `state is locked by ${describeHolder(owner)}; ${judgement.reason}`,
         recovery,
-        owner: { bytes, value: owner, reason: judgement.reason },
+        owner: { bytes, holder: describeHolder(owner), reason: judgement.reason },
+    }
+}
+
+// How long since the lock directory last changed; undefined when it cannot be read.
+async function lockAge(lockPath: string): Promise<number | undefined> {
+    try {
+        const status = await lstat(lockPath)
+        return status.isDirectory() && !status.isSymbolicLink() && privatelyOwned(status) ? Date.now() - status.mtimeMs : undefined
+    } catch (error) {
+        if (hasErrorCode(error, 'ENOENT')) return undefined
+        throw error
     }
 }
 
@@ -1680,10 +1680,6 @@ export async function inspectStateLock(
     return inspectLock(stableNamespace.paths.stateLock, stableNamespace.root, observeProcess)
 }
 
-// A refusal no wait can clear, such as a lock directory this acquisition left behind: retrying
-// would replace its message with a vaguer one.
-const unwaitableRefusals = new WeakSet<object>()
-
 // Reclaims taken in this process, by state root, until the command reports them.
 const stateLockReclaims = new Map<string, StateLockReclaim[]>()
 
@@ -1710,7 +1706,7 @@ export function takeAllStateLockReclaims(): readonly StateLockReclaim[] {
 async function takeOverLock(
     lockPath: string,
     stateRoot: string,
-    judgedBytes: string,
+    judgedBytes: string | null,
     owner: Readonly<{ bytes: string; token: string }>,
     options: Pick<StateTransactionOptions, 'observeProcess' | 'beforeLockMetadata'>,
 ): Promise<'taken' | 'contended' | 'changed'> {
@@ -1738,13 +1734,14 @@ async function takeOverLock(
     if (!linked) return 'contended'
     let replaced = false
     try {
-        let current: string
+        let current: string | null
         try { current = await readLockFile(ownerPath, stateRoot) }
         catch (error) {
             // The holder judged gone may have been a command that released the lock and exited
             // while it was judged; its lock is then simply free.
-            if (hasErrorCode(error, 'ENOENT')) return 'changed'
-            throw error
+            if (!hasErrorCode(error, 'ENOENT')) throw error
+            current = null
+            if (judgedBytes !== null) return 'changed'
         }
         if (current !== judgedBytes) return 'changed'
         await options.beforeLockMetadata?.('takeover-rename')
@@ -1760,7 +1757,7 @@ async function takeOverLock(
     catch (error) {
         // The lock is held but the takeover may not survive a crash; releasing it before refusing
         // keeps the failure from leaving a lock no command will release.
-        try { await releaseLock(lockPath, owner.bytes) }
+        try { await releaseLock(lockPath, stateRoot, owner.bytes) }
         catch (releaseError) {
             throw new RefusalError(`${errorCause(error)}; the lock taken over at ${lockPath} could not be released either: ${errorCause(releaseError)}`)
         }
@@ -1841,17 +1838,7 @@ async function acquireLock(
             StateResult<never>, { kind: 'refusal' }
         >
     }
-    const locksRoot = dirname(namespace.paths.stateLock)
-    await ensureDirectory(locksRoot, namespace.root)
-    const existingQuarantine = await releaseQuarantine(locksRoot)
-    if (existingQuarantine) {
-        return refusal(
-            ENVIRONMENT_CODES.STATE_LOCKED,
-            'state has a quarantined lock awaiting explicit recovery',
-            existingQuarantine,
-            await quarantineRecovery(existingQuarantine),
-        ) as Extract<StateResult<never>, { kind: 'refusal' }>
-    }
+    await ensureDirectory(dirname(namespace.paths.stateLock), namespace.root)
     const owner = {
         format: STATE_FORMAT,
         kind: 'state-lock',
@@ -1867,41 +1854,7 @@ async function acquireLock(
     try {
         await mkdir(namespace.paths.stateLock, { mode: 0o700 })
         createdLock = true
-        const created = await lstat(namespace.paths.stateLock)
-        createdNode = created
-        let concurrentQuarantine: string | undefined
-        try {
-            concurrentQuarantine = await releaseQuarantine(locksRoot)
-        } catch (error) {
-            createdLock = false
-            return refusal(
-                ENVIRONMENT_CODES.STATE_LOCKED,
-                `state locks root changed while acquiring the state lock: ${errorCause(error)}`,
-                namespace.paths.stateLock,
-                'inspect the state locks root and establish positive holder evidence before explicit recovery',
-            ) as Extract<StateResult<never>, { kind: 'refusal' }>
-        }
-        if (concurrentQuarantine) {
-            const current = await lstat(namespace.paths.stateLock)
-            createdLock = false
-            let leftover = ''
-            if (current.isDirectory() && !current.isSymbolicLink() && sameNode(current, created)) {
-                try { await rmdir(namespace.paths.stateLock) }
-                catch (error) {
-                    // A lock directory this acquisition created but could not remove blocks every
-                    // later acquisition, so the operator must be told it exists.
-                    leftover = `; the lock directory this acquisition created at ${namespace.paths.stateLock} could not be removed: ${errorCause(error)}`
-                }
-            }
-            const raced = refusal(
-                ENVIRONMENT_CODES.STATE_LOCKED,
-                `state lock release raced with acquisition and remains quarantined${leftover}`,
-                concurrentQuarantine,
-                await quarantineRecovery(concurrentQuarantine),
-            ) as Extract<StateResult<never>, { kind: 'refusal' }>
-            if (leftover) unwaitableRefusals.add(raced)
-            return raced
-        }
+        createdNode = await lstat(namespace.paths.stateLock)
         const handle = await open(join(namespace.paths.stateLock, 'owner.json'), 'wx', 0o600)
         try {
             await handle.writeFile(ownerBytes, 'utf8')
@@ -1925,7 +1878,7 @@ async function acquireLock(
                     await rmdir(namespace.paths.stateLock)
                 }
             } catch {
-                // A partially created or replaced lock is authority evidence and must survive for recovery.
+                // A directory left here has no owner record, and the next command takes it over once it has stood a moment.
             }
         }
         if (!hasErrorCode(error, 'EEXIST')) throw error
@@ -1935,7 +1888,7 @@ async function acquireLock(
                 { bytes: ownerBytes, token: owner.token }, options)
             if (takeover === 'taken') {
                 const reclaims = stateLockReclaims.get(namespace.root) ?? []
-                reclaims.push({ lock: namespace.paths.stateLock, holder: describeHolder(observed.owner.value), reason: observed.owner.reason })
+                reclaims.push({ lock: namespace.paths.stateLock, holder: observed.owner.holder, reason: observed.owner.reason })
                 stateLockReclaims.set(namespace.root, reclaims)
                 return { kind: 'acquired', ownerBytes }
             }
@@ -1955,29 +1908,6 @@ async function acquireLock(
     }
 }
 
-async function releaseQuarantine(locksRoot: string): Promise<string | undefined> {
-    const before = await lstat(locksRoot)
-    if (!before.isDirectory() || before.isSymbolicLink() || !privatelyOwned(before)) throw new RefusalError('state locks root is unsafe')
-    const names = await readdir(locksRoot)
-    const after = await lstat(locksRoot)
-    if (!sameNode(before, after)) throw new RefusalError('state locks root changed during quarantine inspection')
-    const name = names.filter((entry) => entry.startsWith('.state.lock.release-')).sort()[0]
-    return name ? join(locksRoot, name) : undefined
-}
-
-async function quarantineRecovery(path: string): Promise<string> {
-    const evidencePath = path.endsWith('.owner.json') ? path : `${path}.owner.json`
-    try {
-        const evidence = await lstat(evidencePath)
-        if (evidence.isFile() && !evidence.isSymbolicLink()) {
-            return `inspect the quarantined lock owner evidence at ${evidencePath} before explicit recovery`
-        }
-    } catch (error) {
-        if (!hasErrorCode(error, 'ENOENT')) throw error
-    }
-    return 'inspect the quarantined lock holder and restore or reclaim it using positive owner evidence'
-}
-
 function sameNode(
     actual: { readonly dev: number; readonly ino: number },
     expected: { readonly dev: number; readonly ino: number },
@@ -1985,182 +1915,18 @@ function sameNode(
     return actual.dev === expected.dev && actual.ino === expected.ino
 }
 
-class LockReleaseError extends RefusalError {
-    constructor(
-        message: string,
-        readonly target: string,
-        readonly recovery: string,
-    ) {
-        super(message)
-    }
-}
-
-function samePrivateNode(
-    actual: { readonly dev: number; readonly ino: number; readonly uid: number; readonly mode: number },
-    expected: { readonly dev: number; readonly ino: number },
-): boolean {
-    return privatelyOwned(actual) && sameNode(actual, expected)
-}
-
+// Removes the lock directory once its owner record is still this command's. A command killed while
+// removing it leaves a directory without an owner record, which the next command takes over once it
+// has stood a moment.
 async function releaseLock(
     lockPath: string,
+    stateRoot: string,
     ownerBytes: string,
     beforeRelease?: StateTransactionOptions['beforeRelease'],
-    beforeLockMetadata?: StateTransactionOptions['beforeLockMetadata'],
 ): Promise<void> {
-    const releaseRoot = dirname(lockPath)
-    const ownerPath = join(lockPath, 'owner.json')
-    const verifiedRoot = await lstat(releaseRoot)
-    const verifiedLock = await lstat(lockPath)
-    if (
-        !verifiedRoot.isDirectory()
-        || verifiedRoot.isSymbolicLink()
-        || !privatelyOwned(verifiedRoot)
-        || !verifiedLock.isDirectory()
-        || verifiedLock.isSymbolicLink()
-        || !privatelyOwned(verifiedLock)
-    ) {
-        throw new RefusalError('state lock changed before release')
-    }
-    const currentOwner = await readRegularFileSnapshotNoFollow(ownerPath, async () => {
-        const root = await lstat(releaseRoot)
-        const lock = await lstat(lockPath)
-        return samePrivateNode(root, verifiedRoot)
-            && lock.isDirectory()
-            && !lock.isSymbolicLink()
-            && samePrivateNode(lock, verifiedLock)
-    })
-    if (currentOwner.bytes.toString('utf8') !== ownerBytes) {
-        throw new RefusalError('state lock ownership changed before release')
-    }
-    const parsedOwner = StateLockSchema.parse(JSON.parse(ownerBytes))
     await beforeRelease?.()
-    if (!samePrivateNode(lstatSync(releaseRoot), verifiedRoot)
-        || !samePrivateNode(lstatSync(lockPath), verifiedLock)
-        || !samePrivateNode(lstatSync(ownerPath), currentOwner)) {
-        throw new RefusalError('state lock permissions or ownership changed before release')
-    }
-
-    const tombstone = join(releaseRoot, `.state.lock.release-${parsedOwner.token}`)
-    const movedOwnerPath = join(tombstone, 'owner.json')
-    let evidencePath = movedOwnerPath
-    await rename(lockPath, tombstone)
-    try {
-        await syncDirectory(releaseRoot)
-        const movedRoot = await lstat(releaseRoot)
-        const movedLock = await lstat(tombstone)
-        if (
-            !samePrivateNode(movedRoot, verifiedRoot)
-            || !movedLock.isDirectory()
-            || movedLock.isSymbolicLink()
-            || !samePrivateNode(movedLock, verifiedLock)
-        ) {
-            throw new RefusalError('moved lock directory does not match verified owner')
-        }
-        const movedOwner = await readRegularFileSnapshotNoFollow(movedOwnerPath, async () => {
-            const root = await lstat(releaseRoot)
-            const lock = await lstat(tombstone)
-            return samePrivateNode(root, verifiedRoot)
-                && lock.isDirectory()
-                && !lock.isSymbolicLink()
-                && samePrivateNode(lock, movedLock)
-        })
-        if (!sameNode(movedOwner, currentOwner) || movedOwner.bytes.toString('utf8') !== ownerBytes) {
-            throw new RefusalError('moved lock owner does not match verified owner')
-        }
-        const entries = await readdir(tombstone)
-        if (entries.length !== 1 || entries[0] !== 'owner.json') {
-            throw new RefusalError('quarantined lock contains unexpected entries')
-        }
-        const deletionRoot = await lstat(releaseRoot)
-        const deletionLock = await lstat(tombstone)
-        const deletionOwner = await lstat(movedOwnerPath)
-        if (
-            !samePrivateNode(deletionRoot, verifiedRoot)
-            || !samePrivateNode(deletionLock, movedLock)
-            || !samePrivateNode(deletionOwner, movedOwner)
-        ) {
-            throw new RefusalError('quarantined lock changed before deletion')
-        }
-        const ownerBackupPath = `${tombstone}.owner.json`
-        await link(movedOwnerPath, ownerBackupPath)
-        await syncDirectory(releaseRoot)
-        const linkedOwner = await lstat(movedOwnerPath)
-        const linkedBackup = await lstat(ownerBackupPath)
-        if (!samePrivateNode(linkedOwner, movedOwner) || !samePrivateNode(linkedBackup, movedOwner)) {
-            throw new RefusalError('quarantined lock owner changed after evidence link')
-        }
-        // Node has no portable fd-relative conditional unlink. This checkpoint protects cooperative
-        // concurrent processes and injected pre-syscall interference, not a malicious same-UID syscall race.
-        await beforeLockMetadata?.('owner-unlink')
-        if (!samePrivateNode(lstatSync(releaseRoot), verifiedRoot)
-            || !samePrivateNode(lstatSync(tombstone), movedLock)) {
-            throw new RefusalError('state lock permissions changed before owner unlink')
-        }
-        const ownerBeforeUnlink = await lstat(movedOwnerPath)
-        const backupBeforeUnlink = await lstat(ownerBackupPath)
-        if (!samePrivateNode(ownerBeforeUnlink, movedOwner) || !samePrivateNode(backupBeforeUnlink, movedOwner)) {
-            throw new RefusalError('quarantined lock owner changed before unlink')
-        }
-        await unlink(movedOwnerPath)
-        evidencePath = ownerBackupPath
-        try {
-            await syncDirectory(tombstone)
-        } catch (error) {
-            await restoreOwnerEvidence(ownerBackupPath, movedOwnerPath, movedOwner, tombstone, beforeLockMetadata)
-            evidencePath = movedOwnerPath
-            throw error
-        }
-        try {
-            const emptyRoot = await lstat(releaseRoot)
-            const emptyLock = await lstat(tombstone)
-            if (!samePrivateNode(emptyRoot, verifiedRoot) || !samePrivateNode(emptyLock, movedLock)) {
-                throw new RefusalError('quarantined lock changed before directory removal')
-            }
-            await beforeLockMetadata?.('tombstone-rmdir')
-            if (!samePrivateNode(lstatSync(releaseRoot), verifiedRoot)
-                || !samePrivateNode(lstatSync(tombstone), movedLock)) {
-                throw new RefusalError('state lock permissions changed before directory removal')
-            }
-            await rmdir(tombstone)
-            await syncDirectory(releaseRoot)
-        } catch (error) {
-            try {
-                await restoreOwnerEvidence(ownerBackupPath, movedOwnerPath, movedOwner, tombstone, beforeLockMetadata)
-                evidencePath = movedOwnerPath
-            } catch (restoreError) {
-                throw new RefusalError(`${errorCause(error)}; owner evidence remains at ${evidencePath}; restoration failed: ${errorCause(restoreError)}`)
-            }
-            throw error
-        }
-        await beforeLockMetadata?.('backup-unlink')
-        if (!samePrivateNode(lstatSync(releaseRoot), verifiedRoot)) throw new RefusalError('state locks root permissions changed before backup cleanup')
-        const finalBackup = await lstat(ownerBackupPath)
-        if (!samePrivateNode(finalBackup, movedOwner)) throw new RefusalError('owner evidence backup changed before cleanup')
-        await unlink(ownerBackupPath)
-        try {
-            await syncDirectory(releaseRoot)
-        } catch (error) {
-            evidencePath = ownerBackupPath
-            const evidence = await open(evidencePath, 'wx', 0o600)
-            try {
-                await evidence.writeFile(ownerBytes, 'utf8')
-                await evidence.sync()
-            } finally {
-                await evidence.close()
-            }
-            await syncDirectory(releaseRoot).catch(() => undefined)
-            throw error
-        }
-    } catch (error) {
-        throw new LockReleaseError(
-            `state lock release quarantined an unverified holder: ${errorCause(error)}`,
-            tombstone,
-            evidencePath === movedOwnerPath
-                ? 'inspect the quarantined lock holder and restore or reclaim it using positive owner evidence'
-                : `inspect the quarantined lock owner evidence at ${evidencePath} before explicit recovery`,
-        )
-    }
+    if (await readLockFile(join(lockPath, 'owner.json'), stateRoot) !== ownerBytes) throw new RefusalError('state lock ownership changed before release')
+    await rm(lockPath, { recursive: true })
 }
 
 export async function withStateScopedLock<T>(namespace: StateNamespace, scope: StateScopedLock,
@@ -2209,7 +1975,7 @@ export async function withStateScopedLock<T>(namespace: StateNamespace, scope: S
     while (true) {
         try { acquired = await acquireLock(stableNamespace, stableOptions, holderIdentity, judged) }
         catch (error) { return refusal(ENVIRONMENT_CODES.STATE_LOCKED, `scoped state lock could not be acquired safely: ${errorCause(error)}`, binding.path) }
-        if (acquired.kind === 'acquired' || acquired.code !== ENVIRONMENT_CODES.STATE_LOCKED || unwaitableRefusals.has(acquired)) break
+        if (acquired.kind === 'acquired' || acquired.code !== ENVIRONMENT_CODES.STATE_LOCKED) break
         const remainingMs = deadline - Date.now()
         if (remainingMs <= 0) break
         await delay(Math.min(backoffMs, remainingMs))
@@ -2222,57 +1988,24 @@ export async function withStateScopedLock<T>(namespace: StateNamespace, scope: S
     let outcome: { readonly kind: 'complete'; readonly value: T } | { readonly kind: 'thrown'; readonly error: unknown }
     try { outcome = { kind: 'complete', value: await operation() } }
     catch (error) { outcome = { kind: 'thrown', error } }
-    try { await releaseLock(binding.path, acquired.ownerBytes, stableOptions.beforeRelease, stableOptions.beforeLockMetadata) }
+    try { await releaseLock(binding.path, authenticated.root, acquired.ownerBytes, stableOptions.beforeRelease) }
     catch (error) {
-        const release = error instanceof LockReleaseError ? error : undefined
-        const lockRecovery = release?.recovery ?? 'inspect the recorded scoped lock owner before explicit reclamation'
         // As in transactState: completed work survives a failed release, so the caller can
         // still act on it while the stuck lock is reported.
         if (outcome.kind === 'complete') return {
             kind: 'indeterminate',
             code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
-            message: 'scoped state operation completed but its lock could not be released safely',
-            target: release?.target ?? binding.path,
-            recovery: lockRecovery,
+            message: `scoped state operation completed but its lock could not be released: ${errorCause(error)}`,
+            target: binding.path,
+            recovery: LEFT_LOCK_RECOVERY,
             value: outcome.value,
         }
         return refusal(ENVIRONMENT_CODES.STATE_LOCKED,
-            `scoped state operation failed (${errorCause(outcome.error)}) and its lock could not be released safely`,
-            release?.target ?? binding.path, lockRecovery)
+            `scoped state operation failed (${errorCause(outcome.error)}) and its lock could not be released: ${errorCause(error)}`,
+            binding.path, LEFT_LOCK_RECOVERY)
     }
     if (outcome.kind === 'thrown') throw outcome.error
     return outcome
-}
-
-async function restoreOwnerEvidence(
-    backupPath: string,
-    ownerPath: string,
-    expectedOwner: FileSnapshot,
-    tombstone: string,
-    beforeLockMetadata?: StateTransactionOptions['beforeLockMetadata'],
-): Promise<void> {
-    const backup = await lstat(backupPath)
-    if (!backup.isFile() || backup.isSymbolicLink() || !samePrivateNode(backup, expectedOwner)) {
-        throw new RefusalError('owner evidence backup changed before restoration')
-    }
-    try {
-        await beforeLockMetadata?.('owner-restore-link')
-        const root = lstatSync(dirname(tombstone))
-        const lock = lstatSync(tombstone)
-        if (!root.isDirectory() || root.isSymbolicLink() || !privatelyOwned(root)
-            || !lock.isDirectory() || lock.isSymbolicLink() || !privatelyOwned(lock)
-            || !samePrivateNode(lstatSync(backupPath), expectedOwner)) {
-            throw new RefusalError('state lock path became unsafe before owner restoration')
-        }
-        await link(backupPath, ownerPath)
-    } catch (error) {
-        if (!hasErrorCode(error, 'EEXIST')) throw error
-    }
-    const restored = await lstat(ownerPath)
-    if (!restored.isFile() || restored.isSymbolicLink() || !samePrivateNode(restored, expectedOwner)) {
-        throw new RefusalError('owner evidence path changed during restoration')
-    }
-    await syncDirectory(tombstone)
 }
 
 async function syncDirectory(directoryPath: string): Promise<void> {
@@ -2536,7 +2269,7 @@ export async function transactState<T>(
         } catch (error) {
             return refusal(ENVIRONMENT_CODES.STATE_LOCKED, `state lock could not be acquired safely: ${errorCause(error)}`, stableNamespace.paths.stateLock)
         }
-        if (acquired.kind === 'acquired' || acquired.code !== ENVIRONMENT_CODES.STATE_LOCKED || unwaitableRefusals.has(acquired)) break
+        if (acquired.kind === 'acquired' || acquired.code !== ENVIRONMENT_CODES.STATE_LOCKED) break
         const remainingMs = deadline - Date.now()
         if (remainingMs <= 0) break
         await delay(Math.min(backoffMs, remainingMs))
@@ -2609,57 +2342,44 @@ export async function transactState<T>(
         result = malformed(stableAddress, error)
     }
     try {
-        await releaseLock(
-            stableNamespace.paths.stateLock,
-            acquired.ownerBytes,
-            stableOptions.beforeRelease,
-            stableOptions.beforeLockMetadata,
-        )
+        await releaseLock(stableNamespace.paths.stateLock, stableNamespace.root, acquired.ownerBytes, stableOptions.beforeRelease)
     } catch (error) {
-        const release = error instanceof LockReleaseError ? error : undefined
+        const failure = errorCause(error)
         if (operationFailed) {
             return refusal(ENVIRONMENT_CODES.STATE_LOCKED,
-                `state transaction operation failed (${errorCause(operationFailure)}) and its lock could not be released safely`,
-                release?.target ?? stableNamespace.paths.stateLock,
-                release?.recovery ?? 'inspect the recorded lock owner before explicit reclamation')
+                `state transaction operation failed (${errorCause(operationFailure)}) and its lock could not be released: ${failure}`,
+                stableNamespace.paths.stateLock, LEFT_LOCK_RECOVERY)
         }
         if ('kind' in result && (result.kind === 'complete' || result.kind === 'indeterminate')) {
             const publicationRecovery = result.kind === 'indeterminate'
                 ? result.recovery
                 : 'read the committed record and reconcile its revision before deciding whether to retry the transaction'
-            const lockRecovery = release?.recovery
-                ?? 'inspect the recorded lock owner before explicit reclamation'
             return issueStatePublication({
                 kind: 'indeterminate',
                 code: ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
                 message: result.kind === 'indeterminate'
-                    ? `${result.message}; the state lock also could not be released safely`
-                    : 'state bytes were committed but the state lock could not be released safely',
+                    ? `${result.message}; the state lock also could not be released: ${failure}`
+                    : `state bytes were committed but the state lock could not be released: ${failure}`,
                 target: stableAddress.path,
-                recovery: `${publicationRecovery}; ${lockRecovery}`,
+                recovery: `${publicationRecovery}; ${LEFT_LOCK_RECOVERY}`,
                 value: result.value,
             }, stableAddress)
         }
-        return refusal(
-            ENVIRONMENT_CODES.STATE_LOCKED,
-            'state transaction completed but its lock could not be released safely',
-            release?.target ?? stableNamespace.paths.stateLock,
-            release?.recovery ?? 'inspect the recorded lock owner before explicit reclamation',
-        )
+        return refusal(ENVIRONMENT_CODES.STATE_LOCKED,
+            `state transaction completed but its lock could not be released: ${failure}`,
+            stableNamespace.paths.stateLock, LEFT_LOCK_RECOVERY)
     }
     if (operationFailed) throw operationFailure
     return issueStatePublication(result, stableAddress)
 }
 
 /** One of a stack's own record files, by the SHA-256 of its exact bytes. */
-export type StackStateFile = Readonly<{ kind: 'coordination' | 'lifecycle' | 'lifecycle-history' | 'data-outcome'; path: string; sha256: string }>
+export type StackStateFile = Readonly<{ kind: 'coordination' | 'lifecycle'; path: string; sha256: string }>
 
 function stackStatePaths(value: StateNamespace, stackId: StackId): readonly Readonly<{ kind: StackStateFile['kind']; path: string }>[] {
     return [
         { kind: 'coordination', path: value.paths.coordination(stackId).path },
         { kind: 'lifecycle', path: value.paths.lifecycle(stackId).path },
-        { kind: 'lifecycle-history', path: lifecycleHistoryAddress(value, stackId)!.path },
-        { kind: 'data-outcome', path: value.paths.dataOutcome(stackId).path },
     ]
 }
 

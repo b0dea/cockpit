@@ -313,10 +313,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
                 'dist/setup/command.js',
                 'cockpit.schema.json',
                 'libexec/browser-operation.cjs',
-                'libexec/fence-marker.cjs',
-                'libexec/fence-marker.d.cts',
-                'libexec/fenced-group-runner.cjs',
-                'libexec/fenced-supervisor.cjs',
                 'libexec/generated-filesystem.cjs',
                 'libexec/rulesync-generator.cjs',
                 'libexec/rulesync-generator.NOTICE.md',
@@ -340,10 +336,6 @@ describe('the published tarball carries only the consumer surface', { timeout: 4
     it('ships internal helpers without exposing another public command', () => {
         expect(packedFiles().filter((path) => path.startsWith('libexec/'))).toEqual([
             'libexec/browser-operation.cjs',
-            'libexec/fence-marker.cjs',
-            'libexec/fence-marker.d.cts',
-            'libexec/fenced-group-runner.cjs',
-            'libexec/fenced-supervisor.cjs',
             'libexec/generated-filesystem.cjs',
             'libexec/rulesync-generator.cjs',
             'libexec/rulesync-generator.NOTICE.md',

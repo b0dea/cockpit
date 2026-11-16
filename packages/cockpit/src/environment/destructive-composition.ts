@@ -29,6 +29,7 @@ import { discoverReclaim, type ReclaimDiscovery } from './reclaim.js'
 import { readState } from './state.js'
 import { earlierNameRefusalMessage, findStackUnderEarlierName } from './lifecycle-stage.js'
 import type { LeasePortFamilyResult } from './ports.js'
+import { sameSource } from './application/shared.js'
 
 export interface DestructiveCompositionInput {
     readonly configPath: string
@@ -100,13 +101,6 @@ function refusal(
     code: EnvironmentDiagnostic['code'] = ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
 ): EnvironmentCommandOutcome<DestructiveRunContext> {
     return forwardedRefusal([{ severity: 'error', code, message, target }])
-}
-
-function sameSource(
-    left: LifecycleRunContext['source'],
-    right: LifecycleRunContext['source'],
-): boolean {
-    return left.path === right.path && left.byteLength === right.byteLength && left.sha256 === right.sha256
 }
 
 function executionEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
@@ -223,14 +217,11 @@ export function createDestructiveCommandAdapters(
         // its owning root, so treating their logical volume names as cache authority
         // could authorize deletion of unrelated data.
         const declaredCacheIds: readonly string[] = []
-        const dependencyCaches: readonly never[] = []
         const common = {
             stackId: context.stackId,
             cockpitId: context.cockpitId,
             configSha256: context.runtimeSha256,
             coordinationRecord: stored.value,
-            coordinationAddress,
-            requesterHolderId: context.holderId,
             declaredCacheIds,
             discovery: reclaim.discovery,
             cwd,
@@ -242,12 +233,10 @@ export function createDestructiveCommandAdapters(
             down: {
                 ...common,
                 executable: reclaim.runtimeExecutable.value,
-                dependencyCaches,
-                pathExecutable: reclaim.pathExecutable.value,
             },
             reset: {
                 ...common,
-                expectedCoordinationRevision: stored.value.revision,
+                requesterHolderId: context.holderId,
                 resettableVolumes: [...configuration.config.environment.resettable_volumes],
                 composeProject: composeProjectName({ cockpitName: configuration.config.cockpit.name, stackId: context.stackId }),
                 generatedHostPaths: configuration.config.environment.generated_host_paths.map((declaration) => ({
@@ -311,7 +300,7 @@ export function createDestructiveCommandAdapters(
                     // but its containers, networks and images remain. Claiming the stack here, as
                     // `up` would without starting anything, gives down the holder authority to retire
                     // them; refusing sent the operator to start a stack only to remove it. The
-                    // application gives the claim back when the run reserves no drain.
+                    // application gives the claim back when the run does not finish.
                     let claimRefusal: readonly EnvironmentDiagnostic[] | undefined
                     claim = await lifecycle.withAcquiredPorts(context, async ({ leaseResult }) => leaseResult,
                         (diagnostics) => { claimRefusal = diagnostics; return undefined })
@@ -367,8 +356,8 @@ export function createDestructiveCommandAdapters(
             if (!targets || 'diagnostics' in targets) return targets
             return { ...targets, runtime: readiness.lifecycle, ports }
         },
-        // Runtime readiness proves the runtime the plan was made for; the steps of a drain that
-        // plan already reserved need only fresh reclaim evidence against the same checkout root.
+        // Runtime readiness proves the runtime the plan was made for; the re-read after the
+        // removals needs only fresh reclaim evidence against the same checkout root.
         async observeReclaim(context: DestructiveRunContext): Promise<DestructiveReclaimObservation | DestructiveObservationRefusal | undefined> {
             const cwd = readinessRoots.get(context)
             if (!issued.has(context) || cwd === undefined) return undefined

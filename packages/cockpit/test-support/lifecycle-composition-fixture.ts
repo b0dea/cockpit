@@ -8,7 +8,6 @@ import { decodeLifecycleRecord, runUp } from '../src/environment/application/lif
 import { readState } from '../src/environment/state.js'
 import type { ExecutionStep, StackId } from '../src/environment/contract.js'
 import { createLifecycleCommandAdapters } from '../src/environment/lifecycle-composition.js'
-import { recordLifecycleStarted } from '../src/environment/lifecycle-stage.js'
 import { composeProjectName } from '../src/environment/identity.js'
 import { syncGeneratedEnvironment } from '../src/generated-environment/command.js'
 import { publishComposeOwnership } from './compose-ownership-fixture.js'
@@ -309,13 +308,6 @@ async function runStackScenario(options: Readonly<{ seed?: readonly string[]; me
     })
     const loaded = await adapters.load({ configPath: candidate.configPath })
     if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
-    const started = await recordLifecycleStarted({
-        namespace: loaded.result.namespace,
-        stackId: loaded.result.stackId,
-        holderId: loaded.result.holderId,
-        observedAt: new Date().toISOString(),
-    })
-    if (started.kind === 'refusal') throw new Error(JSON.stringify(started))
     const docker = await configureStackDocker(candidate, loaded.result, [], options.healthcheck, options.profiles)
     listenerProbeControl.enabled = true
     const result = await runUp({ configPath: candidate.configPath }, adapters)

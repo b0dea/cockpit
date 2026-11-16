@@ -22,7 +22,6 @@ import type { SiblingInstructionFilesResult } from '../sibling-instructions.js'
 import { resolvedGitExecutable, type ResolvedExecutable } from '../executable.js'
 import type { InstallPolicy, Sibling } from '../../schema.js'
 import { authenticateStateNamespace, type StateNamespace } from '../state.js'
-import type { LifecycleHistoryTransition } from '../lifecycle-stage.js'
 import type { EnvironmentSeedPlan, EnvironmentSeedResult } from '../templates.js'
 import type { InstallPolicyLockfileObservation, InstallPolicyProjection } from '../install-policy-observation.js'
 import type { InstallPolicyResolution, ResolvedInstallPolicyBinding } from '../install-policy.js'
@@ -177,9 +176,6 @@ export interface SetupCommandAdapters {
     syncInstructionFiles(input: Readonly<{ siblingRoot: string; write: boolean }>): Promise<SiblingInstructionFilesResult>
     execute(plan: ExecutionPlan): Promise<ExecutePlanOutcome>
     observeSource(path: string): Promise<ConfigSourceSnapshot>
-    recordStarted(input: Pick<SetupRunContext, 'namespace' | 'stackId' | 'holderId'> & {
-        readonly observedAt: string
-    }): Promise<LifecycleHistoryTransition>
     withIgnore<T>(
         input: TimedSiblingOperationInput & {
             readonly environmentFileIndex: number
@@ -641,7 +637,6 @@ export async function runSetup(
     const policies: ResolvedInstallPolicyBinding[] = []
     const completedStepIds: string[] = []
     let mutationMayHaveOccurred = false
-    let lifecycleStarted = false
 
     const refuseSourceDrift = async (): Promise<SetupApplicationOutcome | undefined> => {
         const after = await adapters.observeSource(context.source.path)
@@ -684,31 +679,6 @@ export async function runSetup(
               )
     }
 
-    const startLifecycle = async (): Promise<SetupApplicationOutcome | undefined> => {
-        if (lifecycleStarted) return undefined
-        const sourceFailure = await refuseSourceDrift()
-        if (sourceFailure) return sourceFailure
-        const observedAt = await nextOperationTimestamp()
-        if (typeof observedAt !== 'string') return observedAt
-        const transition = await adapters.recordStarted({
-            namespace: context.namespace,
-            stackId: context.stackId,
-            holderId: context.holderId,
-            observedAt,
-        })
-        if (transition.kind === 'refusal') {
-            return sequenceRefusal(
-                context,
-                adapters,
-                [...diagnostics, ...transition.diagnostics],
-                executionEvidence(completedStepIds, mutationMayHaveOccurred),
-            )
-        }
-        mutationMayHaveOccurred ||= transition.kind === 'complete'
-        lifecycleStarted = true
-        return undefined
-    }
-
     for (const [siblingIndex, sibling] of context.siblings.entries()) {
         const siblingInput = { context, siblingIndex, sibling }
         const observation = await adapters.observeGit(siblingInput)
@@ -737,8 +707,6 @@ export async function runSetup(
         diagnostics.push(...planned.diagnostics)
         let siblingResult = plannedResult
         if (planned.kind === 'preview') {
-            const lifecycleFailure = await startLifecycle()
-            if (lifecycleFailure) return lifecycleFailure
             const sourceFailure = await refuseSourceDrift()
             if (sourceFailure) return sourceFailure
             const execution = await adapters.execute(planned.plan)
@@ -799,8 +767,6 @@ export async function runSetup(
         // checkout setup leaves absent (acquire = "none") has no files to change.
         if (siblingResult.target !== dirname(context.source.path) && siblingResult.observed !== 'absent') {
             if (context.writeInstructionFiles) {
-                const lifecycleFailure = await startLifecycle()
-                if (lifecycleFailure) return lifecycleFailure
                 const sourceFailure = await refuseSourceDrift()
                 if (sourceFailure) return sourceFailure
             }
@@ -836,8 +802,6 @@ export async function runSetup(
                 )], executionEvidence(completedStepIds, mutationMayHaveOccurred))
             }
             if (context.writeInstructionPointers) {
-                const lifecycleFailure = await startLifecycle()
-                if (lifecycleFailure) return lifecycleFailure
                 const sourceFailure = await refuseSourceDrift()
                 if (sourceFailure) return sourceFailure
             }
@@ -962,8 +926,6 @@ export async function runSetup(
             }
             if (seedPlan.kind === 'ready') {
                 const readyPlan = seedPlan
-                const lifecycleFailure = await startLifecycle()
-                if (lifecycleFailure) return lifecycleFailure
                 const sourceFailure = await refuseSourceDrift()
                 if (sourceFailure) return sourceFailure
                 const seedObservedAt = await nextOperationTimestamp()

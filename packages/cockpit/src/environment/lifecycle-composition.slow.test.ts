@@ -10,7 +10,6 @@ import { executeProbe } from '../environment-exec/execute.js'
 import { decodeLifecycleRecord, runSession, runSleep, runUp } from './application/lifecycle.js'
 import type { ExecutionStep } from './contract.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
-import { recordLifecycleStarted } from './lifecycle-stage.js'
 import { readState } from './state.js'
 import { createLifecycleCompositionFixtureSupport } from '../../test-support/lifecycle-composition-fixture.js'
 

@@ -55,7 +55,8 @@ import {
 import type { PreflightContext } from './observations.js'
 import { checkoutId, cockpitId, holderId, stackId } from './identity.js'
 import { selectStateRoot } from './state.js'
-import { recordLifecycleSeeded, recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage.js'
+import { resolveLifecycleStage } from './lifecycle-stage.js'
+import { recordSteadyStack } from '../../test-support/lifecycle-record.js'
 import { createApplicationFixtureSupport } from '../../test-support/application-fixture.js'
 
 const scratch: string[] = []
@@ -875,10 +876,7 @@ async function healthSourceFixture(
     if (state.kind !== 'complete') throw new Error('health fixture state root was refused')
     const holder = holderId({ stackId: expectedStackId, checkoutId: checkoutId({ checkoutPath: value.candidate.mainCheckoutPath }), sessionId: 'health-fixture' })
     if (requestedStage === 'steady') {
-        for (const transition of [recordLifecycleStarted, recordLifecycleSeeded]) {
-            const recorded = await transition({ namespace: state.value, stackId: expectedStackId, holderId: holder, observedAt: value.candidate.observedAt })
-            if (recorded.kind !== 'complete') throw new Error('health fixture lifecycle transition was refused')
-        }
+        await recordSteadyStack({ namespace: state.value, stackId: expectedStackId, holderId: holder })
     }
     const stage = await resolveLifecycleStage({ namespace: state.value, stackId: expectedStackId, observedAt: value.candidate.observedAt })
     if (stage.kind !== 'complete') throw new Error('health fixture lifecycle stage was refused')

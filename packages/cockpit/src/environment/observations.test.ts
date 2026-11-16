@@ -23,7 +23,8 @@ import { observeEnvironmentKeys, observeSiblingPresence } from './templates.js'
 import { resolveGitExecutable } from './executable.js'
 import { createGitObservationStep, gitWorkingTreeDirty, observeGit } from './git-observation.js'
 import { executeProbe } from '../environment-exec/execute.js'
-import { observeStateSeed, recordLifecycleSeeded, recordLifecycleStarted, resolveLifecycleStage } from './lifecycle-stage.js'
+import { observeStateSeed, resolveLifecycleStage } from './lifecycle-stage.js'
+import { recordSteadyStack } from '../../test-support/lifecycle-record.js'
 import { checkoutId as deriveCheckoutId, cockpitId as deriveCockpitId, stackId as deriveStackId } from './identity.js'
 
 const authorityRoot = join(realpathSync(tmpdir()), `cockpit-observation-authority-${process.pid}`)
@@ -440,8 +441,7 @@ describe('observation contract and applicability', () => {
 
     it('keeps locally required observations active after the first seed', async () => {
         const state = await namespace()
-        await recordLifecycleStarted({ namespace: state, stackId, holderId: firstHolder, observedAt: now })
-        await recordLifecycleSeeded({ namespace: state, stackId, holderId: firstHolder, observedAt: now })
+        await recordSteadyStack({ namespace: state, stackId, holderId: firstHolder })
         const stage = await resolveLifecycleStage({ namespace: state, stackId, observedAt: now })
         if (stage.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
         const composeSource = `${(await readFile(new URL('../../../../fixtures/registries/generated-environment.toml', import.meta.url), 'utf8'))
@@ -452,7 +452,7 @@ describe('observation contract and applicability', () => {
             authorities: posture.authorities,
             stages: [stage.authority],
         }).checks
-        expect(checks.find(({ code }) => code === ENVIRONMENT_CODES.STATE_UNSEEDED)?.verdict).toBe('fail')
+        expect(checks.find(({ code }) => code === ENVIRONMENT_CODES.STATE_UNSEEDED)?.verdict).toBe('pass')
         for (const code of [
             ENVIRONMENT_CODES.CLAIM_STATE_UNHEALTHY,
             ENVIRONMENT_CODES.PORT_FAMILY_COLLISION,
@@ -692,21 +692,6 @@ describe('deterministic preflight and doctor', () => {
         })
         expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.STATE_UNSEEDED)).toMatchObject({
             verdict: 'not-applicable', reason: 'the first seed has not completed',
-        })
-    })
-
-    it('keeps missing lifecycle data as a steady-state failure after seed history exists', async () => {
-        const state = await namespace()
-        await recordLifecycleStarted({ namespace: state, stackId, holderId: firstHolder, observedAt: now })
-        await recordLifecycleSeeded({ namespace: state, stackId, holderId: firstHolder, observedAt: now })
-        const stage = await resolveLifecycleStage({ namespace: state, stackId, observedAt: now })
-        if (stage.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
-        const posture = await context()
-        const result = aggregateObservations([[stage.observation]], {
-            authorities: posture.authorities, stages: [stage.authority],
-        })
-        expect(result.checks.find(({ code }) => code === ENVIRONMENT_CODES.STATE_UNSEEDED)).toMatchObject({
-            verdict: 'fail', measured: false,
         })
     })
 

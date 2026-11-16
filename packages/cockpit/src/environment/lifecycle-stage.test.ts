@@ -9,10 +9,9 @@ import {
     decodeLifecycleRecord,
     projectLifecycleStage,
     recordLifecycleSeeded,
-    recordLifecycleStarted,
     resolveLifecycleStage,
 } from './lifecycle-stage.js'
-import { lifecycleHistoryAddress, selectStateRoot, transactState, type StateNamespace, type StateRecord } from './state.js'
+import { selectStateRoot, transactState, type StateNamespace, type StateRecord } from './state.js'
 
 const cockpitId = `cockpit:fixture:${'a'.repeat(64)}` as CockpitId
 const otherCockpitId = `cockpit:fixture:${'e'.repeat(64)}` as CockpitId
@@ -40,14 +39,14 @@ function lifecycleRecord(namespace: StateNamespace, targetStackId = stackId): St
     const address = namespace.paths.lifecycle(targetStackId)
     return {
         format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId: address.cockpitId,
-        subjectId: targetStackId, revision: 0, updatedAt: observedAt, value: { status: 'preparing' },
+        subjectId: targetStackId, revision: 0, updatedAt: observedAt,
+        value: { holderId, workBasisSha256: '1'.repeat(64), operationGeneration: '2'.repeat(64), completedServices: [] },
     }
 }
 
-function historyAddress(namespace: StateNamespace) {
-    const value = lifecycleHistoryAddress(namespace, stackId)
-    if (!value) throw new Error('fixture lifecycle history address was refused')
-    return value
+async function recordStack(namespace: StateNamespace): Promise<void> {
+    const result = await transactState(namespace, namespace.paths.lifecycle(stackId), { ownerId: holderId }, () => lifecycleRecord(namespace))
+    if (result.kind !== 'complete') throw new Error(JSON.stringify(result))
 }
 
 describe('lifecycle stage authority', () => {
@@ -61,6 +60,11 @@ describe('lifecycle stage authority', () => {
             record, value: { holderId, completedServices: [] },
         })
         expect(decodeLifecycleRecord(record, { cockpitId, stackId: otherStackId })).toBeUndefined()
+        const marked = { ...record, value: { ...record.value as object, steady: true, seededAt: observedAt } }
+        expect(decodeLifecycleRecord(marked, { cockpitId, stackId })?.value).toMatchObject({ steady: true, seededAt: observedAt })
+        for (const change of [{ steady: false }, { seededAt: 'yesterday' }]) {
+            expect(decodeLifecycleRecord({ ...marked, value: { ...marked.value, ...change } }, { cockpitId, stackId })).toBeUndefined()
+        }
     })
 
     it('decodes teardown completion only without retained runtime or generated checkpoints', () => {
@@ -90,82 +94,40 @@ describe('lifecycle stage authority', () => {
         })
     })
 
-    it('keeps an interrupted first seed in bootstrap until history is promoted', async () => {
+    it('stays in bootstrap until an up completes, then is steady', async () => {
         const namespace = await stateNamespace()
-        expect(await recordLifecycleStarted({ namespace, stackId, holderId, observedAt })).toMatchObject({ kind: 'complete' })
-        const address = namespace.paths.lifecycle(stackId)
-        expect(await transactState(namespace, address, { ownerId: holderId }, () => lifecycleRecord(namespace))).toMatchObject({ kind: 'complete' })
+        await recordStack(namespace)
         expect(await resolveLifecycleStage({ namespace, stackId, observedAt })).toMatchObject({
             kind: 'complete', authority: { stage: 'bootstrap' },
+            observation: { observed: { state: 'available', value: true } },
         })
-        expect(await recordLifecycleSeeded({ namespace, stackId, holderId, observedAt })).toMatchObject({ kind: 'complete' })
+        expect(await recordLifecycleSeeded({ namespace, stackId, holderId })).toMatchObject({
+            kind: 'complete', record: { revision: 1, value: { steady: true } },
+        })
         expect(await resolveLifecycleStage({ namespace, stackId, observedAt })).toMatchObject({
             kind: 'complete', authority: { stage: 'steady' },
         })
+        expect(await recordLifecycleSeeded({ namespace, stackId, holderId })).toMatchObject({ kind: 'unchanged' })
     })
 
-    it('keeps seeded history steady when the lifecycle record is later missing', async () => {
+    it('marks nothing steady for a stack without a lifecycle record', async () => {
         const namespace = await stateNamespace()
-        await recordLifecycleStarted({ namespace, stackId, holderId, observedAt })
-        await recordLifecycleSeeded({ namespace, stackId, holderId, observedAt })
-        expect(await resolveLifecycleStage({ namespace, stackId, observedAt })).toMatchObject({
-            kind: 'complete', authority: { stage: 'steady' },
-            observation: { observed: { state: 'available', value: false } },
+        expect(await recordLifecycleSeeded({ namespace, stackId, holderId })).toMatchObject({
+            kind: 'refusal', diagnostics: [{ message: 'the stack has no lifecycle record to update' }],
         })
     })
 
-    it('refuses lifecycle data without durable history', async () => {
+    it('refuses a lifecycle record it cannot read and does not infer a stage', async () => {
         const namespace = await stateNamespace()
-        const address = namespace.paths.lifecycle(stackId)
-        await transactState(namespace, address, { ownerId: holderId }, () => lifecycleRecord(namespace))
-        expect(await resolveLifecycleStage({ namespace, stackId, observedAt })).toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }],
-        })
-    })
-
-    it('refuses malformed history and does not infer a stage', async () => {
-        const namespace = await stateNamespace()
-        const address = historyAddress(namespace)
-        await transactState(namespace, address, { ownerId: holderId }, () => ({
-            format: 'cockpit-state/v1', kind: 'lifecycle-history', cockpitId,
-            subjectId: stackId, revision: 0, updatedAt: observedAt, value: { status: 'unknown' },
+        await transactState(namespace, namespace.paths.lifecycle(stackId), { ownerId: holderId }, () => ({
+            ...lifecycleRecord(namespace), value: { status: 'unknown' },
         }))
         expect(await resolveLifecycleStage({ namespace, stackId, observedAt })).toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED }],
+            kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, message: 'lifecycle progress record is malformed' }],
         })
     })
 
-    it('permits only started then seeded and never downgrades seeded history', async () => {
-        const namespace = await stateNamespace()
-        expect(await recordLifecycleSeeded({ namespace, stackId, holderId, observedAt })).toMatchObject({ kind: 'refusal' })
-        expect(await recordLifecycleStarted({ namespace, stackId, holderId, observedAt })).toMatchObject({ kind: 'complete' })
-        expect(await recordLifecycleStarted({ namespace, stackId, holderId, observedAt })).toMatchObject({ kind: 'unchanged' })
-        expect(await recordLifecycleSeeded({ namespace, stackId, holderId, observedAt })).toMatchObject({ kind: 'complete' })
-        // Setup records `started` before acquiring a sibling added after the stack has run; seeded
-        // history already contains that start, so it stays seeded instead of refusing setup.
-        expect(await recordLifecycleStarted({ namespace, stackId, holderId, observedAt })).toMatchObject({
-            kind: 'unchanged', record: { value: { status: 'seeded' } },
-        })
-        expect(await resolveLifecycleStage({ namespace, stackId, observedAt })).toMatchObject({
-            kind: 'complete', authority: { stage: 'steady' },
-        })
-        expect(await recordLifecycleSeeded({ namespace, stackId, holderId, observedAt })).toMatchObject({ kind: 'unchanged' })
-    })
-
-    it('invalidates authority when either observed durable record changes', async () => {
-        const historyNamespace = await stateNamespace()
-        const beforeHistory = await resolveLifecycleStage({ namespace: historyNamespace, stackId, observedAt })
-        if (beforeHistory.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
-        await recordLifecycleStarted({ namespace: historyNamespace, stackId, holderId, observedAt })
-        expect(authenticateLifecycleStageAuthority(
-            beforeHistory.authority,
-            stackId,
-            cockpitId,
-            Date.parse(observedAt),
-            Date.parse(beforeHistory.authority.validThrough),
-            Date.now(),
-        )).toBeUndefined()
-
+    it('invalidates authority when the lifecycle record changes', async () => {
         const lifecycleNamespace = await stateNamespace()
         const beforeLifecycle = await resolveLifecycleStage({ namespace: lifecycleNamespace, stackId, observedAt })
         if (beforeLifecycle.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
@@ -200,7 +162,7 @@ describe('lifecycle stage authority', () => {
 
         const second = await resolveLifecycleStage({ namespace, stackId, observedAt })
         if (second.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
-        await mkdir(dirname(historyAddress(namespace).path), { recursive: true })
+        await mkdir(dirname(namespace.paths.lifecycle(stackId).path), { recursive: true })
         expect(authenticateLifecycleStageAuthority(
             second.authority,
             stackId,
@@ -239,7 +201,6 @@ describe('lifecycle stage authority', () => {
             paths: {
                 ...namespace.paths,
                 lifecycle: () => { calls += 1; throw new Error('fabricated lifecycle path invoked') },
-                lifecycleHistory: () => { calls += 1; throw new Error('fabricated history path invoked') },
             },
         }
         await expect(resolveLifecycleStage({ namespace: fabricated, stackId, observedAt } as never))
@@ -268,8 +229,8 @@ describe('lifecycle stage authority', () => {
 
     it('projects steady independently from observation-stage consumption', async () => {
         const namespace = await stateNamespace()
-        await recordLifecycleStarted({ namespace, stackId, holderId, observedAt })
-        await recordLifecycleSeeded({ namespace, stackId, holderId, observedAt })
+        await recordStack(namespace)
+        await recordLifecycleSeeded({ namespace, stackId, holderId })
         const first = await resolveLifecycleStage({ namespace, stackId, observedAt })
         const second = await resolveLifecycleStage({ namespace, stackId, observedAt })
         if (first.kind !== 'complete' || second.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
@@ -363,11 +324,12 @@ describe('lifecycle stage authority', () => {
         expect(projectLifecycleStage({ ...input(await issue()), cockpitId: otherCockpitId })).toBeUndefined()
     })
 
-    it('refuses projection after either durable lifecycle identity changes', async () => {
+    it('refuses projection after the lifecycle record changes', async () => {
         const namespace = await stateNamespace()
+        await recordStack(namespace)
         const issued = await resolveLifecycleStage({ namespace, stackId, observedAt })
         if (issued.kind !== 'complete') throw new Error('fixture lifecycle stage was refused')
-        await recordLifecycleStarted({ namespace, stackId, holderId, observedAt })
+        await recordLifecycleSeeded({ namespace, stackId, holderId })
         expect(projectLifecycleStage({
             authority: issued.authority, stackId, cockpitId,
             earliest: Date.parse(observedAt), latest: Date.parse(issued.authority.validThrough), evaluatedAt: Date.now(),

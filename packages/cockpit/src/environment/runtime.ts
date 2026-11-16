@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { dirname, isAbsolute, normalize, relative, resolve, sep } from 'node:path'
+import { realpath } from 'node:fs/promises'
 import { parseDocument } from 'yaml'
+import { readBoundedFile } from '../bounded-read.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { MAX_COLD_START_SECONDS } from '../schema.js'
 import { consumeMachineFloorConfigProjection, type MachineFloorConfigProjection } from '../config/load.js'
@@ -17,8 +19,6 @@ import {
     OBSERVATION_REASON_BYTE_LIMIT,
     type EnvironmentCommandOutcome,
     type EnvironmentObservation,
-    type ExecutionFailureCode,
-    type ExecutionFence,
     type ExecutionPlan,
     type ExecutionStep,
     type RefusalCode,
@@ -30,12 +30,7 @@ import { isResolvedDockerExecutable, resolvedDockerExecutable, resolvedExecutabl
 import {
     isIssuedListenerHost,
     observeSessionListeners,
-    type DrainOutcome,
-    type DrainReservation,
     type ListenerHost,
-    type ReservedDrainAttempt,
-    type RuntimeStopped,
-    type SessionListenerObservation,
 } from './claims.js'
 import { stackId as deriveStackId } from './identity.js'
 import {
@@ -112,6 +107,44 @@ export interface ComposeArtifact {
     canonicalPath: string
     source: string
     sha256: string
+}
+
+const COMPOSE_BYTE_LIMIT = 1_048_576
+
+/** The caller's variables the Docker client reads, and nothing else. */
+export function dockerClientEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
+    return Object.fromEntries(Object.entries(env)
+        .filter((entry): entry is [string, string] => DOCKER_CLIENT_ENVIRONMENT.has(entry[0]) && typeof entry[1] === 'string'))
+}
+
+/** A Compose file inside `root`, read once by its canonical path; undefined when it escapes, moved, or does not hold `expectedSha256`. */
+export async function readComposeArtifact(root: string, reference: string, expectedSha256?: string): Promise<ComposeArtifact | undefined> {
+    if (typeof reference !== 'string' || reference.length === 0 || reference.includes('\0')) return undefined
+    const expected = resolve(root, reference)
+    const relation = relative(root, expected)
+    if (relation === '..' || relation.startsWith(`..${sep}`) || isAbsolute(relation)) return undefined
+    try {
+        const canonicalPath = await realpath(expected)
+        if (canonicalPath !== expected) return undefined
+        const read = readBoundedFile(canonicalPath, COMPOSE_BYTE_LIMIT)
+        if (read.kind !== 'complete') return undefined
+        const source = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes)
+        const sha256 = createHash('sha256').update(read.bytes).digest('hex')
+        return expectedSha256 === undefined || sha256 === expectedSha256 ? { reference, canonicalPath, source, sha256 } : undefined
+    } catch {
+        // Callers treat any unreadable or changed artifact as no file authority and refuse or report unavailable.
+        return undefined
+    }
+}
+
+export async function readComposeArtifacts(root: string, references: readonly string[]): Promise<readonly ComposeArtifact[] | undefined> {
+    const artifacts: ComposeArtifact[] = []
+    for (const reference of references) {
+        const artifact = await readComposeArtifact(root, reference)
+        if (!artifact) return undefined
+        artifacts.push(artifact)
+    }
+    return artifacts
 }
 
 /** Each `[[sibling]] var` and the absolute sibling directory it names. */
@@ -993,8 +1026,8 @@ const MAX_OBSERVATION_WINDOW_MS = MAX_COLD_START_SECONDS * 1_000 + OBSERVATION_W
 // `compose stop` waits up to each service's stop grace (Compose default 10s) before it kills a
 // process that ignores SIGTERM, which a shell or Node.js running as PID 1 does. It stops dependents
 // before their dependencies, one dependency level at a time, so the grace is paid once per level. A
-// stop held to the ordinary 10s command budget timed out on such a service and left the drain
-// attempt for repair; one grace for a two-level stack timed out the same way.
+// stop held to the ordinary 10s command budget timed out on such a service and failed the teardown;
+// one grace for a two-level stack timed out the same way.
 const COMPOSE_STOP_GRACE_MS = 10_000
 
 function dependencyLevels(services: ReadonlyMap<string, RuntimeTopologyService>): number {
@@ -2342,6 +2375,18 @@ export function portMismatchRemedy(mismatches: readonly string[]): string {
     return remedy(count)
 }
 
+/** The listeners on unpublished leased ports that a passing port check found no cockpit session started. */
+export function portListenersOutsideStack(check: {
+    readonly code: string
+    readonly owner: string
+    readonly verdict: string
+    readonly measured?: unknown
+}): readonly string[] {
+    if (check.owner !== OWNER || check.code !== ENVIRONMENT_CODES.PORT_FAMILY_COLLISION || check.verdict !== 'pass') return []
+    const outside = (check.measured as { listenersOutsideStack?: unknown } | null | undefined)?.listenersOutsideStack
+    return Array.isArray(outside) ? outside.filter((line): line is string => typeof line === 'string') : []
+}
+
 export async function observeRuntimePortFamily(input: {
     readonly topology: RuntimeTopologyEvidence
     readonly services: readonly RuntimeServiceEvidence[]
@@ -2414,23 +2459,27 @@ export async function observeRuntimePortFamily(input: {
         const observed = await observePortListeners({ bindings: listeners, timeoutMs: timeoutMs as number })
         if (observed.kind !== 'complete') return unavailable(observed.reason)
         let mismatched = observed.rows.filter((row, index) => row.listening !== (listeners[index]?.expected === 'listening'))
-        // A listener on an unpublished leased port is the stack's own only when the session holding
-        // the stack started it; the same proof is read again before the verdict is issued.
+        // A listener on an unpublished leased port is the stack's own when the session holding the
+        // stack started it. One that no such session started may be the person's own program, and the
+        // stack runs without that port, so it is reported beside a passing check rather than failed.
         const hostListener = captured?.sessionListeners as ListenerHost | undefined
         if (hostListener !== undefined && !isIssuedListenerHost(hostListener)) return unavailable('session listener observation is not authentic')
         const hosted = mismatched.filter(({ listening }) => listening).map(({ port, probeHost }) => ({ port, address: probeHost }))
-        const observeOwners = async (): Promise<SessionListenerObservation> => {
+        const outside: string[] = []
+        if (hosted.length > 0 && hostListener) {
             const holders = await readPortLeaseHolders({ projection: lease, namespace })
-            if (!holders) return { kind: 'unavailable', reason: 'retained port lease changed during listener ownership observation' }
-            return observeSessionListeners({ listeners: hosted, holders, host: hostListener! })
+            if (!holders) return unavailable('retained port lease changed during listener ownership observation', observed.observedAt)
+            const owners = await observeSessionListeners({ listeners: hosted, holders, host: hostListener })
+            if (owners.kind === 'unavailable') return unavailable(owners.reason, observed.observedAt)
+            for (const { port, address } of hosted) {
+                const foreign = owners.ports.find((owner) => owner.port === port && !owner.owned)
+                if (foreign) outside.push(`${address === '::1' ? '[::1]' : address}:${port} has a listener no cockpit session started (${foreign.reason})`)
+            }
+            mismatched = mismatched.filter(({ listening }) => !listening)
         }
-        const owners = hosted.length > 0 && hostListener ? await observeOwners() : undefined
-        if (owners?.kind === 'unavailable') return unavailable(owners.reason, observed.observedAt)
-        const foreign = new Map(owners?.ports.filter(({ owned }) => !owned).map(({ port, reason }) => [port, reason]) ?? [])
-        if (owners) mismatched = mismatched.filter(({ port, listening }) => !listening || foreign.has(port))
         if (mismatched.length > 0) {
             const named = mismatched.map(({ probeHost, port, listening }) => listening
-                ? `${probeHost === '::1' ? `[${probeHost}]` : probeHost}:${port} has a listener outside the stack${foreign.has(port) ? ` (${foreign.get(port)})` : ''}`
+                ? `${probeHost === '::1' ? `[${probeHost}]` : probeHost}:${port} has a listener outside the stack`
                 : `${probeHost === '::1' ? `[${probeHost}]` : probeHost}:${port} has no stack listener`)
             return {
                 code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, owner: OWNER, stackId: topology.stackId,
@@ -2456,19 +2505,14 @@ export async function observeRuntimePortFamily(input: {
                 return unavailable('runtime service identity changed during listener observation', observed.observedAt)
             }
         }
-        if (owners) {
-            const current = await observeOwners()
-            if (current.kind !== 'complete' || current.identity !== owners.identity || current.ports.some(({ owned }) => !owned)) {
-                return unavailable('a session listener on a leased port changed during observation', observed.observedAt)
-            }
-        }
         if (!await revalidatePortLeaseProjection({ projection: lease, namespace })) {
             return unavailable('retained port lease changed during service revalidation', observed.observedAt)
         }
+        const value = outside.length > 0 ? { listenersOutsideStack: outside } : true
         return {
             code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, owner: OWNER, stackId: topology.stackId,
-            source: `${topology.runtime.projectName}:runtime-ports`, observed: { state: 'available', value: true, observedAt: observed.observedAt },
-            expectation: { kind: 'equal', value: true }, applicability: { state: 'required', posture: 'running-stack' },
+            source: `${topology.runtime.projectName}:runtime-ports`, observed: { state: 'available', value, observedAt: observed.observedAt },
+            expectation: { kind: 'equal', value }, applicability: { state: 'required', posture: 'running-stack' },
             freshness: { state: 'current' }, remedy: 'restore the retained port lease and the exact declared runtime publication',
         }
     } catch (error) {
@@ -2654,99 +2698,49 @@ export function consumeRuntimeServiceObservationForFailureLogs(value: RuntimeSer
     }
 }
 
-type RuntimeStopOutcome =
-    /** Compose stopped the stack and a fresh `ps` found nothing running. */
-    | { readonly kind: 'stopped'; readonly outcome: DrainOutcome; readonly fence: ExecutionFence }
-    /** The stop never started, so the drain attempt is settled as failed and nothing changed. */
-    | { readonly kind: 'not-started'; readonly code: ExecutionFailureCode; readonly outcome: DrainOutcome; readonly fence: ExecutionFence }
-    /** No proof either way; the drain attempt stays open and its fence stays for repair. */
-    | { readonly kind: 'unavailable'; readonly reason: string }
-
-function unavailableRuntimeStop(error?: unknown): { readonly kind: 'unavailable'; readonly reason: string } {
-    return { kind: 'unavailable', reason: unavailableReason('runtime stop evidence is unavailable', error) }
-}
-
-function receiptWithin(outcome: ExecuteProbeOutcome, notBefore: string, notAfter: string): outcome is ExecuteProbeOutcome & { readonly receipt: NonNullable<ExecuteProbeOutcome['receipt']> } {
-    const receipt = outcome.receipt
-    return receipt !== undefined && isCanonicalTimestamp(receipt.startedAt) && isCanonicalTimestamp(receipt.finishedAt)
-        && Date.parse(receipt.startedAt) >= Date.parse(notBefore)
-        && Date.parse(receipt.startedAt) <= Date.parse(receipt.finishedAt)
-        && Date.parse(receipt.finishedAt) <= Date.parse(notAfter)
-        && Date.parse(receipt.finishedAt) <= Date.now()
-}
+export type RuntimeStopOutcome =
+    | { readonly kind: 'stopped' }
+    | { readonly kind: 'refusal'; readonly reason: string }
 
 /**
- * Runs the drain's runtime-stop action: `compose stop` under the attempt's execution fence, then a
- * fresh `ps` that must find nothing running, and settles the attempt as the outcome to publish.
+ * `compose stop`, then a fresh `ps` that must find nothing running. Stopping a stopped stack is a
+ * no-op, so a teardown that was interrupted simply stops it again.
  */
 export async function stopRuntime(input: {
     readonly topology: RuntimeTopologyEvidence
-    readonly attempt: ReservedDrainAttempt
     readonly execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
 }): Promise<RuntimeStopOutcome> {
     const topology = issuedTopologyEvidence.get(input.topology)
-    const { reservation, attempt, fence } = input.attempt
-    const now = Date.now()
-    if (!topology || attempt.status !== 'active' || reservation.attempt?.attemptId !== attempt.attemptId
-        || reservation.stackId !== topology.stackId
-        || reservation.configSha256 !== topology.configSha256
-        || attempt.currentStage !== 'runtime-stop' || attempt.currentTarget !== reservation.stackId
-        || now < Date.parse(topology.observationWindow.startedAt)
-        || now > Date.parse(topology.observationWindow.expiresAt)
-        || now < Date.parse(attempt.committedAt) || now > Date.parse(attempt.validThrough)) return unavailableRuntimeStop()
+    if (!topology) return { kind: 'refusal', reason: 'the stack topology is no longer current' }
+    const issuanceId = randomBytes(32).toString('hex')
     const step = derivedComposeStep(
         { ...topology.step, timeoutMs: topology.step.timeoutMs + COMPOSE_STOP_GRACE_MS * dependencyLevels(topology.services) },
         `runtime:docker-compose:stop:${topology.runtime.projectName}`,
         'stop',
         ['--progress', 'quiet', 'stop'],
         OUTPUT_LIMIT_BYTES,
-        reservation.generation,
-        Date.parse(attempt.validThrough) - now,
-        attempt.validThrough,
+        issuanceId,
+        undefined,
+        undefined,
         topology.runtime.interpolatedNames,
     )
-    if (!step) return unavailableRuntimeStop()
-    const stopped = await input.execute({ ...step, executionFence: fence })
-    if (stopped.kind === 'refusal') {
-        // Only a stop that provably never started leaves the stack as it was.
-        if (stopped.receipt !== undefined || stopped.execution.started || stopped.execution.signal !== null
-            || stopped.execution.exitCode === 0) return unavailableRuntimeStop()
-        return { kind: 'not-started', code: stopped.code, outcome: { kind: 'failure', reservation, failedAt: new Date().toISOString() }, fence }
-    }
-    if (stopped.stderr.byteLength !== 0 || !receiptWithin(stopped, attempt.committedAt, attempt.validThrough)) return unavailableRuntimeStop()
+    if (!step) return { kind: 'refusal', reason: 'the compose stop step could not be built' }
+    const stopped = await input.execute(step)
+    if (stopped.kind !== 'complete') return { kind: 'refusal', reason: `docker compose stop failed (${stopped.code})` }
     const observationStep = derivedComposeStep(
         topology.step,
         `runtime:docker-compose:stopped:${topology.runtime.projectName}`,
         'ps-stopped',
         ['ps', '--format', 'json', '--status', 'running'],
         OUTPUT_LIMIT_BYTES,
-        reservation.generation,
+        issuanceId,
         MAX_OBSERVATION_WINDOW_MS,
         undefined,
         topology.runtime.interpolatedNames,
     )
-    if (!observationStep) return unavailableRuntimeStop()
+    if (!observationStep) return { kind: 'refusal', reason: 'the compose ps step could not be built' }
     const observed = await input.execute(observationStep)
-    if (observed.kind !== 'complete' || observed.stderr.byteLength !== 0 || observed.stdout.byteLength !== 0
-        || !receiptWithin(observed, stopped.receipt.finishedAt, attempt.validThrough)) return unavailableRuntimeStop()
-    const fact = {
-        purpose: reservation.purpose,
-        stackId: reservation.stackId,
-        configSha256: reservation.configSha256,
-        planDigest: reservation.planDigest,
-        operationBasis: reservation.operationBasis,
-        coordinationRevision: reservation.coordinationRevision,
-        reservationId: reservation.reservationId,
-        reservedAt: reservation.reservedAt,
-        generation: reservation.generation,
-        attemptId: attempt.attemptId,
-        attemptRevision: attempt.committedRevision,
-        attemptCommittedAt: attempt.committedAt,
-        validThrough: attempt.validThrough,
-        actionIndex: attempt.actionIndex,
-        currentTarget: attempt.currentTarget,
-        currentStage: attempt.currentStage,
-        observedAt: observed.receipt.finishedAt,
-    } satisfies RuntimeStopped
-    return { kind: 'stopped', outcome: { kind: 'success', reservation, fact }, fence }
+    if (observed.kind !== 'complete') return { kind: 'refusal', reason: `docker compose ps failed (${observed.code})` }
+    return observed.stdout.byteLength === 0 ? { kind: 'stopped' }
+        : { kind: 'refusal', reason: 'docker compose ps still lists running services after the stop' }
 }

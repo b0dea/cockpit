@@ -32,9 +32,6 @@ import {
     admitUpProgress,
     planAdmittedUp,
     consumeLifecycleIssuance,
-    planDown,
-    planResetLifecycle,
-    planSleep,
 } from './lifecycle.js'
 import { planUp } from '../../test-support/lifecycle-planning.js'
 
@@ -106,13 +103,6 @@ function serviceEvidence(service: string, container = service === 'db' ? 'a'.rep
     return evidence
 }
 
-function reclaim(purpose: 'down' | 'reset', targetIds = ['volume:data']) {
-    return {
-        purpose, stackId, configSha256: '5'.repeat(64), planDigest: '7'.repeat(64),
-        commitments: targetIds.map((targetId) => ({ targetId, format: 'cockpit-reclaim-target/v1', sha256: '8'.repeat(64), body: '{}' })),
-    }
-}
-
 describe('lifecycle planning', () => {
     it('plans dependency-ordered startup with entrypoints last and acquired-only compensation', () => {
         const input = projections()
@@ -136,9 +126,9 @@ describe('lifecycle planning', () => {
         }])
         const issuance = consumeLifecycleIssuance(result.plan)
         expect(Object.keys(issuance ?? {}).sort()).toEqual([
-            'drainRequest', 'firstIncompleteServiceIndex', 'portOwnership', 'reclaim', 'topology',
+            'firstIncompleteServiceIndex', 'portOwnership', 'topology',
         ])
-        expect(issuance).toMatchObject({ topology: input.topology, firstIncompleteServiceIndex: 0, drainRequest: null, reclaim: null })
+        expect(issuance).toMatchObject({ topology: input.topology, firstIncompleteServiceIndex: 0 })
         expect(consumeLifecycleIssuance(result.plan)).toBeUndefined()
         expect(consumeLifecycleIssuance({ ...result.plan })).toBeUndefined()
     })
@@ -424,141 +414,6 @@ describe('lifecycle planning', () => {
         expect(digest('execution')).not.toBe(baseline)
         expect(digest('dependency')).not.toBe(baseline)
         expect(digest('mount')).not.toBe(baseline)
-    })
-
-    it('plans co-tenant sleep as release-only and last-holder sleep as runtime drain', () => {
-        const shared = projections({ holders: 2, change: 'unchanged' })
-        const release = planSleep({ runtime: shared.runtime as never, ports: shared.ports as never, operationGeneration: generation, runtimeStopValidForMs: 30_000 })
-        expect(release).toMatchObject({ kind: 'release-only', plan: { verb: 'sleep' } })
-
-        const last = projections({ holders: 1, change: 'unchanged' })
-        const drain = planSleep({ runtime: last.runtime as never, ports: last.ports as never, operationGeneration: generation, runtimeStopValidForMs: 30_000 })
-        expect(drain).toMatchObject({ kind: 'drain', request: { purpose: 'sleep', targetIds: [stackId], actions: [{ stage: 'runtime-stop', targetId: stackId }] } })
-        if (drain.kind === 'drain') {
-            expect(drain.request.planDigest).toBe(drain.plan.progress.workBasisSha256)
-            expect(consumeLifecycleIssuance(drain.plan)).toMatchObject({ drainRequest: drain.request, reclaim: null })
-            expect(consumeLifecycleIssuance(drain.plan)).toBeUndefined()
-        }
-
-        const empty = projections({ holders: 0, change: 'unchanged' })
-        expect(planSleep({ runtime: empty.runtime as never, ports: empty.ports as never, operationGeneration: generation, runtimeStopValidForMs: 30_000 }))
-            .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
-    })
-
-    it('rejects wrong-stack owner projections, a copied topology and copied port projections', () => {
-        const wrongStage = projections()
-        owners.stages.set(wrongStage.stage, Object.freeze({ stackId: `stack:${'9'.repeat(64)}`, stage: 'steady' }))
-        expect(planUp({ lifecycleStage: wrongStage.stage as never, runtime: wrongStage.runtime as never, ports: wrongStage.ports as never, progress: null, completedServices: [], operationGeneration: generation }))
-            .toMatchObject({ kind: 'refusal' })
-
-        const copiedRuntime = projections()
-        expect(planSleep({ runtime: { ...copiedRuntime.runtime, topology: { ...copiedRuntime.runtime.topology } } as never, ports: copiedRuntime.ports as never, operationGeneration: generation, runtimeStopValidForMs: 30_000 }))
-            .toMatchObject({ kind: 'refusal' })
-        const copiedPorts = projections()
-        expect(planSleep({ runtime: copiedPorts.runtime as never, ports: { ...copiedPorts.ports } as never, operationGeneration: generation, runtimeStopValidForMs: 30_000 }))
-            .toMatchObject({ kind: 'refusal' })
-    })
-
-    it.each([
-        ['down', planDown, 'down'],
-        ['reset', planResetLifecycle, 'reset'],
-    ] as const)('plans %s runtime-first with exact reclaim order and rejects co-tenancy', (_name, planner, purpose) => {
-        const input = projections({ change: 'unchanged' })
-        const result = planner({
-            runtime: input.runtime as never, ports: input.ports as never, reclaim: reclaim(purpose) as never,
-            operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 60_000,
-        })
-        expect(result).toMatchObject({
-            kind: 'drain', request: {
-                purpose, targetIds: [stackId, 'volume:data'],
-                actions: [{ stage: 'runtime-stop', targetId: stackId }, { stage: 'reclaim', targetId: 'volume:data' }],
-            },
-        })
-        if (result.kind === 'drain') {
-            const issuance = consumeLifecycleIssuance(result.plan)
-            expect(issuance).toMatchObject({ reclaim: { purpose }, drainRequest: result.request })
-            expect(consumeLifecycleIssuance(result.plan)).toBeUndefined()
-        }
-
-        const shared = projections({ holders: 2, change: 'unchanged' })
-        expect(planner({
-            runtime: shared.runtime as never, ports: shared.ports as never, reclaim: reclaim(purpose) as never,
-            operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 60_000,
-        })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'CLAIM_CO_TENANT' }] })
-    })
-
-    it('reports invalid reclaim evidence before co-tenant policy', () => {
-        const shared = projections({ holders: 2, change: 'unchanged' })
-        // A reset's target set offered to down.
-        expect(planDown({
-            runtime: shared.runtime as never, ports: shared.ports as never, reclaim: reclaim('reset') as never,
-            operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000,
-        })).toMatchObject({
-            kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }],
-        })
-    })
-
-    it('sorts drain target identity while retaining runtime-first action order', () => {
-        const input = projections({ change: 'unchanged' })
-        const result = planDown({
-            runtime: input.runtime as never, ports: input.ports as never,
-            reclaim: reclaim('down', ['container:service', 'volume:data']) as never,
-            operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000,
-        })
-        expect(result).toMatchObject({
-            kind: 'drain',
-            request: {
-                targetIds: ['container:service', stackId, 'volume:data'],
-                actions: [
-                    { stage: 'runtime-stop', targetId: stackId },
-                    { stage: 'reclaim', targetId: 'container:service' },
-                    { stage: 'reclaim', targetId: 'volume:data' },
-                ],
-            },
-        })
-    })
-
-    it('binds the exact reclaim plan and targets into destructive work identity', () => {
-        const first = projections({ change: 'unchanged' })
-        const left = planDown({
-            runtime: first.runtime as never, ports: first.ports as never, reclaim: reclaim('down', ['volume:data']) as never,
-            operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000,
-        })
-        const second = projections({ change: 'unchanged' })
-        const changed = {
-            purpose: 'down', stackId, configSha256: '5'.repeat(64), planDigest: '9'.repeat(64),
-            commitments: [{ targetId: 'volume:other', format: 'cockpit-reclaim-target/v1', sha256: 'a'.repeat(64), body: '{"changed":true}' }],
-        }
-        const right = planDown({
-            runtime: second.runtime as never, ports: second.ports as never, reclaim: changed as never,
-            operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000,
-        })
-        expect(left.kind).toBe('drain')
-        expect(right.kind).toBe('drain')
-        if (left.kind === 'drain' && right.kind === 'drain') {
-            expect(left.request.operationBasis).not.toBe(right.request.operationBasis)
-            expect(left.plan.progress.workBasisSha256).toBe(left.request.operationBasis)
-            expect(right.plan.progress.workBasisSha256).toBe(right.request.operationBasis)
-        }
-    })
-
-    it('rejects invalid drain validity, duplicate targets, and empty reset targets', () => {
-        for (const validity of [0, 300_001]) {
-            const sleep = projections({ change: 'unchanged' })
-            expect(planSleep({ runtime: sleep.runtime as never, ports: sleep.ports as never, operationGeneration: generation, runtimeStopValidForMs: validity }))
-                .toMatchObject({ kind: 'refusal' })
-        }
-        const duplicate = projections({ change: 'unchanged' })
-        expect(planDown({
-            runtime: duplicate.runtime as never, ports: duplicate.ports as never,
-            reclaim: reclaim('down', ['volume:data', 'volume:data']) as never,
-            operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000,
-        })).toMatchObject({ kind: 'refusal' })
-        const empty = projections({ change: 'unchanged' })
-        expect(planResetLifecycle({
-            runtime: empty.runtime as never, ports: empty.ports as never, reclaim: reclaim('reset', []) as never,
-            operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000,
-        })).toMatchObject({ kind: 'refusal' })
     })
 
     it('rejects duplicate dependency edges before hashing', () => {

@@ -25,7 +25,8 @@ import { ENVIRONMENT_CODES, type EnvironmentObservation } from './environment/co
 import { resolveGitExecutable } from './environment/executable.js'
 import { observeSetupCheckout, withSetupCheckoutProjection } from './environment/setup-observation.js'
 import { observeConfiguration, selectStateRoot } from './environment/state.js'
-import { recordLifecycleStarted, recordLifecycleSeeded, resolveLifecycleStage } from './environment/lifecycle-stage.js'
+import { resolveLifecycleStage } from './environment/lifecycle-stage.js'
+import { recordSteadyStack } from '../test-support/lifecycle-record.js'
 import { refreshObservationPostures, resolveObservationPostures, type PreflightContext } from './environment/observations.js'
 import { holderId as deriveHolderId } from './environment/identity.js'
 import type { HealthObservationProducers, HealthObservationSource, HealthObservationSourceInput } from './environment/application/health.js'
@@ -140,10 +141,7 @@ describe('environment observation command adapters', () => {
             const state = await selectStateRoot({ platform: 'linux', home, cockpitId: cockpit })
             if (state.kind !== 'complete') throw new Error('health route state root was refused')
             const observedAt = new Date().toISOString()
-            for (const transition of [recordLifecycleStarted, recordLifecycleSeeded]) {
-                const result = await transition({ namespace: state.value, stackId: stack, holderId: holder, observedAt })
-                if (result.kind !== 'complete') throw new Error('health route lifecycle transition was refused')
-            }
+            await recordSteadyStack({ namespace: state.value, stackId: stack, holderId: holder })
             const configuration = (await observeConfiguration({ stackId: stack, observedAt, path: configPath }))
                 .find(({ code }) => code === ENVIRONMENT_CODES.CONFIG_STALE)!
             const posture = await resolveObservationPostures({ configuration, cockpitId: cockpit, checkoutPath: root, variant: { kind: 'shared' } })

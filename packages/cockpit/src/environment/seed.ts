@@ -1,20 +1,20 @@
-// Owns when `environment.seed` is due and the record of its last success. A seed fills the stack's
-// resettable volumes, so it is due on the first start and again whenever one of those volumes was
-// created after the last successful seed: after `reset`, a `docker volume rm`, or a start that
-// failed before the seed ran. The record is the stack's data-outcome state; the volume creation
-// times come from Docker, which the lifecycle composition reads and hands in.
-import { isCanonicalTimestamp, type HolderId, type StackId } from './contract.js'
-import { readState, transactState, type StateNamespace } from './state.js'
+// Owns when `environment.seed` is due. A seed fills the stack's resettable volumes, so it is due on
+// the first start and again whenever one of those volumes was created after the last successful seed:
+// after `reset`, a `docker volume rm`, or a start that failed before the seed ran. The last success is
+// kept in the stack's lifecycle record; the volume creation times come from Docker, which the
+// lifecycle composition reads and hands in.
+import { type HolderId, type StackId } from './contract.js'
+import { decodeLifecycleRecord, updateLifecycleRecord } from './lifecycle-stage.js'
+import { readState, type StateNamespace } from './state.js'
 
 /** The instant of the last successful seed, null when none is recorded, undefined when the record is unreadable. */
 export async function readSeededAt(namespace: StateNamespace, stackId: StackId): Promise<string | null | undefined> {
-    const record = await readState(namespace.paths.dataOutcome(stackId))
+    const address = namespace.paths.lifecycle(stackId)
+    const record = await readState(address)
     if (record.kind === 'missing') return null
-    if (record.kind !== 'complete' || record.value.kind !== 'data-outcome' || record.value.subjectId !== stackId) return undefined
-    const value = record.value.value as unknown
-    const seededAt = value !== null && typeof value === 'object' && !Array.isArray(value)
-        && Object.keys(value).join(',') === 'seededAt' ? (value as { seededAt: unknown }).seededAt : undefined
-    return typeof seededAt === 'string' && isCanonicalTimestamp(seededAt) ? seededAt : undefined
+    if (record.kind !== 'complete') return undefined
+    const lifecycle = decodeLifecycleRecord(record.value, { cockpitId: address.cockpitId, stackId })
+    return lifecycle ? lifecycle.value.seededAt ?? null : undefined
 }
 
 export async function recordSeeded(input: Readonly<{
@@ -23,17 +23,8 @@ export async function recordSeeded(input: Readonly<{
     holderId: HolderId
     seededAt: string
 }>): Promise<boolean> {
-    const address = input.namespace.paths.dataOutcome(input.stackId)
-    const result = await transactState(input.namespace, address, { ownerId: input.holderId }, (current) => ({
-        format: 'cockpit-state/v1' as const,
-        kind: 'data-outcome' as const,
-        cockpitId: address.cockpitId,
-        subjectId: input.stackId,
-        revision: (current?.revision ?? -1) + 1,
-        updatedAt: input.seededAt,
-        value: { seededAt: input.seededAt },
-    }))
-    return result.kind === 'complete'
+    const result = await updateLifecycleRecord({ ...input, change: { seededAt: input.seededAt } })
+    return result.kind !== 'refusal'
 }
 
 /**

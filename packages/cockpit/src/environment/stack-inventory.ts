@@ -44,7 +44,7 @@ export interface StackRow {
     readonly stackId: StackId
     readonly composeProject: string
     readonly checkout: StackCheckout
-    readonly state: Readonly<{ status: 'readable' | 'malformed' | 'absent'; path: string | null; reason?: string; holders: number; draining: boolean }>
+    readonly state: Readonly<{ status: 'readable' | 'malformed' | 'absent'; path: string | null; reason?: string; holders: number }>
     readonly containers: Readonly<{ running: readonly string[]; stopped: readonly string[] }>
     readonly networks: readonly string[]
     readonly volumes: readonly string[]
@@ -95,7 +95,7 @@ export type Refusal = Readonly<{ kind: 'refusal'; diagnostics: readonly Environm
 
 const COCKPIT_ID = /^cockpit:([a-z0-9][a-z0-9-]*):[a-f0-9]{64}$/
 const STACK_FILE = /^stack_([a-f0-9]{64})\.json$/
-const RECORD_KINDS = ['coordination', 'lifecycle', 'lifecycle-history', 'data-outcome'] as const
+const RECORD_KINDS = ['coordination', 'lifecycle'] as const
 const GIT_POINTER_BYTES = 4_096
 const WORKTREE_LIMIT = 4_096
 
@@ -295,9 +295,8 @@ async function readStateStacks(namespace: StateNamespace): Promise<
     return refuse(read.code, read.message, read.target, read.recovery)
 }
 
-function verdictOf(input: Readonly<{ current: boolean; checkout: StackCheckout; malformed: boolean; draining: boolean; registered: RecordedCheckout['missing'] }>): { verdict: StackVerdict; reason: string } {
+function verdictOf(input: Readonly<{ current: boolean; checkout: StackCheckout; malformed: boolean; registered: RecordedCheckout['missing'] }>): { verdict: StackVerdict; reason: string } {
     if (input.current) return { verdict: 'current', reason: 'this is the stack of the checkout running the command' }
-    if (input.draining) return { verdict: 'kept', reason: 'a down or reset of this stack is in progress, and only its own checkout may finish it' }
     if (input.registered === 'locked') return { verdict: 'kept', reason: 'Git marks its worktree locked, as for one on a drive or share that is not mounted now; once the checkout is really gone, run git worktree unlock and git worktree prune in its main checkout' }
     if (input.registered === 'registered') return { verdict: 'kept', reason: 'its checkout path does not exist but Git still registers the worktree, as for one on a drive or share that is not mounted now or one moved without git worktree repair; once the checkout is really gone, run git worktree prune in its main checkout' }
     if (input.checkout.status === 'present') return { verdict: 'kept', reason: 'its checkout exists' }
@@ -402,9 +401,8 @@ async function observe(input: Parameters<typeof observeMachineStacks>[0]): Promi
         const malformed = stored?.malformed ?? (folder ? `its cockpit's state folder cannot be read: ${folder.reason}` : undefined)
         const containers = owned.filter(({ kind }) => kind === 'container')
         const record = stored?.record
-        const draining = record?.drain != null
         const decided = verdictOf({ current: cockpitId === input.own.cockpitId && stackId === input.own.stackId, checkout,
-            malformed: malformed !== undefined, draining, registered: registered?.missing })
+            malformed: malformed !== undefined, registered: registered?.missing })
         const lease = record?.lease && !record.lease.released ? record.lease.ports : null
         stacks.push({
             namespace: stored?.namespace, files: stored?.files ?? [], resources: owned,
@@ -417,7 +415,7 @@ async function observe(input: Parameters<typeof observeMachineStacks>[0]): Promi
                     status: stored === undefined && folder === undefined ? 'absent' : malformed !== undefined ? 'malformed' : 'readable',
                     path: stored?.coordinationPath ?? folder?.path ?? null,
                     ...(malformed === undefined ? {} : { reason: malformed }),
-                    holders: record?.holders.length ?? 0, draining,
+                    holders: record?.holders.length ?? 0,
                 },
                 containers: {
                     running: containers.filter(({ running }) => running).map(({ name }) => name),

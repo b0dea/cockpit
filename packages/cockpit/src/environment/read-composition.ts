@@ -1,6 +1,4 @@
-import { createHash } from 'node:crypto'
-import { realpath } from 'node:fs/promises'
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { loadCockpitConfig, consumeLoadedConfigProjection, type ConsumedLoadedConfig } from '../config/load.js'
 import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { type RuntimeEvidenceObservation } from './application/health.js'
@@ -14,11 +12,13 @@ import type { ForegroundProcessInput, ForegroundProcessOutcome } from '../enviro
 import type { LifecycleRecordValue } from './lifecycle-stage.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { deriveEntrypoints, observeRetainedPortFamily, projectRetainedPortFamilyResult, type PortLeaseProjection } from './ports.js'
-import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, type ExecutionStep, type LifecycleProgress, type StackId, RefusalError } from './contract.js'
+import { ENVIRONMENT_CODES, type ExecutionStep, type LifecycleProgress, type StackId, RefusalError } from './contract.js'
 import { loadServedSiblings, servedSiblingVariables } from './sibling-checkouts.js'
 import { DeclarationRefusalError, runtimeNotDeclared, serviceNotDeclared } from './declaration.js'
 import {
     admitRuntimeServiceHealth,
+    dockerClientEnvironment,
+    readComposeArtifacts,
     revalidateRuntimeService,
     type ComposeArtifact,
     type RuntimeServiceEvidence,
@@ -35,9 +35,8 @@ import {
     type JsonValue,
 } from './evidence.js'
 import { readState, type StateNamespace, type StateRecord } from './state.js'
-import { readBoundedFile } from '../bounded-read.js'
+import { sameSource } from './application/shared.js'
 
-const COMPOSE_BYTE_LIMIT = 1_048_576
 const DEFAULT_OUTPUT_LIMIT = 1_048_576
 
 interface ReadCommandCompositionInput {
@@ -133,53 +132,6 @@ function captureInput(value: ReadCommandCompositionInput): CapturedInput | undef
     }
 }
 
-function runtimeEnvironment(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
-    return Object.fromEntries(Object.entries(env)
-        .filter((entry): entry is [string, string] => DOCKER_CLIENT_ENVIRONMENT.has(entry[0]) && typeof entry[1] === 'string'))
-}
-
-function confined(root: string, path: string): boolean {
-    const relation = relative(root, path)
-    return relation === '' || relation !== '..' && !relation.startsWith(`..${sep}`) && !isAbsolute(relation)
-}
-
-async function composeArtifact(root: string, reference: string): Promise<ComposeArtifact | undefined> {
-    if (typeof reference !== 'string' || reference.length === 0 || reference.includes('\0')) return undefined
-    const expected = resolve(root, reference)
-    if (!confined(root, expected)) return undefined
-    try {
-        const canonicalPath = await realpath(expected)
-        if (canonicalPath !== expected) return undefined
-        const read = readBoundedFile(canonicalPath, COMPOSE_BYTE_LIMIT)
-        if (read.kind !== 'complete') return undefined
-        const bytes = read.bytes
-        const source = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-        return {
-            reference,
-            canonicalPath,
-            source,
-            sha256: createHash('sha256').update(bytes).digest('hex'),
-        }
-    } catch {
-        // An artifact that cannot be read carries no authority; callers refuse it as unavailable compose artifacts.
-        return undefined
-    }
-}
-
-async function composeArtifacts(root: string, references: readonly string[]): Promise<readonly ComposeArtifact[] | undefined> {
-    const artifacts: ComposeArtifact[] = []
-    for (const reference of references) {
-        const artifact = await composeArtifact(root, reference)
-        if (!artifact) return undefined
-        artifacts.push(artifact)
-    }
-    return artifacts.length > 0 ? artifacts : undefined
-}
-
-function sameSource(left: { readonly path: string; readonly byteLength: number; readonly sha256: string }, right: typeof left): boolean {
-    return left.path === right.path && left.byteLength === right.byteLength && left.sha256 === right.sha256
-}
-
 async function authenticateService(
     topology: RuntimeTopologyEvidence,
     service: string,
@@ -237,8 +189,8 @@ export function createReadCommandAdapters(
         }
         const checkoutRoot = dirname(configuration.source.path)
         const references = configuration.config.environment.compose_files
-        const composeFiles = await composeArtifacts(checkoutRoot, references)
-        if (!composeFiles) throw new RefusalError('compose artifacts are unavailable')
+        const composeFiles = await readComposeArtifacts(checkoutRoot, references)
+        if (!composeFiles?.length) throw new RefusalError('compose artifacts are unavailable')
         const lifecycleRead = await readState(context.namespace.paths.lifecycle(context.stackId))
         if (lifecycleRead.kind !== 'complete') throw new RefusalError('lifecycle state is unavailable')
         const lifecycleValue = decodeLifecycleRecord(lifecycleRead.value, context)?.value
@@ -268,7 +220,7 @@ export function createReadCommandAdapters(
         if (confirmedLifecycle.kind !== 'complete' || JSON.stringify(confirmedLifecycle.value) !== JSON.stringify(lifecycleRead.value)) {
             throw new RefusalError('lifecycle state changed during runtime observation')
         }
-        const env = runtimeEnvironment(input.env)
+        const env = dockerClientEnvironment(input.env)
         const executable = await resolveDockerExecutable(input.env)
         if (executable.state !== 'available') {
             throw new RefusalError(`runtime executable authority changed: ${executable.reason}`)
@@ -276,7 +228,7 @@ export function createReadCommandAdapters(
         if (executable.value.sha256 !== readiness.topology.executableSha256) {
             throw new RefusalError('runtime executable authority changed')
         }
-        const confirmedComposeFiles = await composeArtifacts(checkoutRoot, references)
+        const confirmedComposeFiles = await readComposeArtifacts(checkoutRoot, references)
         if (!confirmedComposeFiles || JSON.stringify(confirmedComposeFiles) !== JSON.stringify(composeFiles)) {
             throw new RefusalError('compose artifacts changed during runtime observation')
         }

@@ -1,19 +1,17 @@
-import { dirname, join, resolve } from 'node:path'
-import { cleanupFencedExecution } from '../../environment-exec/execute.js'
+import { randomBytes } from 'node:crypto'
+import { dirname, resolve } from 'node:path'
 import {
     ENVIRONMENT_CODES,
-    type EnvironmentCommandOutcome,
     type EnvironmentDiagnostic,
-    type ExecutionFence,
     type HolderId,
     snapshotJson,
     forwardedRefusal,
 } from '../contract.js'
 import { cockpitCommand } from '../../fix-catalogue.js'
 import { abortStateTransaction, readState, transactState, type StateRecord, type StateResult, type SkippedStateNamespace } from '../state.js'
-import { decodeLifecycleRecord, resolveLifecycleStage, type CurrentLifecycleRecord, type LifecycleRecordValue } from '../lifecycle-stage.js'
+import { decodeLifecycleRecord, type CurrentLifecycleRecord, type LifecycleRecordValue } from '../lifecycle-stage.js'
 import { inspectPortLeaseTransfer, revalidatePortLeaseProjection, type PortLeaseProjection } from '../ports.js'
-import { commitDrainOutcome, decodeCoordinationRecord, type DrainOutcome } from '../claims.js'
+import { decodeCoordinationRecord } from '../claims.js'
 import { lifecycleRefusal, ownerDiagnostic } from './shared.js'
 import { type LifecycleRunContext, type SleepCommandResult, type UpCommandResult, withLifecycleConfiguration } from './lifecycle-context.js'
 
@@ -24,16 +22,7 @@ export function lifecycleSuggestion(context: LifecycleRunContext, command: 'up' 
 export async function readLifecycleRecord(context: LifecycleRunContext): Promise<CurrentLifecycleRecord | null | UpCommandResult> {
     const address = context.namespace.paths.lifecycle(context.stackId)
     const result = await readState(address)
-    if (result.kind === 'missing') {
-        const stage = await resolveLifecycleStage({
-            namespace: context.namespace, stackId: context.stackId, observedAt: new Date().toISOString(),
-        })
-        if (stage.kind !== 'complete') return forwardedRefusal(stage.diagnostics)
-        return stage.authority.stage === 'steady'
-            ? lifecycleRefusal(ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID,
-                'seeded lifecycle history requires persisted progress', address.path)
-            : null
-    }
+    if (result.kind === 'missing') return null
     if (result.kind !== 'complete') {
         return lifecycleRefusal(result.code, result.message, result.target)
     }
@@ -50,6 +39,8 @@ function lifecycleStateRecord(
     value: LifecycleRecordValue,
     updatedAt: string,
 ): StateRecord {
+    // Progress is rewritten whole; whether the stack has come up and when it was seeded outlive it.
+    const kept = current === null ? undefined : decodeLifecycleRecord(current, context)?.value
     return {
         format: 'cockpit-state/v1',
         kind: 'lifecycle',
@@ -57,7 +48,11 @@ function lifecycleStateRecord(
         subjectId: context.stackId,
         revision: current === null ? 0 : current.revision + 1,
         updatedAt,
-        value: snapshotJson(value)! as StateRecord['value'],
+        value: snapshotJson({
+            ...value,
+            ...(kept?.steady ? { steady: true } : {}),
+            ...(kept?.seededAt ? { seededAt: kept.seededAt } : {}),
+        })! as StateRecord['value'],
     }
 }
 
@@ -157,36 +152,24 @@ export async function unheldStack(context: LifecycleRunContext): Promise<SleepCo
     }
 }
 
-export function repairRequired(context: LifecycleRunContext): Extract<SleepCommandResult, { kind: 'refusal' }> {
-    return lifecycleRefusal(
-        ENVIRONMENT_CODES.DRAIN_ATTEMPT_REPAIR_REQUIRED,
-        'cockpit cannot prove the interrupted sleep executor stopped, so it will not overlap it with another destructive action; preserve the coordination state for explicit repair',
-        context.stackId,
-    )
-}
-
 export async function invalidateCompletedLifecycle(
     context: LifecycleRunContext,
-    workBasisSha256: string,
-    operationGeneration: string,
     purpose: 'sleep' | 'down',
 ): Promise<Extract<SleepCommandResult, { kind: 'refusal' }> | undefined> {
     const current = await readLifecycleRecord(context)
     if (current !== null && 'kind' in current) return forwardedRefusal(current.diagnostics)
     const stored = current as CurrentLifecycleRecord | null
     // `up` writes the lifecycle record before it starts a service, so without one nothing ever ran
-    // and there is no identity to retire. Writing one here left a record without lifecycle history,
-    // which the next `up` refused as malformed state.
+    // and there is no identity to retire.
     if (stored === null) return undefined
-    if (purpose === 'down' && stored.value.teardownComplete === true
-        && stored.value.holderId === context.holderId && stored.value.workBasisSha256 === workBasisSha256
-        && stored.value.operationGeneration === operationGeneration) return undefined
-    // Sleep retains containers, so its replay still guards resume. Only a reconciled down
-    // retires that identity, before the final drain publication can release its claim.
+    if (purpose === 'down' && stored.value.teardownComplete === true && stored.value.holderId === context.holderId) return undefined
+    // A basis no up computes, so the next up starts every service afresh. Sleep keeps the recorded
+    // runtime inputs, which still guard a restart against changed Compose files; only down retires
+    // the stack's identity, before it releases its claim.
     const value: LifecycleRecordValue = {
         holderId: context.holderId,
-        workBasisSha256,
-        operationGeneration,
+        workBasisSha256: randomBytes(32).toString('hex'),
+        operationGeneration: randomBytes(32).toString('hex'),
         completedServices: [],
         ...(purpose === 'down' ? { teardownComplete: true as const } : {
             ...(stored.value.runtimeInputs ? { runtimeInputs: stored.value.runtimeInputs } : {}),
@@ -208,45 +191,6 @@ export async function invalidateCompletedLifecycle(
         )
     }
     return undefined
-}
-
-export async function publishDrainOutcomeRecord(
-    context: LifecycleRunContext,
-    outcome: DrainOutcome,
-): Promise<Extract<SleepCommandResult, { kind: 'refusal' }> | undefined> {
-    const publication = await commitDrainOutcome({
-        outcome,
-        namespace: context.namespace,
-        stackId: context.stackId,
-    })
-    if ('diagnostics' in publication) {
-        return forwardedRefusal(publication.diagnostics)
-    }
-    if (publication.kind === 'indeterminate') return lifecycleRefusal(
-        ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
-        publication.message,
-        publication.target,
-    )
-    if (publication.kind !== 'complete') {
-        return publication.kind === 'missing'
-            ? lifecycleRefusal(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'drain outcome publication returned no record', publication.path)
-            : lifecycleRefusal(publication.code, publication.message, publication.target)
-    }
-    return undefined
-}
-
-export async function publishDrainOutcome(
-    context: LifecycleRunContext,
-    outcome: DrainOutcome,
-    fence: ExecutionFence,
-): Promise<SleepCommandResult | undefined> {
-    const published = await publishDrainOutcomeRecord(context, outcome)
-    if (published) return published
-    return await cleanupFencedExecution(fence) ? undefined : lifecycleRefusal(
-        ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
-        'the drain outcome was published but its durable execution fence could not be removed',
-        fence.markerPath,
-    )
 }
 
 export function exactCommandConfigPath(input: unknown): string | undefined {

@@ -160,7 +160,8 @@ describe('browser transport surfaces', () => {
         const contention = await withBrowserProjectOperationAdmission(client, input.runtime,
             { origin: 'https://app.example.invalid', role: 'shared', state }, async () => 'overlap')
         expect(contention).toMatchObject({ kind: 'refusal', reason: expect.stringContaining('claim is contended') })
-        const scopes = await readdir(join(state.namespace.cockpitRoot, 'locks/scoped'))
+        // The stack's own lease takes a teardown scope beside the worker's.
+        const scopes = (await readdir(join(state.namespace.cockpitRoot, 'locks/scoped'))).filter((name) => name.startsWith('browser-worker-'))
         expect(scopes).toHaveLength(1)
         if (contention.kind !== 'refusal') throw new Error('contended worker claim was admitted')
         expect(contention.reason).toContain(join(state.namespace.cockpitRoot, 'locks/scoped', scopes[0]!, 'state.lock'))

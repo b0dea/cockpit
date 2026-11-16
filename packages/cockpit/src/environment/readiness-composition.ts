@@ -10,9 +10,9 @@ import type { ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { inspectTeamReadiness } from '../team-metadata.js'
 import { guardSearchPathRelativeEntry } from '../guards/protected-locations.js'
-import { DOCKER_CLIENT_ENVIRONMENT, ENVIRONMENT_CODES, snapshotExecutionStep, type EnvironmentDiagnostic, type ExecutionStep, RefusalError, isMissing, errorCause } from './contract.js'
+import { ENVIRONMENT_CODES, snapshotExecutionStep, type EnvironmentDiagnostic, type ExecutionStep, RefusalError, isMissing, errorCause } from './contract.js'
 import { GIT_CHILD_CONFIG, resolveDiskCapacityExecutable, resolveDockerExecutable, resolveGitExecutable } from './executable.js'
-import { measureMachineFloor } from './runtime.js'
+import { dockerClientEnvironment, measureMachineFloor } from './runtime.js'
 import { gitRepositoryRefusal, inspectTrackedSecretFiles } from './git-observation.js'
 import { declaresNothingToRun } from './declaration.js'
 import { inspectSiblingInstructions } from './sibling-instructions.js'
@@ -204,8 +204,7 @@ export async function measureInitMachine(
     const [docker, disk] = await Promise.all([resolveDockerExecutable(binding.env), resolveDiskCapacityExecutable()])
     if (docker.state !== 'available') return { kind: 'unavailable', reason: docker.reason }
     if (disk.state !== 'available') return { kind: 'unavailable', reason: disk.reason }
-    const env = Object.fromEntries(Object.entries(binding.env)
-        .filter((entry): entry is [string, string] => DOCKER_CLIENT_ENVIRONMENT.has(entry[0]) && typeof entry[1] === 'string'))
+    const env = dockerClientEnvironment(binding.env)
     const measured = await measureMachineFloor({ runtimeExecutable: docker.value, diskExecutable: disk.value, cwd: input.root,
         env, timeoutMs: binding.timeoutMs }, binding.execute)
     if (measured.kind !== 'complete') return { kind: 'unavailable', reason: measured.kind === 'refusal'

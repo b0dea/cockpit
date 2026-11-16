@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ENTRYPOINT_KINDS } from '../entrypoint-kinds.js'
 import { STRUCTURED_INPUT_ENTRY_LIMIT, type EntrypointDerivative } from '../schema.js'
-import { coordinationStateRecord, decodeCoordinationRecord, readRootPortInventory, releaseClaim, reserveDrain, reserveDrainAttempt } from './claims.js'
+import { coordinationStateRecord, decodeCoordinationRecord, readRootPortInventory, releaseClaim, withStackTeardown } from './claims.js'
 import {
     ENVIRONMENT_CODES,
     type CheckoutId,
@@ -451,34 +451,20 @@ describe('independent cockpits sharing a state root', () => {
 })
 
 describe('whole-family port leases', () => {
-    it.each(['sleep', 'down', 'reset'] as const)('blocks claim and lease acquisition and every release during a %s drain', async (purpose) => {
+    it('refuses to lease a stack a sleep, down or reset is tearing down, and leases it once that ends', async () => {
         const state = await namespace()
         const lease = await leasePortFamily({ namespace: state, stackId: stackA, holderId: holderA, checkoutId, config, now,
             listenerTimeoutMs: 100, observeListeners: noListeners })
         if (lease.kind !== 'complete') throw new Error('lease fixture unavailable')
-        const reserved = await reserveDrain({ namespace: state, request: {
-            purpose, stackId: stackA, holderId: holderA, requesterId: holderA,
-            configSha256: '1'.repeat(64), planDigest: '2'.repeat(64), operationBasis: '3'.repeat(64),
-            generation: '4'.repeat(64), targetIds: [stackA],
-            actions: [{ stage: 'runtime-stop', targetId: stackA, validForMs: 30_000 }],
-            expectedCoordinationRevision: lease.recordRevision,
-        } })
-        expect(reserved.kind).toBe('complete')
         const before = await readState(state.paths.coordination(stackA))
-        expect(await leasePortFamily({ namespace: state, stackId: stackA, holderId: holderA, checkoutId, config, now,
-            listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
-        expect(await leasePortFamily({ namespace: state, stackId: stackA, holderId: holderB, checkoutId, config, now,
-            listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
-        for (const release of [
-            () => releaseClaim({ namespace: state, stackId: stackA, requesterId: holderA, holderId: holderA, now }),
-            () => releaseClaim({ namespace: state, stackId: stackA, requesterId: holderB, holderId: holderB, now }),
-            () => releaseClaim({ namespace: state, stackId: stackA, requesterId: holderA, holderId: holderB, now }),
-            () => releasePortFamily({ namespace: state, stackId: stackA, requesterId: holderA, holderId: holderA, now }),
-            () => releasePortFamily({ namespace: state, stackId: stackA, requesterId: holderB, holderId: holderB, now }),
-        ]) {
-            expect(await release()).toMatchObject({ kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.CLAIM_CO_TENANT }] })
-        }
+        const during = await withStackTeardown(state, stackA, holderA, async () => ({
+            joined: await leasePortFamily({ namespace: state, stackId: stackA, holderId: holderB, checkoutId, config, now,
+                listenerTimeoutMs: 100, observeListeners: noListeners }),
+        }))
+        expect(during).toMatchObject({ joined: { kind: 'refusal', diagnostics: [{ code: ENVIRONMENT_CODES.STATE_LOCKED }] } })
         expect(await readState(state.paths.coordination(stackA))).toEqual(before)
+        expect(await leasePortFamily({ namespace: state, stackId: stackA, holderId: holderB, checkoutId, config, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'complete', change: 'acquired' })
     })
     it('returns committed holder and revision provenance without inference', async () => {
         const state = await namespace()
@@ -1386,14 +1372,8 @@ describe('retained port-family projection', () => {
         await expect(revalidatePortLeaseProjection({ projection: { ...projection } as never, namespace: state })).resolves.toBe(false)
         await expect(revalidatePortLeaseProjection({ projection, namespace: await namespace() })).resolves.toBe(false)
         await expect(revalidatePortLeaseProjection({ projection, namespace: state })).resolves.toBe(true)
-        const reserved = await reserveDrain({ namespace: state, request: {
-            purpose: 'sleep', stackId: stackA, holderId: holderA, requesterId: holderA,
-            configSha256: '1'.repeat(64), planDigest: '2'.repeat(64), operationBasis: '3'.repeat(64),
-            generation: '4'.repeat(64), targetIds: [stackA],
-            actions: [{ stage: 'runtime-stop', targetId: stackA, validForMs: 30_000 }],
-            expectedCoordinationRevision: lease.recordRevision,
-        } })
-        expect(reserved.kind).toBe('complete')
+        expect(await leasePortFamily({ namespace: state, stackId: stackA, holderId: holderB, checkoutId, config, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })).toMatchObject({ kind: 'complete', change: 'acquired' })
         await expect(revalidatePortLeaseProjection({ projection, namespace: state })).resolves.toBe(false)
     })
 
@@ -1436,13 +1416,8 @@ describe('retained port-family projection', () => {
         const retained = await observeRetainedPortFamily({ namespace: state, stackId: stackA, holderId: holderA, checkoutId, config })
         if (retained.kind !== 'complete') throw new Error('retained lease fixture unavailable')
         const entrypoints = deriveEntrypoints({ lease: retained.lease, declarations: [] })
-        await reserveDrain({ namespace: state, request: {
-            purpose: 'sleep', stackId: stackA, holderId: holderA, requesterId: holderA,
-            configSha256: '1'.repeat(64), planDigest: '2'.repeat(64), operationBasis: '3'.repeat(64),
-            generation: '4'.repeat(64), targetIds: [stackA],
-            actions: [{ stage: 'runtime-stop', targetId: stackA, validForMs: 30_000 }],
-            expectedCoordinationRevision: lease.recordRevision,
-        } })
+        await leasePortFamily({ namespace: state, stackId: stackA, holderId: holderB, checkoutId, config, now,
+            listenerTimeoutMs: 100, observeListeners: noListeners })
 
         expect(await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })).toBeUndefined()
         expect(await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })).toBeUndefined()
@@ -1465,31 +1440,6 @@ describe('retained port-family projection', () => {
 
         expect(await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })).toBeUndefined()
         expect(await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })).toBeUndefined()
-    })
-
-    it('projects during an active drain attempt', async () => {
-        const state = await namespace()
-        const lease = await leasePortFamily({ namespace: state, stackId: stackA, holderId: holderA, checkoutId, config, now,
-            listenerTimeoutMs: 100, observeListeners: noListeners })
-        if (lease.kind !== 'complete') throw new Error('lease fixture unavailable')
-        const reserved = await reserveDrain({ namespace: state, request: {
-            purpose: 'sleep', stackId: stackA, holderId: holderA, requesterId: holderA,
-            configSha256: '1'.repeat(64), planDigest: '2'.repeat(64), operationBasis: '3'.repeat(64),
-            generation: '4'.repeat(64), targetIds: [stackA],
-            actions: [{ stage: 'runtime-stop', targetId: stackA, validForMs: 30_000 }],
-            expectedCoordinationRevision: lease.recordRevision,
-        } })
-        if (reserved.kind !== 'complete') throw new Error('drain fixture unavailable')
-        const attempted = await reserveDrainAttempt({ namespace: state, reservation: reserved.reservation })
-        if (attempted.kind !== 'complete') throw new Error('drain attempt fixture unavailable')
-        const before = await readFile(state.paths.coordination(stackA).path)
-        const retained = await observeRetainedPortFamily({ namespace: state, stackId: stackA, holderId: holderA, checkoutId, config })
-        if (retained.kind !== 'complete') throw new Error('retained lease fixture unavailable')
-        const entrypoints = deriveEntrypoints({ lease: retained.lease, declarations: [] })
-
-        expect(await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints }))
-            .toMatchObject({ ownership: { recordRevision: attempted.attempt.committedRevision } })
-        expect(await readFile(state.paths.coordination(stackA).path)).toEqual(before)
     })
 
     it('rejects copied authority, mismatched entrypoints, and replay', async () => {

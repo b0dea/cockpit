@@ -48,7 +48,7 @@ import { runLogs as runLogsApplication } from './environment/application/logs.js
 import { runDocsCheck } from './docs/check.js'
 import { runEnvKeys, runEnvSchema } from './environment/env-sources.js'
 import { runServiceExec, runServicePs, runServiceRestart } from './environment/application/services.js'
-import { executeForegroundProcess, executePlan, executeProbe, foregroundTerminal } from './environment-exec/execute.js'
+import { executeForegroundProcess, executePlan, executeProbe, foregroundTerminal, withExecutionSignal } from './environment-exec/execute.js'
 import { createDestructiveCommandAdapters, selectDestructiveDaemon } from './environment/destructive-composition.js'
 import { createHealthCommandAdapters } from './environment/health-composition.js'
 import { inspectInitReadiness, measureInitMachine, proposeInitGrading } from './environment/readiness-composition.js'
@@ -85,7 +85,6 @@ import { synchronizeSiblingInstructionFiles } from './environment/sibling-instru
 import { resolvedGitExecutable, resolveExecutable, resolveGitExecutable } from './environment/executable.js'
 import { checkoutId, holderId, stackId } from './environment/identity.js'
 import { selectStateRoot } from './environment/state.js'
-import { recordLifecycleStarted } from './environment/lifecycle-stage.js'
 import { planEnvironmentSeed, seedEnvironmentInstanceSync } from './environment/templates.js'
 import {
     observeInstallPolicyLockfiles,
@@ -379,7 +378,6 @@ const defaultSetupAdapters: SetupCommandAdapters = {
     syncInstructionFiles: synchronizeSiblingInstructionFiles,
     execute: executePlan,
     observeSource: observeConfigSource,
-    recordStarted: recordLifecycleStarted,
     withIgnore: async ({ context, siblingIndex, sibling, environmentFileIndex, environmentFile, observedAt }, use) => {
         const siblingRoot = resolve(context.siblingsRoot, sibling.dir)
         const siblingCheckoutId = checkoutId({ checkoutPath: siblingRoot })
@@ -463,6 +461,8 @@ function readAdapters(configPath: string, runtime: CliRuntime, sessionId: string
         ...(runtime.signal ? { signal: runtime.signal } : {}),
     }, executeProbe, executeForegroundProcess)
 }
+
+const STOPPING_HANDLERS: ReadonlySet<string> = new Set(['sleep', 'down', 'reset'])
 
 // Each return is a literal, so the diagnostic inventory captures the fix beside its code.
 function unsatisfiedWorkDiagnostic(operation: WorkApplicationRequest['operation'], message: string): Diagnostic {
@@ -1556,7 +1556,7 @@ export async function runCli(
                 outcome = usageOutcome('CLI_USAGE_INVALID', '--follow requires a cancellation signal', '--follow')
             } else {
                 try {
-                    outcome = await invokeHandler(decoded, handlers, operators, {
+                    const invoke = () => invokeHandler(decoded, handlers, operators, {
                         interactive: parsed.values.interactive === true,
                         apply: parsed.values.apply === true,
                         json: parsed.values.json === true,
@@ -1564,6 +1564,9 @@ export async function runCli(
                         env: runtime.env ?? process.env,
                         argv: args,
                     }, io)
+                    // Every step runs in its own process group, which an interrupted cockpit would leave
+                    // running; a stopping stack's interruption ends each step it started and waits for it.
+                    outcome = await (runtime.signal && STOPPING_HANDLERS.has(decoded.handler) ? withExecutionSignal(runtime.signal, invoke) : invoke())
                 } catch (error) {
                     outcome = usageOutcome(
                         'CLI_INTERNAL_ERROR',

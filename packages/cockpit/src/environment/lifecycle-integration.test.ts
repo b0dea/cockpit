@@ -5,20 +5,11 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { executeProbe } from '../environment-exec/execute.js'
 import {
-    reserveDrain,
-    type CoordinationRecord,
-} from './claims.js'
-import {
     type CheckoutId,
     type CockpitId,
     type HolderId,
     type StackId,
 } from './contract.js'
-import {
-    planDown,
-    planResetLifecycle,
-    planSleep,
-} from './lifecycle.js'
 import { planUp } from '../../test-support/lifecycle-planning.js'
 import {
     projectLifecycleStage,
@@ -30,19 +21,12 @@ import {
 } from './ports.js'
 import { leasePortFamilyFixture } from '../../test-support/port-lease-fixture.js'
 import {
-    discoverReclaim,
-    planReset,
-    planTeardown,
-    type ReclaimResource,
-    type ReclaimTargetEnvelope,
-} from './reclaim.js'
-import {
     createRuntimeAdapter,
     observeRuntimeTopology,
     projectRuntimeLifecycle,
     type RuntimeTopologyEvidence,
 } from './runtime.js'
-import { readState, selectStateRoot, type StateNamespace, type StateRecord } from './state.js'
+import { readState, selectStateRoot, type StateNamespace } from './state.js'
 
 const sha = (value: string | Buffer) => createHash('sha256').update(value).digest('hex')
 const cockpitId = `cockpit:integration:${sha('cockpit')}` as CockpitId
@@ -52,15 +36,6 @@ const checkoutId = `checkout:${sha('checkout')}` as CheckoutId
 const configSha256 = sha('configuration')
 const batchId = sha('runtime batch')
 const generation = sha('operation generation')
-const dockerContext = 'synthetic-context'
-const dockerEndpoint = 'unix:///tmp/synthetic-docker.sock'
-const ownershipLabels = {
-    'dev.b0dea.cockpit.stack-id': stackId,
-    'dev.b0dea.cockpit.config-sha256': configSha256,
-    'dev.b0dea.cockpit.owner-id': cockpitId,
-}
-// Reset targets a volume by its Compose key; Docker names it after the project.
-const composeProject = 'integration-0123456789ab'
 const roots: string[] = []
 
 afterEach(async () => {
@@ -165,51 +140,6 @@ async function issueRuntimeTopology(root: string): Promise<RuntimeTopologyEviden
     return admitted.topology
 }
 
-function dockerRow(resource: ReclaimResource) {
-    if (resource.kind === 'build-cache') {
-        return { ID: resource.id, Reclaimable: !resource.referenced, Size: String(resource.bytes) }
-    }
-    return {
-        id: resource.kind === 'volume' ? resource.name : resource.id,
-        name: resource.name,
-        labels: resource.labels,
-        referenced: false,
-        bytes: resource.kind === 'network' ? null : resource.bytes,
-    }
-}
-
-function resolvedExecutable(path: string, bytes: Buffer) {
-    return { canonicalPath: path, invocationPath: path, sha256: sha(bytes), executionMode: 'verified-path' as const }
-}
-
-async function issueReclaimDiscovery(root: string, resources: readonly ReclaimResource[]) {
-    const kinds = ['container', 'network', 'volume', 'image', 'build-cache'] as const
-    for (const kind of kinds) {
-        const rows = resources.filter((resource) => resource.kind === kind)
-        await writeFile(join(root, `docker.${kind}`), `${rows.map((row) => JSON.stringify(dockerRow(row))).join('\n')}\n`)
-        if (kind === 'volume') {
-            for (const row of rows) await writeFile(join(root, `inspect.${row.name}`), `${JSON.stringify({ name: row.name, generation: row.generation })}\n`)
-        }
-        if (kind === 'network') {
-            for (const row of rows) await writeFile(join(root, `inspect.network.${row.id}`), `${JSON.stringify({ id: row.id, members: '' })}\n`)
-        }
-        if (kind === 'container') {
-            for (const row of rows) await writeFile(join(root, `inspect.container.${row.id}`), `${JSON.stringify({ id: row.id, networks: {} })}\n`)
-        }
-    }
-    await writeFile(join(root, 'selection.context'), `${JSON.stringify({ context: dockerContext, endpoint: dockerEndpoint })}\n`)
-    const runtimePath = join(root, 'docker')
-    const runtimeBytes = Buffer.from('#!/bin/sh\nif [ "$1" = context ]; then /bin/cat -- "$PWD/selection.context"; exit; fi\n[ "$1" = --host ] || exit 91\nshift 2\nkind="$1"\nif [ "$2" = inspect ]; then shift 4; status=0; for id do if [ "$kind" = image ] || [ "$kind" = volume ]; then /bin/cat -- "$PWD/inspect.$id" || status=1; else /bin/cat -- "$PWD/inspect.$kind.$id" || status=1; fi; done; exit $status; fi\n[ "$kind" = builder ] && kind=build-cache\n/bin/cat -- "$PWD/docker.$kind"\n')
-    await writeFile(runtimePath, runtimeBytes, { mode: 0o700 })
-    await chmod(runtimePath, 0o700)
-    const executable = resolvedExecutable(runtimePath, runtimeBytes)
-    const discovery = await discoverReclaim({
-        executable, cwd: root, env: { PATH: '/usr/bin:/bin' }, stackId, cockpitId, timeoutMs: 5_000, context: dockerContext,
-    }, executeProbe)
-    if (!discovery || 'diagnostics' in discovery) throw new Error('reclaim discovery unavailable')
-    return { discovery, executable }
-}
-
 async function coordinationSnapshot(namespace: StateNamespace) {
     const result = await readState(namespace.paths.coordination(stackId))
     if (result.kind !== 'complete') throw new Error('coordination state unavailable')
@@ -217,10 +147,6 @@ async function coordinationSnapshot(namespace: StateNamespace) {
         bytes: await readFile(namespace.paths.coordination(stackId).path),
         record: result.value,
     }
-}
-
-function coordinationValue(record: StateRecord): CoordinationRecord {
-    return record.value as unknown as CoordinationRecord
 }
 
 async function issueUpInput(namespace: StateNamespace, topology: RuntimeTopologyEvidence) {
@@ -234,49 +160,6 @@ async function issueUpInput(namespace: StateNamespace, topology: RuntimeTopology
         completedServices: [],
         operationGeneration: generation,
     }
-}
-
-async function issueTeardownProjection(root: string, record: StateRecord): Promise<ReclaimTargetEnvelope> {
-    const cacheId = 'abcdefghijklmnopqrstuvwxy'
-    const observed = await issueReclaimDiscovery(root, [
-        { id: cacheId, name: 'synthetic-build-cache', kind: 'build-cache', labels: {}, referenced: false, bytes: 128 },
-        { id: 'container-2', name: 'synthetic-container', kind: 'container', labels: ownershipLabels, referenced: false, bytes: 256 },
-    ])
-    const preview = await planTeardown({
-        stackId, cockpitId, configSha256, coordinationRecord: record,
-        declaredCacheIds: [cacheId], discovery: observed.discovery,
-        executable: observed.executable,
-        cwd: root, env: { PATH: '/usr/bin:/bin' }, timeoutMs: 30_000,
-    })
-    if (preview.kind !== 'complete') throw new Error('teardown target projection unavailable')
-    return preview.envelope
-}
-
-async function issueResetProjection(root: string, record: StateRecord): Promise<ReclaimTargetEnvelope> {
-    const volume = (key: string) => ({ ...ownershipLabels, 'com.docker.compose.project': composeProject, 'com.docker.compose.volume': key })
-    const volumes: ReclaimResource[] = [
-        { id: 'volume-1', name: `${composeProject}_alpha-data`, kind: 'volume', labels: volume('alpha-data'), referenced: false, bytes: 128, dataBearing: true, generation: sha('alpha generation') },
-        { id: 'volume-2', name: `${composeProject}_zeta-data`, kind: 'volume', labels: volume('zeta-data'), referenced: false, bytes: 256, dataBearing: true, generation: sha('zeta generation') },
-    ]
-    const observed = await issueReclaimDiscovery(root, volumes)
-    const removalPath = await realpath('/bin/rm')
-    const removalBytes = await readFile(removalPath)
-    const preview = await planReset({
-        stackId, cockpitId, configSha256, coordinationRecord: record,
-        expectedCoordinationRevision: record.revision, requesterHolderId: holderId,
-        declaredCacheIds: [], resettableVolumes: ['alpha-data', 'zeta-data'], composeProject, generatedHostPaths: [],
-        discovery: observed.discovery, runtimeExecutable: observed.executable,
-        pathExecutable: { canonicalPath: removalPath, invocationPath: '/bin/rm', sha256: sha(removalBytes), executionMode: 'verified-path' },
-        cwd: root, env: { PATH: '/usr/bin:/bin' }, timeoutMs: 30_000,
-    })
-    if (preview.kind !== 'preview') throw new Error('reset target projection unavailable')
-    return preview.envelope
-}
-
-async function issueDrainInputs(namespace: StateNamespace, topology: RuntimeTopologyEvidence) {
-    const runtime = projectRuntimeLifecycle(topology)
-    if (!runtime) throw new Error('runtime projection unavailable')
-    return { runtime, ports: await issuePortProjection(namespace) }
 }
 
 describe('lifecycle owner integration', () => {
@@ -305,75 +188,5 @@ describe('lifecycle owner integration', () => {
         const after = await coordinationSnapshot(namespace)
         expect(after.record.revision).toBe(before.record.revision)
         expect(after.bytes.equals(before.bytes)).toBe(true)
-    })
-
-    it('drains exactly the targets the reclaim owner committed, and refuses those committed for the other verb', async () => {
-        for (const verb of ['down', 'reset'] as const) {
-            const root = await temporaryRoot(`cockpit-lifecycle-integration-${verb}-authority-`)
-            const namespace = await stateNamespace(root)
-            const topology = await issueRuntimeTopology(root)
-            await issuePortProjection(namespace)
-            const { record } = await coordinationSnapshot(namespace)
-            const plan = verb === 'down' ? planDown : planResetLifecycle
-
-            const committed = verb === 'down' ? await issueTeardownProjection(root, record) : await issueResetProjection(root, record)
-            const planned = plan({ ...await issueDrainInputs(namespace, topology), reclaim: committed, operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000 })
-            expect(planned).toMatchObject({ kind: 'drain', request: { planDigest: committed.planDigest } })
-            if (planned.kind === 'drain') expect(planned.request.actions.filter(({ stage }) => stage === 'reclaim').map(({ targetId }) => targetId))
-                .toEqual(committed.commitments.map(({ targetId }) => targetId))
-
-            const other = verb === 'down' ? await issueResetProjection(root, record) : await issueTeardownProjection(root, record)
-            expect(plan({ ...await issueDrainInputs(namespace, topology), reclaim: other, operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000 }))
-                .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID' }] })
-        }
-    })
-
-    it('hands each generated drain request to the claims owner without mutating planning state', async () => {
-        const cases = ['sleep', 'down', 'reset'] as const
-        for (const verb of cases) {
-            const root = await temporaryRoot(`cockpit-lifecycle-integration-${verb}-`)
-            const namespace = await stateNamespace(root)
-            const topology = await issueRuntimeTopology(root)
-            const { runtime, ports } = await issueDrainInputs(namespace, topology)
-            const before = await coordinationSnapshot(namespace)
-            let result
-            if (verb === 'sleep') {
-                result = planSleep({ runtime, ports, operationGeneration: generation, runtimeStopValidForMs: 30_000 })
-            } else {
-                const coordination = coordinationValue(before.record)
-                if (verb === 'down') {
-                    const reclaim = await issueTeardownProjection(root, before.record)
-                    result = planDown({ runtime, ports, reclaim, operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000 })
-                } else {
-                    const reclaim = await issueResetProjection(root, before.record)
-                    result = planResetLifecycle({ runtime, ports, reclaim, operationGeneration: generation, runtimeStopValidForMs: 30_000, reclaimValidForMs: 30_000 })
-                }
-                expect(coordination.holders).toHaveLength(1)
-            }
-            expect(result).toMatchObject({ kind: 'drain' })
-            if (result.kind !== 'drain') throw new Error(`${verb} drain planning unavailable`)
-            if (verb === 'down') {
-                expect(result.request.targetIds).toEqual([
-                    'build-cache:abcdefghijklmnopqrstuvwxy', 'container:container-2', stackId,
-                ])
-                expect(result.request.actions.map(({ stage, targetId }) => ({ stage, targetId }))).toEqual([
-                    { stage: 'runtime-stop', targetId: stackId },
-                    { stage: 'reclaim', targetId: 'build-cache:abcdefghijklmnopqrstuvwxy' },
-                    { stage: 'reclaim', targetId: 'container:container-2' },
-                ])
-            }
-            if (verb === 'reset') {
-                expect(result.request.targetIds).toEqual([stackId, `volume:${composeProject}_alpha-data`, `volume:${composeProject}_zeta-data`])
-                expect(result.request.actions.map(({ stage, targetId }) => ({ stage, targetId }))).toEqual([
-                    { stage: 'runtime-stop', targetId: stackId },
-                    { stage: 'reclaim', targetId: `volume:${composeProject}_alpha-data` },
-                    { stage: 'reclaim', targetId: `volume:${composeProject}_zeta-data` },
-                ])
-            }
-            const afterPlan = await coordinationSnapshot(namespace)
-            expect(afterPlan.record.revision).toBe(before.record.revision)
-            expect(afterPlan.bytes.equals(before.bytes)).toBe(true)
-            expect(await reserveDrain({ namespace, request: result.request })).toMatchObject({ kind: 'complete' })
-        }
     })
 })

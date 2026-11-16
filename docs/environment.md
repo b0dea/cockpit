@@ -305,9 +305,7 @@ diverging files, or writing a first AGENTS.md, stays a person's.
 existing one, so if the start fails, cockpit undoes only the holder that attempt added. Before
 resuming, it checks that the saved progress still matches the current lifecycle record, runtime and
 port lease. If so, it rechecks the services that completed and resumes the rest; if not, it discards
-that progress before touching containers left by the earlier attempt. After the first seed, missing
-saved progress blocks startup. Restore that state rather than delete it: deleting it would make the
-stack look like a fresh environment when it is not.
+that progress before touching containers left by the earlier attempt.
 
 When a service `up` started does not become healthy, cockpit reports its last log lines as one
 diagnostic, then stops its container and keeps it, so a restart policy cannot leave it restarting.
@@ -373,27 +371,28 @@ it in your Compose file, or handle SIGTERM.
 A product can keep some processes on the host, such as a dev server or a fixture server, and give
 them leased ports that no Compose service publishes. Start them through the session's command, as in
 `npx --no cockpit session --config cockpit.toml -- npm run dev`, and read the port from its
-`[ports.bases]` name. `preflight` and `doctor` then accept a listener on such a port only when
-cockpit can prove the session started it:
+`[ports.bases]` name. `preflight` and `doctor` accept a listener on such a port as the stack's when
+cockpit can show the session started it:
 
 - a session holding this checkout's stack is recorded with its process ID and start identity, and a
   process with that ID and identity still runs;
 - every process listening on the port, as `lsof` lists it on macOS and `ss -ltnp` on Linux, has
-  that session's wrapper among its ancestors, and keeps the same parent and start time across the
-  `ps` reads before and after the listing;
+  that session's wrapper among its ancestors in one `ps` listing;
 - every loopback address that answered the probe is covered by one of those sockets, either the
   address itself or a wildcard, and no socket on the port belongs to a process the listing cannot
-  name: `lsof` leaves out other users' processes, and `ss` lists their sockets without the process;
-- the same proof, read again after the stack's containers and lease are rechecked, is unchanged.
+  name: `lsof` leaves out other users' processes, and `ss` lists their sockets without the process.
 
-Anything else fails with `PORT_FAMILY_COLLISION`, which names the port and why: a server started
+Any other listener on such a port is reported as a `PORT_FAMILY_COLLISION` warning that names the
+port and why, and the check still passes, since the stack runs without that port: a server started
 from another terminal or after a plain `up`, one another session or checkout started, one another
 user runs, and one that outlived its session. While a session holds the stack, a session or listener
 whose process cannot be read, because `lsof`, `ss` (from iproute2) or `ps` is missing or a sandbox
 refuses it, leaves the check unavailable; it never passes. A declared address, sibling placement or `mount = "host"` grants
 nothing here, and a leased port nothing listens on passes.
 
-Three cases are not told apart. On macOS the start identity is read to the second, so a process ID
+Each is read once, so a listener that exits and whose process ID is reused between those reads is
+judged by the process that took the ID; at worst a warning is shown or left out wrongly. Three more cases are
+not told apart. On macOS the start identity is read to the second, so a process ID
 reused within the same second as the session started looks like the session. On macOS, where `lsof`
 does not show other users' sockets, a wildcard socket is taken as dual-stack, so another user's
 listener on a specific loopback address beside the session's wildcard socket, or beside an IPv6-only
@@ -428,13 +427,15 @@ declared volume has, and an `external` volume, because cockpit cannot label it. 
 that does not exist yet is left out of the preview. A volume an earlier `cockpit.toml` created is
 still this stack's data, and `reset` deletes it.
 
-Every destructive action is recorded durably before it starts. If cockpit is interrupted, a detached
-supervisor keeps track of that attempt; the next `sleep`, `down` or approved `reset` has it stop the
-action's process group, confirms the group is gone, and retries the saved action. If the target was
-already removed, cockpit checks again and marks the action complete. `DRAIN_ATTEMPT_REPAIR_REQUIRED`
-means the attempt marker, supervisor identity, control socket or stop confirmation did not match;
-cockpit then keeps the attempt and refuses any overlapping cleanup. Do not remove its state or
-runtime resources by hand: that destroys the records it needs to repair safely.
+`sleep`, `down` and `reset` each take a lock on the stack, then stop it, read what Docker reports
+now, and remove what the ownership labels show is this stack's, one resource at a time by its id.
+They read Docker again after the removals, refuse when a removed resource is still listed, and
+refuse when a container of the stack appeared meanwhile, keeping the stack and its ports. Ctrl-C or
+SIGTERM ends the step running and waits for it before the command exits; only SIGKILL leaves a step
+running. If one is interrupted, run the same command again: stopping is a no-op on a stopped stack,
+and it removes only what is still there. A lock left by a command that was killed is taken over by
+the next one. While one of them runs, another refuses with `STATE_LOCKED`, and `up` refuses to lease
+the stack's ports.
 
 ### List and prune stacks across the machine
 
@@ -460,11 +461,10 @@ like that. Once it is really gone, `git worktree prune` in its main checkout (af
 `git worktree unlock` for a locked one) lets `stacks prune` remove its stack.
 
 A stack is `orphaned` only when its checkout is proven `missing`. Every other stack is kept: one
-whose checkout exists or cannot be found, one a `down` or `reset` is still draining, the current
-checkout's own, and one whose state this version cannot read, because a newer version may still use
-it. A state folder this version cannot read is listed; one in the colon spelling an earlier build
-used is orphaned once none of its stacks is kept, and one named as current versions name their state
-is kept.
+whose checkout exists or cannot be found, the current checkout's own, and one whose state this
+version cannot read, because a newer version may still use it. A state folder this version cannot
+read is listed; one in the colon spelling an earlier build used is orphaned once none of its stacks
+is kept, and one named as current versions name their state is kept.
 
 `stacks prune` shows exactly what it would remove and a digest of it, and removes nothing:
 
@@ -773,12 +773,12 @@ success.
 
 ## Bring-up order
 
-`setup` writes `started` to the lifecycle history, and so does the first `up` on a stack with
-neither lifecycle data nor history; lifecycle data without history is refused as lost. Bring-up then
-checks the runtime, starts the Compose stack, waits for every service to report healthy, records
-`seeded`, and only then runs `environment.seed` when it is due. A refusal keeps the progress so the
-next `up` resumes. Fix the named prerequisite; never edit lifecycle state to fake `started` or
-`seeded` history.
+`up` keeps one lifecycle record per stack. It checks the runtime, starts the Compose stack, waits for
+every service to report healthy, marks the stack as having come up, and only then runs
+`environment.seed` when it is due, recording when the seed last succeeded. A refusal keeps the
+progress so the next `up` resumes. A record written by an earlier cockpit is read as a stack that has
+not come up yet: the next `up` brings it up as usual and runs the seed once more. Fix the named
+prerequisite; never edit lifecycle state by hand.
 
 ## Result words
 
@@ -911,8 +911,8 @@ What the checks compare:
   as an exact empty comparison. Health on a running stack rechecks the retained lease, container
   identities, mounts and published listeners without reserving sockets. Compose reports a `::`
   publication beside each `0.0.0.0` one, and some runtimes forward only IPv4 loopback, so the `::`
-  row need not listen while its `0.0.0.0` twin does; a leased port nothing publishes must stay free
-  on both families unless the session holding the stack started its listener
+  row need not listen while its `0.0.0.0` twin does; a listener on a leased port nothing publishes
+  is the stack's when the session holding the stack started it, and a warning otherwise
   ([Host processes on leased ports](#host-processes-on-leased-ports)).
 - **Capacity.** Cold-start timing applies only to services `up` actually started. The disk floor
   compares current free space with an explicitly declared machine floor; without that declaration,

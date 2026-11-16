@@ -62,13 +62,7 @@ const CONFINED: readonly (readonly [capability: string, pattern: RegExp, allowed
         [`${SRC}environment-exec/execute.ts`, `${ENV}ports.ts`, `${SRC}generated-environment/transaction.ts`, `${ENV}application/lifecycle.ts`, `${ENV}application/destructive.ts`, `${ENV}lifecycle-composition.ts`]],
     ['plan execution is bound only by the CLI', /\bexecutePlan\b/, [`${SRC}environment-exec/execute.ts`, `${SRC}cli-main.ts`]],
     ['lifecycle issuance is consumed only by the application', /\bconsumeLifecycleIssuance\b/, [`${ENV}lifecycle.ts`, `${ENV}application/lifecycle.ts`, `${ENV}application/destructive.ts`]],
-    ['drain reducers stay inside the claims broker', /\breduceDrain\w*\b/, [`${ENV}claims.ts`]],
-    ['drain reservation and outcome publication are the application\'s',
-        /\b(?:reserveDrain\w*|recoverDrainReservation|inspectDestructiveDrainRecovery|commitDrainOutcome)\b/,
-        [`${ENV}claims.ts`, `${ENV}application/lifecycle-state.ts`, `${ENV}application/lifecycle.ts`, `${ENV}application/destructive.ts`]],
-    ['reclaim drain recovery is reclaim\'s', /\b(?:inspectFailedReclaimRecovery|reclaimDrainStep|matchReclaimDrainContinuation)\b/,
-        [`${ENV}claims.ts`, `${ENV}reclaim.ts`]],
-    ['port leases consult the drain guard', /\b(?:isDrainActive|releaseClaim)\b/, [`${ENV}claims.ts`, `${ENV}ports.ts`]],
+    ['a claim is released only through the port owner', /\breleaseClaim\b/, [`${ENV}claims.ts`, `${ENV}ports.ts`]],
     ['guard input is parsed only for the guard application', /\bparseGuardInput\b/, [`${SRC}guards/invocation-parser.ts`, `${ENV}application/guard.ts`]],
     ['guard policy is evaluated only by the guard application', /\bevaluateGuard\b/, [`${SRC}guards/evaluator.ts`, `${ENV}application/guard.ts`]],
     ['agent invocations are admitted through the command table', /\bagentMayRun\b/,
@@ -279,32 +273,20 @@ describe('clean-checkout controls', () => {
 // silence is correct; a new one carries the cause, narrows to the error it expects, or earns an entry.
 // The site is the module and the enclosing function, so the list survives edits that move lines.
 const CLOSE_AFTER_DECISION = 'closing a descriptor after the read or write whose result is already decided'
-const CLEANUP_AFTER_REPORTED_FAILURE = 'removing a temporary file after a failure that is already returned'
 const SIGNAL_RACES_EXIT = 'signalling a process that may already have exited; the caller authenticates that it is gone'
 const PARSE_REFUSED_NEXT = 'a parse failure leaves the value unset, and the next statement refuses it'
 const JUSTIFIED_EMPTY_CATCHES: readonly (readonly [site: string, why: string])[] = [
-    ['packages/cockpit/libexec/fence-marker.cjs#readFenceMarkerFile', CLOSE_AFTER_DECISION],
-    ['packages/cockpit/libexec/fence-marker.cjs#replaceApprovedActiveMarker', CLOSE_AFTER_DECISION],
-    ['packages/cockpit/libexec/fence-marker.cjs#replaceApprovedActiveMarker', CLEANUP_AFTER_REPORTED_FAILURE],
-    ['packages/cockpit/libexec/fenced-supervisor.cjs#<module>', 'a marker that cannot be removed stays visible, and the state scan refuses it'],
-    ['packages/cockpit/libexec/fenced-supervisor.cjs#removeSocket', 'an absent socket is the goal, and repair checks absence itself'],
     ['packages/cockpit/src/environment-exec/execute.ts#checkFilesystem', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/environment-exec/execute.ts#consumedFileMatches', CLOSE_AFTER_DECISION],
-    ['packages/cockpit/src/environment-exec/execute.ts#publishFenceMarker', CLOSE_AFTER_DECISION],
-    ['packages/cockpit/src/environment-exec/execute.ts#publishFenceMarker', 'the prepared marker is either the linked winner or absent'],
-    ['packages/cockpit/src/environment-exec/execute.ts#spawnFencedSupervisor', SIGNAL_RACES_EXIT],
-    ['packages/cockpit/src/environment-exec/execute.ts#spawnFencedSupervisor', 'a socket that cannot be removed stays visible, and repair keeps refusing while it exists'],
-    ['packages/cockpit/src/environment-exec/execute.ts#spawnFencedSupervisor', 'a marker that cannot be removed stays visible, and the state scan refuses it'],
     ['packages/cockpit/src/environment-exec/execute.ts#stageVerifiedFile', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/environment-exec/execute.ts#stageVerifiedFile', CLOSE_AFTER_DECISION],
-    ['packages/cockpit/src/environment-exec/execute.ts#sweepFenceResidue', 'housekeeping after the attempt is cleaned up, and a later sweep retries'],
     ['packages/cockpit/src/environment-exec/execute.ts#terminate', SIGNAL_RACES_EXIT],
     ['packages/cockpit/src/environment-exec/execute.ts#terminate', SIGNAL_RACES_EXIT],
     ['packages/cockpit/src/environment-exec/execute.ts#terminate', SIGNAL_RACES_EXIT],
     ['packages/cockpit/src/environment/executable.ts#digestRegularFile', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/environment/posture-observation.ts#currentConfigurationRevision', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/environment/setup-observation.ts#stableFile', CLOSE_AFTER_DECISION],
-    ['packages/cockpit/src/environment/state.ts#acquireLock', 'a partly created lock is authority evidence that must survive for recovery; the acquisition error is rethrown'],
+    ['packages/cockpit/src/environment/state.ts#acquireLock', 'a lock directory left without an owner record is taken over by the next command; the acquisition error is rethrown'],
     ['packages/cockpit/src/generated-environment/transaction.ts#admitPlan', PARSE_REFUSED_NEXT],
     ['packages/cockpit/src/generated-environment/transaction.ts#digestFile', CLOSE_AFTER_DECISION],
     ['packages/cockpit/src/generated-environment/transaction.ts#recordRecovery', CLOSE_AFTER_DECISION],
@@ -361,7 +343,6 @@ const SIDE_TABLE = 'a side table one composition keeps for the run contexts it r
 const PATH_TRACKING = 'tracks the objects on the path being copied, so a cyclic value is refused'
 const ENVIRONMENT_IDENTITY_TABLES: readonly (readonly [site: string, why: string])[] = [
     [`${ENV}claims.ts#issuedListenerHosts`, ISSUED],
-    [`${ENV}claims.ts#seen`, PATH_TRACKING],
     [`${ENV}contract.ts#ancestors`, PATH_TRACKING],
     [`${ENV}contract.ts#ancestors`, PATH_TRACKING],
     [`${ENV}destructive-composition.ts#issued`, SIDE_TABLE],
@@ -386,7 +367,6 @@ const ENVIRONMENT_IDENTITY_TABLES: readonly (readonly [site: string, why: string
         'issuedBootstrapRestarts', 'issuedNamespacePaths', 'issuedNamespaces', 'issuedStatePublications']
         .map((name) => [`${ENV}state.ts#${name}`, ISSUED] as const),
     [`${ENV}state.ts#issuedScopedLocks`, 'the state lock\'s handles, which go with the state lock'],
-    [`${ENV}state.ts#unwaitableRefusals`, 'marks a state lock refusal that waiting cannot clear, private to the state lock'],
 ]
 
 /**

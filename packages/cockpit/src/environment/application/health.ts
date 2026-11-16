@@ -38,6 +38,7 @@ import {
     type ComparisonRemoteResult,
 } from '../git-observation.js'
 import type { CapturedRuntimeEvidence, EnvironmentSnapshot } from '../evidence.js'
+import { portListenersOutsideStack } from '../runtime.js'
 import { type ReadinessRefusal, consumeEffectiveConfiguration } from './lifecycle-context.js'
 import { confinedPath, exactEnvironment, sameSource } from './shared.js'
 
@@ -460,8 +461,12 @@ export function healthDiagnostics(health: HealthEvaluation): readonly Environmen
             fix: check.remedy,
         } satisfies EnvironmentDiagnostic] : []
     })
+    const outsideListeners = health.preflight.checks.flatMap((check) => portListenersOutsideStack(check).map((message): EnvironmentDiagnostic => ({
+        severity: 'warning', code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, message, target: check.source,
+        fix: 'if that port is meant for a service a cockpit session starts, stop the program holding it (find it with `lsof -nP -iTCP:<port> -sTCP:LISTEN`) first',
+    })))
     return [...health.stopped === null ? [] : [health.stopped], ...health.notices,
-        ...health.producerRefusals, ...checks, ...dirty, ...unhealthy, ...advisories, ...uncommitted, ...overridden, ...producerFailures, ...comparisons]
+        ...health.producerRefusals, ...checks, ...dirty, ...outsideListeners, ...unhealthy, ...advisories, ...uncommitted, ...overridden, ...producerFailures, ...comparisons]
 }
 
 function unavailablePreflight(message: string, forwarded?: readonly EnvironmentDiagnostic[]): PreflightCommandResult {

@@ -197,9 +197,17 @@ function start(container) {
     container.logs += execFileSync('/bin/sh', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, ...container.Config.Env } })
 }
 
+// A stopped container's ports are free when Docker reports it stopped, so each listener is gone
+// before stop returns: a loaded machine otherwise let the next `up` find the port still bound.
 function stop(container) {
     for (const pid of container.listeners ?? []) {
-        try { process.kill(pid) } catch (error) { if (error.code !== 'ESRCH') throw error }
+        try { process.kill(pid) } catch (error) { if (error.code !== 'ESRCH') throw error; continue }
+        const deadline = Date.now() + 10_000
+        for (;;) {
+            try { process.kill(pid, 0) } catch (error) { if (error.code === 'ESRCH') break; throw error }
+            if (Date.now() > deadline) fail(`Error response from daemon: the listener ${pid} did not stop`)
+            sleep(5)
+        }
     }
     container.listeners = []
     container.State = { Status: 'exited', Running: false }
@@ -250,6 +258,14 @@ async function compose(rest) {
             return
         }
         case 'stop':
+            // A journey arms `block-stop` to hold one stop open, as a slow daemon does, until
+            // something ends it; the pid it leaves says whether it was ended.
+            if (existsSync(join(stateDir, 'block-stop'))) {
+                rmSync(join(stateDir, 'block-stop'))
+                writeFileSync(join(stateDir, 'blocked-stop.pid'), String(process.pid))
+                rmSync(lock, { recursive: true, force: true })
+                await new Promise(() => setInterval(() => undefined, 1_000))
+            }
             for (const container of mine) stop(container)
             save()
             return
@@ -349,6 +365,13 @@ switch (`${command} ${sub}`) {
         break
     }
     case 'container rm': case 'volume rm': case 'network rm':
+        // A journey arms `fail-removal` with how many removals still succeed; the next one fails
+        // before it removes anything, as a daemon error or a killed command leaves a teardown half done.
+        if (existsSync(join(stateDir, 'fail-removal'))) {
+            const left = Number(readFileSync(join(stateDir, 'fail-removal'), 'utf8'))
+            if (left > 0) writeFileSync(join(stateDir, 'fail-removal'), String(left - 1))
+            else { rmSync(join(stateDir, 'fail-removal')); fail(`Error response from daemon: could not remove ${operands(rest, []).join(' ')}`) }
+        }
         kinds[command].remove(operands(rest, []))
         save()
         out(operands(rest, []).join('\n'))
