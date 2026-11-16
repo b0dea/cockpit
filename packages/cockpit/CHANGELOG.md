@@ -13,6 +13,20 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.18
+
+### Patch Changes
+
+- c96eda8: **Fixed:** a download held in a variable or compared, such as a loop that waits on `c=$(curl -s -o /dev/null -w '%{http_code}' …)`, is no longer refused as running downloaded code. A download that becomes the command, feeds a shell or interpreter, or shares a call with one is still refused. The refusal for a Git checkout or patch beside other commands now says it can make a symbolic link, not that it does.
+- bbc7295: Three false alarms are gone.
+  
+  **Fixed:** a `jq` filter that only mentions `env` inside a string, such as `test("local|env")`, is no longer refused as printing the environment; `env`, `$ENV` and `\(env…)` in the filter's code still are. `doctor` no longer warns about the team settings kept under `cockpit/adopted/`, which sync merges into the root's. The message for a stack with no recorded bring-up now says that a stack started by an earlier release counts as not yet up, and that `up` fixes it.
+- 398f970: **Fixed:** a glob or a missing file name below a package-manager link inside the checkout, such as `rg -n createSocket node_modules/pkg/src/*.js` under pnpm, is judged where the link leads instead of being refused as a path the guard could not inspect. A glob that can match an environment file there is still refused.
+- b6ff3ec: Two stops on ordinary work are gone.
+  
+  **Fixed:** `git merge` is judged by what the other branch changed since the common ancestor, so merging main into a branch that retired a hook or setting main still carries, unchanged, is no longer refused. A merge that brings a changed guard control or agent setting is still refused. `up` starts a stack again when its containers stopped outside cockpit, as after a machine sleeps, instead of asking you to run `sleep` first; this applies when the stack's progress is this checkout's and no other session holds it.
+- 088e8bf: `test-run` now saves each stage's output under `.cockpit/local/` and, when a stage fails, prints the file's path and the last 40 lines (also in `--json`), so a failure no longer needs the test command run again by hand. Stages with `requires_stack = false` now get the leased port variables when this checkout holds a stack, so their tests no longer fall back to base ports that may belong to another checkout's stack.
+
 ## 0.1.17
 
 ### Patch Changes
