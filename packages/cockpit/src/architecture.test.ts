@@ -389,16 +389,19 @@ const ENVIRONMENT_IDENTITY_TABLES: readonly (readonly [site: string, why: string
     [`${ENV}state.ts#unwaitableRefusals`, 'marks a state lock refusal that waiting cannot clear, private to the state lock'],
 ]
 
-/** Each `new WeakMap` or `new WeakSet`, by module and the name it is bound to. */
+/**
+ * Each value use of `WeakMap` or `WeakSet`, by module and the name it is bound to. Reading the name
+ * rather than `new WeakMap` also finds `new globalThis.WeakMap()` and an alias such as `const R = WeakMap`.
+ */
 function identityTableSites(sources: ReadonlyMap<string, string>): string[] {
     const sites: string[] = []
     for (const [path, source] of sources) {
         const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
         const visit = (node: ts.Node): void => {
-            if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && /^Weak(?:Map|Set)$/.test(node.expression.text)) {
-                const holder = ts.isVariableDeclaration(node.parent) || ts.isPropertyAssignment(node.parent) || ts.isParameter(node.parent)
-                    ? node.parent.name.getText(file) : '<unnamed>'
-                sites.push(`${path}#${holder}`)
+            if (ts.isIdentifier(node) && /^Weak(?:Map|Set)$/.test(node.text) && !ts.isTypeReferenceNode(node.parent) && !ts.isTypeQueryNode(node.parent)) {
+                let holder: ts.Node = node.parent
+                while (!ts.isSourceFile(holder) && !ts.isVariableDeclaration(holder) && !ts.isPropertyAssignment(holder) && !ts.isParameter(holder)) holder = holder.parent
+                sites.push(`${path}#${ts.isSourceFile(holder) ? '<unnamed>' : holder.name.getText(file)}`)
             }
             ts.forEachChild(node, visit)
         }
@@ -414,7 +417,12 @@ describe('plain values between environment modules', () => {
     })
 
     it('reports a planted registry by module and binding', () => {
-        const sources = new Map([[`${ENV}planted.ts`, 'const issuedPlans = new WeakSet<object>()\nexport const plan = (value: object) => issuedPlans.add(value)']])
-        expect(identityTableSites(sources)).toEqual([`${ENV}planted.ts#issuedPlans`])
+        const sources = new Map([[`${ENV}planted.ts`, [
+            'const issuedPlans = new WeakSet<object>()',
+            'const issuedRuns = new globalThis.WeakMap<object, number>()',
+            'const Registry = WeakSet',
+            'const typed: WeakMap<object, number> | undefined = undefined',
+        ].join('\n')]])
+        expect(identityTableSites(sources)).toEqual([`${ENV}planted.ts#Registry`, `${ENV}planted.ts#issuedPlans`, `${ENV}planted.ts#issuedRuns`])
     })
 })
