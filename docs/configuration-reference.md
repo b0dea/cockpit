@@ -348,7 +348,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | --- | --- | --- | --- | --- |
 | `id` | Name of the stage. | string |  | required; pattern `^[a-z][a-z0-9-]{0,63}$` |
 | `command` | Command to run, as an argument list. | array of string |  | required; 1–128 items; each item: 1–4096 characters |
-| `requires_stack` | True when the stage needs the stack running. | boolean |  | required |
+| `requires_stack` | True when the stage needs the stack running. Every stage gets the leased port variables when this checkout holds a stack, whatever this says. | boolean |  | required |
 | `timeout_seconds` | Seconds the stage may run before it is stopped and the gate reports DEGRADED. | integer | `1800` | 1–7200 |
 | `select` | Arguments appended to the command when test-run --select names that kind; {value} becomes the selected value. | table: [`[testing.stages.select]`](#testingstagesselect) |  |  |
 

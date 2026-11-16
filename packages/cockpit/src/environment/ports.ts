@@ -187,6 +187,15 @@ export type DeriveEntrypointsResult =
       }
     | PortRefusal
 
+// The variables a command run for a leased stack reads its ports and addresses from: each leased
+// [ports.bases] name with its port, and one COCKPIT_ENTRYPOINT_<NAME> per derived entrypoint.
+export function leaseVariables(ports: Readonly<Record<string, number>>, entrypoints: readonly Readonly<{ name: string; value: string }>[]): Readonly<Record<string, string>> {
+    return {
+        ...Object.fromEntries(Object.entries(ports).map(([name, port]) => [name, String(port)])),
+        ...Object.fromEntries(entrypoints.map(({ name, value }) => [`COCKPIT_ENTRYPOINT_${name.toUpperCase().replaceAll('-', '_')}`, value])),
+    }
+}
+
 export interface PortLeaseProjection {
     readonly lease: PortLease
     readonly ownership: Readonly<{
