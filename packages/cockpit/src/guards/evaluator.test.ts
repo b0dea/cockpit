@@ -2425,9 +2425,19 @@ describe('cockpit structure protection', () => {
     it('denies deleting, renaming or truncating the configuration or the ownership manifest', () => {
         for (const command of ['rm cockpit.toml', 'rm -f ./cockpit.toml', 'unlink COCKPIT.TOML', 'mv cockpit.toml old.toml', 'mv -t archive cockpit.toml',
             'git rm cockpit.toml', 'git rm --cached cockpit.toml', 'git mv cockpit.toml old.toml', 'rm .cockpit/generated-environment-ownership.json',
-            'rm -rf .cockpit', 'rm -rf .', 'rm -rf ../project', 'find . -delete', 'printf x > cockpit.toml', 'npm test; rm cockpit.toml']) {
+            'rm -rf .cockpit', 'rm -rf .', 'rm -rf ../project', 'find . -delete', 'printf x > cockpit.toml', 'npm test; rm cockpit.toml',
+            // A copy that keeps the links it copies would put one in the configuration's place, which holds every later call.
+            'cp -P link.toml cockpit.toml', 'cp -a notes.txt ./COCKPIT.TOML', 'cp --no-dereference link.toml subdir/../cockpit.toml',
+            'rsync -l link.toml cockpit.toml', 'ditto link.toml cockpit.toml']) {
             expect(decide(command), command).toEqual({ decision: 'deny', reason: removal })
         }
+        // So does moving a symbolic link there; moving a file there, as an editor saves, still runs.
+        const throughLink = (request: Parameters<typeof inspect>[0]) => posix.resolve(request.cwd, request.path).endsWith('/link.toml')
+            ? { status: 'resolved', path: posix.resolve(request.cwd, request.path), symlink: true } : inspect(request)
+        for (const command of ['mv link.toml cockpit.toml', 'mv -f link.toml ./COCKPIT.TOML', 'git mv -f link.toml cockpit.toml']) {
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), policy(), throughLink), command).toEqual({ decision: 'deny', reason: removal })
+        }
+        expect(evaluateGuard(parseGuardInput(shellPayload('mv notes.txt cockpit.toml')), policy(), throughLink).decision).toBe('allow')
         expect(patch('*** Delete File: cockpit.toml')).toEqual({ decision: 'deny', reason: removal })
         expect(patch('*** Update File: cockpit.toml\n*** Move to: old.toml\n@@\n-a\n+b')).toEqual({ decision: 'deny', reason: removal })
         const empty = (path: string) => evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: root, tool_input: { file_path: path, content: '' } }), policy(), inspect)

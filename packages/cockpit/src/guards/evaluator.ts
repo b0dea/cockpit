@@ -2875,10 +2875,18 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         })() : git?.verb === 'archive' ? gitArchiveWrites(git.args) : visibleWrites(invocation)
         if (writes) {
             const writeCwd = git && ['archive', 'mv'].includes(git.verb) ? git.cwd : invocation.cwd
+            // A link put in the configuration's place, by a copy that keeps links or by moving one there, holds
+            // every later call with nothing the agent may run to put it back. A source the guard cannot
+            // prove is no link counts as one.
+            const moved = git?.verb === 'mv' ? transferOperands('mv', git.args).sources
+                : !git && posix.basename(invocation.executable ?? '') === 'mv' ? transferOperands('mv', invocation.argv).sources : []
+            const placesLink = () => createsLink(invocation, git) || moved.some(source => resolvedEvidence({ path: source, cwd: writeCwd, operation: 'read' }) === undefined)
             for (const path of writes.paths) {
                 pathCount++
-                inspectPath({ path, cwd: writeCwd, operation: 'write' }, true)
+                const evidence = inspectPath({ path, cwd: writeCwd, operation: 'write' }, true)
                 if (writes.removes) inspectRemoval(path, writeCwd)
+                else if ((structural.some(target => fold(target) === fold(posix.resolve(writeCwd, path)))
+                    || evidence !== undefined && structural.some(evidenceFacts(evidence).is)) && placesLink()) hold(structuralDenial)
             }
             const symbolic = posix.basename(invocation.executable ?? '') === 'ln' && invocation.argv.some(arg => arg === '--symbolic' || /^-[a-zA-Z]*s/.test(arg))
             for (const source of writes.links ?? []) inspectLinkSource(invocation, source, writeCwd, writes.paths, symbolic)
@@ -2890,10 +2898,12 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 + 'or `cp`, `mv`, `ln` and `install` with plain operands; otherwise a person runs it.'))
         } else if (!access && git?.verb !== 'add' && git?.verb !== 'commit') {
             // Staging writes the index, never the named file, and its operands, and a commit's, are inspected as staged below.
+            const linking = !git && createsLink(invocation, git)
             for (const arg of git?.args ?? operands) {
                 if (++possibleControlCount <= GUARD_INPUT_LIMITS.paths) {
-                    inspectPossibleControlOperand(invocation, arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg, git?.cwd ?? invocation.cwd,
-                        git !== undefined || OUTSIDE_WRITERS.has(executableName))
+                    const operand = arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg
+                    if (linking && structural.some(target => fold(target) === fold(posix.resolve(invocation.cwd, operand)))) hold(structuralDenial)
+                    inspectPossibleControlOperand(invocation, operand, git?.cwd ?? invocation.cwd, git !== undefined || OUTSIDE_WRITERS.has(executableName))
                 }
             }
             if (possibleControlCount > GUARD_INPUT_LIMITS.paths) hold(unavailable('Potential guard control operand limit exceeded.'))
