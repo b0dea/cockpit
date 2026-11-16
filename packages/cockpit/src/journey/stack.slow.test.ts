@@ -43,6 +43,10 @@ it('starts the stack, shows it to every later command, resets only declared data
 
     expect(ok(shop, ['up']).json?.result).toMatchObject({ change: 'started', ports: up.json?.result.ports })
     ok(shop, ['preflight'])
+    // Containers stopped outside cockpit, as a machine's sleep leaves them, are started again by up.
+    shop.docker.stopAll()
+    expect(ok(shop, ['up']).json?.result).toMatchObject({ change: 'started', ports: up.json?.result.ports })
+    ok(shop, ['preflight'])
     // sleep stops the stack and keeps its containers; down then retires it without an up first.
     expect(ok(shop, ['sleep']).json?.result.change).toBe('stopped')
     expect(shop.docker.state().containers.map((container) => container.State.Status)).toEqual(['exited'])

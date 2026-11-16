@@ -580,6 +580,7 @@ function unknownGitOption(args: readonly string[], known: ReturnType<typeof gitO
 export interface GitTreeTarget {
     /** A revision, or `:index` for the index. */
     readonly revision: string
+    /** What the revision is compared with: a revision (HEAD when absent), `worktree`, or `:merge-base` with HEAD. */
     readonly from?: string
     /** The pathspecs a verb names, as spelled; absent for the whole tree. */
     readonly paths?: readonly string[]
@@ -642,7 +643,7 @@ export function gitTreeTargets(git: GitInvocation, stashed = false): GitContentW
     if (git.verb === 'merge' && !control) {
         const revisions = gitOperands(git.args, ['-m', '-F', '-s', '-X', '--strategy', '--strategy-option', '--file', '--message', '--into-name', '--cleanup'])
         if (walked(revisions)) return unmodelled('names commits by a range the guard does not list')
-        return head(revisions.length ? revisions.map(previous) : ['@{upstream}'])
+        return { targets: (revisions.length ? revisions.map(previous) : ['@{upstream}']).map(revision => ({ revision, from: ':merge-base' })), unnamed: false }
     }
     if (git.verb === 'checkout' || git.verb === 'switch') {
         const end = git.verb === 'checkout' ? git.args.indexOf('--') : -1

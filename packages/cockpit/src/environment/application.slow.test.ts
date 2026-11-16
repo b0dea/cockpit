@@ -784,6 +784,12 @@ describe('guard policy construction', () => {
         try {
             const decide = async (command: string) => (await runGuardEvaluationApplication({ ...request, payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
             expect(await decide('rg -n needle vendor/pkg/docs/guide.md')).toMatchObject({ decision: 'allow' })
+            // A glob, or a name that does not exist, below the link is judged where the link leads.
+            expect(await decide('rg -n needle vendor/pkg/docs/*.md')).toMatchObject({ decision: 'allow' })
+            expect(await decide('cat vendor/pkg/docs/missing.md')).toMatchObject({ decision: 'allow' })
+            // One that can match an environment file there is still refused.
+            writeFileSync(join(root, 'store/pkg/.env'), 'SYNTHETIC=1\n')
+            expect(await decide('cat vendor/pkg/.e*')).toMatchObject({ decision: 'deny' })
             // From a directory reached through a link, `..` and relative program paths resolve where the link leads.
             const linked = join(root, 'vendor/pkg/docs')
             for (const command of [`cd ${linked} && rg -n needle guide.md`, `cd ${linked} && sort ../../../notes.md`, `cd ${linked} && ../../../bin/tool`, 'git -C vendor/pkg status']) {

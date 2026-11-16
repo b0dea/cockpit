@@ -160,6 +160,8 @@ export interface FakeDocker {
     blockStop(): void
     /** The pid of the stop `blockStop` held, once it started. */
     blockedStopPid(): number | undefined
+    /** Stops every running container outside cockpit, as a machine's sleep or `docker stop` does. */
+    stopAll(): void
     /** What the daemon holds now, in the shape `docker inspect` reports it. */
     state(): {
         containers: { Id: string; project: string; service: string; State: { Status: string }; Config: { Labels: Record<string, string> } }[]
@@ -197,6 +199,18 @@ export function createMachine(name: string, options: { realDocker?: string } = {
             blockStop: () => writeFileSync(join(state, 'block-stop'), ''),
             blockedStopPid: () => existsSync(join(state, 'blocked-stop.pid')) ? Number(readFileSync(join(state, 'blocked-stop.pid'), 'utf8')) : undefined,
             state: () => JSON.parse(readFileSync(join(state, 'state.json'), 'utf8')),
+            stopAll: () => {
+                const daemon = JSON.parse(readFileSync(join(state, 'state.json'), 'utf8'))
+                for (const container of daemon.containers) {
+                    for (const pid of container.listeners ?? []) {
+                        try { process.kill(pid) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; continue }
+                        while ((() => { try { process.kill(pid, 0); return true } catch { return false } })()) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5)
+                    }
+                    container.listeners = []
+                    container.State = { Status: 'exited', Running: false }
+                }
+                writeFileSync(join(state, 'state.json'), `${JSON.stringify(daemon, null, 2)}\n`)
+            },
         },
     }
 }
