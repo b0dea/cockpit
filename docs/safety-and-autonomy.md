@@ -884,8 +884,10 @@ runs after `--` is judged as a call of its own.
 
 A command counts as cockpit when the program it runs names cockpit: `cockpit`, a path to `cockpit` or
 `cockpit.mjs` such as `./node_modules/@b00dea/cockpit/bin/cockpit.mjs`, `node` (or a path to `node`)
-given such a path, or `npx --no cockpit`. Another spelling that names cockpit, such as
-`npm run cockpit:sync` or `pnpm exec cockpit`, prompts. Whichever Node runs it, it counts.
+given such a path, or `npx --no cockpit`. Whichever Node runs it, it counts. A package manager's
+spelling, such as `pnpm exec cockpit check` or `npm run cockpit:sync`, is refused with the spelling to
+use: the launcher takes options of its own, so its words do not say which command runs. A command
+that changes the installed package, such as an install of another version, prompts.
 
 `sync` and `upgrade` bind the guard to the cockpit module that runs them, and an agent can edit a copy
 of cockpit. So sync refuses unless the running module is the installed

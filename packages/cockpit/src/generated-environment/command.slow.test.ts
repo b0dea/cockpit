@@ -516,9 +516,10 @@ gates = [{ id = "quick", tier = "targeted", stages = ["quick"], changes = "Synth
         expect(decision(command), command).toBe('allow')
     }
     expect(decision('npx --no cockpit doctor --config ../cockpit.toml', join(root, 'app'))).toBe('allow')
+    // A spelling whose launcher takes options of its own is refused with the spelling to use; one that names another package asks.
     const unnamed = ['npx cockpit doctor --config cockpit.toml', 'npx --no -p other cockpit doctor --config cockpit.toml',
         'npx --no cockpit --script-shell=/bin/sh doctor --config cockpit.toml'].map(command => `${command}: ${decision(command)}`)
-    expect(unnamed).toEqual(['npx cockpit doctor --config cockpit.toml: ask', 'npx --no -p other cockpit doctor --config cockpit.toml: ask', 'npx --no cockpit --script-shell=/bin/sh doctor --config cockpit.toml: ask'])
+    expect(unnamed).toEqual(['npx cockpit doctor --config cockpit.toml: deny', 'npx --no -p other cockpit doctor --config cockpit.toml: ask', 'npx --no cockpit --script-shell=/bin/sh doctor --config cockpit.toml: deny'])
     const asked = ['npx --no cockpit sync --config cockpit.toml',
         'npx --no cockpit env schema --config cockpit.toml --path app:.env.local',
         'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from .env',

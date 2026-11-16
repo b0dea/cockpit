@@ -63,6 +63,17 @@ it('behaves the same through every documented launcher, any Node binary and unde
     }
     // The control: the same hook refuses what it must, so `allow` above is a judgement, not silence.
     expect(guardDecision(shop, 'git push --force origin main', agentPath)).toBe('deny')
+    // A package manager's spelling is refused with the spelling to use, whatever the command; changing the
+    // installed package asks.
+    for (const spelling of ['pnpm exec cockpit', 'npx cockpit', 'yarn cockpit', 'npm exec cockpit --', 'npm run cockpit:sync --']) {
+        expect(guardDecision(shop, `${spelling} check --config cockpit.toml`, agentPath), spelling).toBe('deny')
+    }
+    for (const install of ['npm i -D @b00dea/cockpit@9.9.9', 'npm uninstall @b00dea/cockpit']) expect(guardDecision(shop, install, agentPath), install).toBe('ask')
+    // Process substitution stands a descriptor where a file name goes; no file is behind it to inspect.
+    mkdirSync(join(shop.root, 'src'), { recursive: true })
+    expect(guardDecision(shop, 'diff <(ls) <(ls src)', agentPath)).toBe('allow')
+    // A stash made and popped in one call does not exist yet when the hook looks.
+    expect(guardDecision(shop, 'git stash && git stash pop', agentPath)).toBe('allow')
     // After the Node upgrade the hook runs the new Node through the same link, with no sync in between.
     const upgraded = installNode('b')
     rmSync(join(brew, 'Cellar', 'a'), { recursive: true })

@@ -502,8 +502,7 @@ export function cockpitLauncherPrefix(executable: string, argv: readonly string[
     }
     if (executable === 'cockpit' || executable.includes('/')) return 0
     // Without --no, npx downloads and runs a missing package; any other npx option chooses the
-    // package, the command or the shell. npx also reads every option before the first operand after
-    // the package name as its own, so `npx --no cockpit --script-shell=… doctor` runs another program.
+    // package, the command or the shell, so only `npx --no cockpit <command>` is read as cockpit's words.
     if (executable !== 'npx' || argv[0] !== '--no') return undefined
     if (argv[1] === '--') return argv[2] === 'cockpit' ? 3 : undefined
     return argv[1] === 'cockpit' && argv[2] !== undefined && !argv[2].startsWith('-') ? 2 : undefined

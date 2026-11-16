@@ -26,6 +26,7 @@ import {
     evaluateGuard,
     approvedReadOnlyInvocation,
     cockpitLaunch,
+    stashedBefore,
     cockpitShaped,
     innerCommand,
     gitInvocation,
@@ -509,9 +510,9 @@ export async function runGuardEvaluationApplication(
         const protectedPaths = [...GUARD_ROOT_PROTECTIONS.map(item => join(policy.canonicalRoot, item.path)), ...watchedPaths]
         const trees = new Map<string, Awaited<ReturnType<typeof guardWorktreeChanges>>>()
         const treeKey = (cwd: string, target: GitTreeTarget) => `${cwd}\0${JSON.stringify([target.revision, target.from ?? null, target.paths ?? null, target.fallback ?? null, target.remote ?? null, target.optional ?? null, target.keepsLocal ?? null])}`
-        for (const invocation of parsed.invocations) {
+        for (const [at, invocation] of parsed.invocations.entries()) {
             const command = gitInvocation(invocation)
-            const written = command && !command.uncertain && allowed(command.cwd) ? gitTreeTargets(command) : undefined
+            const written = command && !command.uncertain && allowed(command.cwd) ? gitTreeTargets(command, stashedBefore(parsed.invocations, at, command.cwd)) : undefined
             for (const target of written && 'targets' in written ? written.targets : []) {
                 const key = treeKey(command!.cwd, target)
                 if (trees.has(key)) continue
@@ -752,6 +753,8 @@ export async function runGuardEvaluationApplication(
         // A hard link or another spelling of the configuration is the configuration.
         const isConfig = (path: string) => {
             if (foldGuardSpelling(path) === foldGuardSpelling(identity.configPath)) return true
+            // A descriptor, as process substitution stands for, names no file of its own: whatever opened it named the file.
+            if (/^\/dev\/fd\/\d+$/.test(path)) return false
             let status: Stats | undefined
             try { status = lstatIfPresentSync(path) } catch (error) { throw new CallPathUnreadable(path, error) }
             return status !== undefined && status.dev === configStatus.dev && status.ino === configStatus.ino

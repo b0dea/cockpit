@@ -601,6 +601,16 @@ export interface GitTreeTarget {
     /** A plain switch, which keeps a local edit where the target matches the index. */
     readonly keepsLocal?: true
 }
+/** Whether a command before `at` in the call stashes the working tree of `cwd`, which gitTreeTargets takes as `stashed`. */
+export function stashedBefore(invocations: readonly ParsedInvocation[], at: number, cwd: string): boolean {
+    return invocations.slice(0, at).some((earlier) => {
+        const git = gitInvocation(earlier)
+        if (git?.verb !== 'stash' || git.cwd !== cwd) return false
+        const [verb] = gitOperands(git.args, ['-m', '--message', '--pathspec-from-file'])
+        return verb === undefined || ['push', 'save'].includes(verb)
+    })
+}
+
 /**
  * What a Git verb writes into the working tree from revisions: `targets` to compare, and `unnamed` when
  * the content arrives only as the command runs (a pull that fetches), so no comparison made first can
@@ -608,7 +618,7 @@ export interface GitTreeTarget {
  * writes no checkout content: a read, or a write of refs, objects or the index from the work tree.
  */
 export type GitContentWrite = Readonly<{ targets: readonly GitTreeTarget[]; unnamed: boolean }> | Readonly<{ unmodelled: string }>
-export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined {
+export function gitTreeTargets(git: GitInvocation, stashed = false): GitContentWrite | undefined {
     const control = git.args.some(arg => /^--(?:abort|continue|skip|quit|edit-todo|show-current-patch)$/.test(arg))
     const head = (revisions: readonly string[]) => ({ targets: revisions.map(revision => ({ revision })), unnamed: false })
     // A checkout writes the revision's files over what is on disk, which is what it is compared with: HEAD can
@@ -713,7 +723,8 @@ export function gitTreeTargets(git: GitInvocation): GitContentWrite | undefined 
         // Git reads a bare number as that stash entry.
         const stash = /^\d+$/.test(named) ? `stash@{${named}}` : named
         // Applying a stash applies what it changed against its base, and restores the untracked files it took, when it took any.
-        if (['pop', 'apply'].includes(verb ?? '')) return { targets: [{ revision: stash, from: `${stash}^1` }, { revision: `${stash}^3`, from: ':empty', optional: true }], unnamed: false }
+        // With no stash yet, the newest one is the one this call makes first, from files already on disk.
+        if (['pop', 'apply'].includes(verb ?? '')) return { targets: [{ revision: stash, from: `${stash}^1`, ...stashed && stash === 'stash@{0}' ? { optional: true as const } : {} }, { revision: `${stash}^3`, from: ':empty', optional: true }], unnamed: false }
         // Stashing returns the working tree to HEAD.
         if (verb === undefined || ['push', 'save'].includes(verb)) return { targets: [{ revision: 'HEAD', from: 'worktree' }], unnamed: false }
         if (['list', 'show', 'drop', 'clear', 'create', 'store'].includes(verb)) return undefined
@@ -3154,7 +3165,14 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const registryRead = ['npm', 'pnpm', 'yarn', 'bun'].includes(executableName) && /^(?:view|v|info|show|outdated|ls|list|why|explain|search)$/.test(invocation.argv.find(arg => !arg.startsWith('-')) ?? '')
             const launches = !registryRead && ['cockpit', 'cockpit.mjs', 'node', 'nodejs', 'npx', 'npm', 'pnpm', 'pnpx', 'yarn', 'bun', 'bunx', 'tsx'].includes(executableName)
                 || cockpitShaped({ ...invocation, argv: [] }, [...resolved.cockpitPackageDirectories ?? [], ...resolved.executionDirectories])
-            if (launches) holdBoundary(invocation, ask(`${named(invocation)} is a cockpit command an agent does not run unprompted: \`sync\`, \`upgrade\` and the other commands that change what agents may do are a person's. A person runs it in a terminal.`))
+            // A package manager's spelling, as `pnpm exec cockpit check` or `npm run cockpit:check`, is refused with the
+            // spelling to use: the launcher takes options of its own, so its words do not say which command runs, and
+            // an agent respells it without a person being asked.
+            const operands = invocation.argv.filter(word => !word.startsWith('-'))
+            const spelled = ['exec', 'x', 'run', 'run-script'].includes(operands[0] ?? '') ? operands[1] : operands[0]
+            if (launches && cockpitLaunch(invocation) === undefined && (spelled === 'cockpit' || spelled?.startsWith('cockpit:'))) {
+                hold(deny(`Refusing ${named(invocation)}: it runs cockpit through a launcher that takes options of its own, so the guard cannot tell which cockpit command runs. Spell it \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs <command>\` or \`npx --no cockpit <command>\`.`))
+            } else if (launches) holdBoundary(invocation, ask(`${named(invocation)} is a cockpit command an agent does not run unprompted: \`sync\`, \`upgrade\` and the other commands that change what agents may do are a person's. A person runs it in a terminal.`))
         }
         if (external && (!approvedExternalRead || !readOnly.has(invocation))) approvalBarriers.set(invocation, searchBlocker
             ?? ask(nativeGit
@@ -3255,7 +3273,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // Merges, checkouts, resets, picks, rebases and stashes write another revision's files into the
         // working tree, where they overwrite a guard control as surely as a write would: a commit made in a
         // second worktree and merged back replaced the guard with every step allowed.
-        const tree = gitTreeTargets(git)
+        const tree = gitTreeTargets(git, stashedBefore(invocations, index, git.cwd))
         if (tree && 'unmodelled' in tree) holdBoundary(invocation, ask(`${named(invocation)} ${tree.unmodelled}. A person runs it.`))
         else if (tree) {
             const answers = tree.targets.map(target => treeFacts(git.cwd, target))

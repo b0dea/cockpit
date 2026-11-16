@@ -949,6 +949,7 @@ describe('built-in read-only profile', () => {
         expect(decideLaunched('npx --no cockpit doctor', policy(), `${root}/src`).decision).toBe('allow')
         const seen = [
             // Without --no, npx may download a package; any other npx option picks another package, command or shell.
+            // Where `cockpit` is still the first word npx is given, the refusal names the spelling to use.
             'npx cockpit doctor', 'npx --yes cockpit doctor', 'npx --no --package other cockpit doctor', 'npx --no -p other cockpit doctor',
             'npx --no --call other cockpit doctor', 'npx --no -c other cockpit doctor', 'npx --no other doctor',
             // npx reads every option before the first operand after the package name as its own.
@@ -958,7 +959,7 @@ describe('built-in read-only profile', () => {
             '/opt/homebrew/bin/node ./other.mjs doctor', `/opt/homebrew/bin/node --require ./other.cjs ${script} doctor`,
             'npx --no cockpit sync --config cockpit.toml', './node_modules/.bin/cockpit sync --config cockpit.toml',
         ].map(command => `${command}: ${decideLaunched(command).decision}`)
-        expect(seen).toEqual(['npx cockpit doctor: ask', 'npx --yes cockpit doctor: ask', 'npx --no --package other cockpit doctor: ask', 'npx --no -p other cockpit doctor: ask', 'npx --no --call other cockpit doctor: ask', 'npx --no -c other cockpit doctor: ask', 'npx --no other doctor: allow', 'npx --no cockpit --script-shell=/bin/sh doctor: ask', 'npx --no cockpit --help: ask', 'node ./other.mjs doctor: allow', 'node --require ./other.cjs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor: ask', '/opt/homebrew/bin/node ./other.mjs doctor: allow', '/opt/homebrew/bin/node --require ./other.cjs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor: ask', 'npx --no cockpit sync --config cockpit.toml: ask', './node_modules/.bin/cockpit sync --config cockpit.toml: ask'])
+        expect(seen).toEqual(['npx cockpit doctor: deny', 'npx --yes cockpit doctor: deny', 'npx --no --package other cockpit doctor: ask', 'npx --no -p other cockpit doctor: ask', 'npx --no --call other cockpit doctor: ask', 'npx --no -c other cockpit doctor: ask', 'npx --no other doctor: allow', 'npx --no cockpit --script-shell=/bin/sh doctor: deny', 'npx --no cockpit --help: deny', 'node ./other.mjs doctor: allow', 'node --require ./other.cjs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor: ask', '/opt/homebrew/bin/node ./other.mjs doctor: allow', '/opt/homebrew/bin/node --require ./other.cjs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor: ask', 'npx --no cockpit sync --config cockpit.toml: ask', './node_modules/.bin/cockpit sync --config cockpit.toml: ask'])
         expect(decideLaunched('npx --no cockpit check --config env/.secrets/token').decision).toBe('deny')
         // The package name is not an operand naming the cockpit/ control directory.
         const admitted = policy()
@@ -2249,7 +2250,6 @@ describe('allow by default', () => {
         // A push or rewrite after a Git command in the same call that can move the branch: the guard cannot tell which branch it acts on.
         'git switch main && git merge --ff-only feature && git push origin HEAD', 'git switch main && git push', 'git checkout main && git reset --hard HEAD~3',
         'git switch main && git commit --amend --no-edit',
-        'npm run cockpit:sync', 'pnpm cockpit:sync', 'pnpm --silent --reporter=silent exec cockpit sync --config cockpit.toml',
         'node --no-warnings ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml',
         'export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.push GIT_CONFIG_VALUE_0=HEAD:refs/heads/main && git push origin',
         'export GIT_DIR=/tmp/x && git status', 'declare -x GIT_CONFIG_PARAMETERS=x && git commit -m done', 'set -a && npm test',
