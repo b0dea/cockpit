@@ -13,6 +13,90 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.17
+
+### Patch Changes
+
+- c2861fb: Removed the shell-registry migration path, which no installed cockpit used.
+  
+  **Removed:** `cockpit registry-resolve` and the `--registry` option of `init`. `init` now only observes the repositories it is pointed at and asks for the rest.
+  
+  Upgrade: a product that still has a shell registry can run the migration once with 0.1.16 (`registry-resolve` and `init --registry`), or start from a fresh `cockpit init`.
+- 6af0257: Two person-run steps are gone.
+  
+  **Removed:**
+  
+  - `cockpit selftest`. What each agent tool loads and enforces is measured by the cockpit maintainers and published in the capability matrix (`docs/capability-matrix.md`); nothing on your machine needs to run or approve a probe.
+  - `cockpit runtime measure` and the check that refused until it had run. `up`, `session`, `down` and `reset` no longer wait for a measurement of this machine's runtime.
+  
+  **Changed:** every command that runs the stack checks that Docker answers and that Docker Compose is 2.35.0 or later, and refuses with one `RUNTIME_UNAVAILABLE` that names the cause and the fix. `doctor` and `preflight` report the same before the first `up`.
+  
+  Upgrade: stop running `cockpit selftest` and `cockpit runtime measure`, and remove them from any script, CI job or `[[guards.allow]]` rule that names them. Delete `.cockpit/local/probes/` and `machine/runtime-measurements.json` under cockpit's state directory if you want the space back; nothing reads them. `[environment.machine]` is unchanged.
+- 99d2fd7: A Node upgrade or a second Node install no longer holds guarded calls. The hook runs Node by the path `sync` found on your search path, such as a package manager's link, and the guard runs under whichever Node is there. `doctor` no longer reports that the Node differs.
+  
+  The guard no longer tries to prove which cockpit a launcher starts. `cockpit`, `npx --no cockpit`, `./node_modules/.bin/cockpit` (pnpm's shim included) and `node <path>/cockpit.mjs` under any Node all count as cockpit, from any directory, and `doctor` no longer warns about an unproven launcher. A package manager's spelling, such as `pnpm exec cockpit check` or `npm run cockpit:check`, no longer prompts a person: the guard refuses it and names the spelling to use, so the agent respells it. The guard still asks before the cockpit commands that change what agents may do or wait for a person: `reset --apply` without a declared seed, browser commands without preapproval, an operator-gated `--profile`, `use` of a checkout outside the configured roots, `--interactive`, `init`'s answer and scaffold flags, `sibling add`, `sibling remove` and `tool remove`. Every other cockpit command runs as any program does, and reports a wrong option or service itself.
+  
+  A command using process substitution, such as `diff <(ls a) <(ls b)`, is no longer refused on macOS, and `git stash && … && git stash pop` in one call no longer prompts.
+  
+  The package no longer ships the native evidence validator left over from the removed `selftest`.
+  
+  Upgrade: run `cockpit sync` once in a terminal, as after every release.
+- 53fbaa3: One rule decides who may do what, and a person confirms in one place.
+  
+  **Changed:**
+  
+  - An agent may do everything except apply a `cockpit.toml` change that widens what agents may do (a new allow rule, read or write path, sibling, MCP approval or wider tool access, a `[work]` or `[testing]` change, and the like). Until a person syncs such a change, `check` and an agent's `sync` report `GUARD_CONFIG_WIDENED` and the guard keeps judging calls under the configuration last synced. `work` commands, `test-run` and the browser commands refuse until a widening `[work]`, `[testing]` or `[browser]` change is synced. The guard's authority is now the configuration last synced: while `cockpit.toml` is missing, a link, unreadable or does not load, calls are judged under that record instead of being held, so the agent repairs the file with any tool, and deleting, emptying, relinking or locking `cockpit.toml` is no longer refused. `doctor` warns about an unsynced widening as `check` fails on it.
+  - `sync --interactive` shows one preview of what widens and of the MCP servers it would enable, with what each runs and the environment names or headers it gets, and asks one yes. On yes it writes the MCP approvals into `[mcp.approved]` itself. Nobody types or copies a hash.
+  - `init --answers <file>` and `init --interactive` write the cockpit right away. Review what they wrote in the diff before you commit; answers no person stated carry a `# Not stated by a person` comment.
+  - An agent may `reset --apply` where `[environment] seed` is declared, and preview a reset anywhere. Without a seed, a person runs `reset --interactive` and answers yes. `stacks prune --interactive` asks for a yes, not a typed digest.
+  - `sync` removes files it generated before and no longer generates, without asking.
+  - An `[mcp.approved]` entry no MCP source declares refuses every sync until it is deleted, so a yes never covers a server it did not show.
+  - Where the record of the configuration last synced is missing or no longer loads, as after this upgrade, an agent's `sync` is refused and `sync --interactive` asks for the yes saying it cannot show what changed, listing every MCP server the yes leaves enabled.
+  - A cockpit command an agent runs on a configuration other than its cockpit's own, through `--config` or `init <root>`, asks a person.
+  - A removed key in `cockpit.toml` is named with what replaced it.
+  - `upgrade` refuses a version older than the installed one; going back is a package-manager install.
+  - Work-order steps are the agent's, except the few that would let an agent lower the bar its own work is held to, and `work retry`.
+  
+  **Removed:** the `[autonomy]` and `[work.gates]` tables, the top-level `unconfirmed` list, `cockpit confirm`, `init --accept-preview` and `--accept-defaults`, `work answer --interactive`, the `ci` decider in work orders, `.cockpit/policy.json`, and the `confirmed` field of a provenance (an MCP source's `provenance` is now optional).
+  
+  Upgrade: delete `[autonomy]`, `[work.gates]` and the `unconfirmed = [...]` line from cockpit.toml, and `confirmed = true` from any provenance. Stop running `cockpit confirm` and drop `--accept-preview` and `--accept-defaults` from any init script. Delete `.cockpit/policy.json` and `.cockpit/local/answer-confirmations` if present. If you relied on `[autonomy] reset = "agent"`, declare an `[environment] seed` instead. Then a person runs `cockpit sync --interactive` once: it shows what widens and which MCP servers await approval (all of them under the old `mcp_approve = "agent"`), and asks for one yes.
+- 96c62ee: Simplify the stack runtime's internals. Doctor and preflight now report a port collision with many foreign listeners as a failed port row, naming as many listeners as fit, instead of losing every runtime check.
+- 0c5360d: The guard asks far less. A command now runs unless it names something on the blocked list: a secret or `.env` file, a credential store or key file, a declared host, a guard file or agent setting, the installed cockpit, or a forced or protected-branch push. Unknown programs, inline code, containers, variables, globs and reads it cannot prove all run, as a project script does. The guard now reads `if`/`else` as it reads loops. Shell it does not read, such as `case`, `[[ … ]]` or `eval`, asks, since bash can run code from inside it; it is refused when its words name something refused, as below. Write it as plain commands joined with `&&`, `[ … ] &&` or `if`, or a script file.
+  
+  The blocked list is checked in every word of a call, wherever the word sits: `cat $(echo .env)`, `echo .env | xargs cat`, `ls .env` and `corepack pnpm exec git push -f` are refused. A name inside a commit message, a search pattern such as `rg '\.env' docs`, and documentation names such as `.env.example` still run. Inline code meets the whole blocked list. Shell the guard does not read is refused when its words name a secret, credential store, guard file or declared host, or spell a forbidden push, downloaded code piped to an interpreter, privilege escalation or a person's deny rule, and otherwise asks. Hook-skipping variables such as `HUSKY=0`, `git clean -x`, removals outside the cockpit, a search that would read an existing secret, and `docker inspect` of a container's environment are refused too.
+  
+  Git commands chained in one call, such as `git stash && git rebase main && git stash pop`, run. Removing `node_modules` stays refused, since it holds the code the guard runs, and the refusal now says to reinstall with the package manager's clean install instead.
+  
+  A person is still asked before merges, releases and other `gh` changes, `git clean -f`, a push or Git write the guard cannot resolve, Git location variables, and cockpit commands that change what agents may do.
+  
+  In Claude Code the guard now answers allow for a call it judged, so those calls run without a prompt; your own deny rules still win. A guard hook that times out in Claude Code now refuses its call instead of letting it run, and a guard script refuses a check left by a sync from another cockpit release until this cockpit is synced. Refusals reach Claude Code and Codex as a reason only, without the hook command printed before it.
+  
+  Sessions started in a cockpit subdirectory now get the Read and Edit deny rules too, and a session in a cockpit below its repository's top is guarded under a linked spelling of its path. The registered hook command no longer changes between releases, so Codex keeps trusting it after an upgrade. Agents can stage the guard script exactly as the last sync recorded it, so an upgrade can be committed.
+  
+  `[guards] default` is gone, and `[guards] external_reads` now defaults to `"native"`, which leaves reads outside the cockpit to the agent tool. A team that needs a stricter boundary runs the agent tool in its own OS sandbox.
+  
+  Upgrade: remove `default` from `[guards]` in `cockpit.toml`, set `external_reads = "grant"` there to keep reads outside the cockpit behind exact grants, run `cockpit sync`, then trust the changed hook once more in Codex (later upgrades keep the same command).
+- 8c494f4: `sleep`, `down` and `reset` finish what an interrupted run left when you run them again.
+  
+  **Changed:** each takes a lock on the stack, stops it, reads what Docker reports now, removes this stack's resources by id, and reads Docker again to confirm they are gone. If one is interrupted, run the same command again: it removes only what is still there. A resource Docker reports it no longer has counts as removed. A lock left by a killed command is taken over by the next one. If a container of the stack appears while `down` or `reset` runs, as a leftover `docker compose up` can start one, the command refuses and keeps the stack and its ports; run it again. While one runs, another refuses with `STATE_LOCKED` and `up` refuses to lease the stack's ports. A state lock left by a command killed while taking or releasing it is now taken over by the next command, as one left by a killed holder already was, and a lock no longer stays quarantined until a person removes it. A stack's lifecycle progress, whether it has come up, and when its seed last succeeded now live in one record; `setup` no longer writes lifecycle state. A stack started by an earlier cockpit reads as not yet up, so `preflight` treats it as before its first bring-up until the next `up`, which runs the seed once more. A listener on a leased port that no cockpit session started is now a `PORT_FAMILY_COLLISION` warning beside a passing check, not a failure, and is identified from one read of the sockets and processes. An approved `reset` refuses with `RESET_CONFIRMATION_MISMATCH` when the stack changed after its preview; run it again to approve the current targets.
+  
+  **Removed:** the detached supervisor that tracked a removal in progress, and the refusal that asked for an interrupted attempt to be repaired by hand. Ctrl-C or SIGTERM during `sleep`, `down` or `reset` now ends the step it started and waits for it before exiting; only a step left by SIGKILL keeps running, and the next run no longer stops it. `stacks --json` no longer reports `state.draining`.
+- d1d6876: Fewer steps and fewer rules nothing used.
+  
+  **Changed:**
+  
+  - A team's own `.claude/settings.json`, `.codex/config.toml` or `.codex/hooks.json` is adopted by moving it to `cockpit/adopted/<the same path>`. Every `sync` merges what is there. `sync --adopt` and the `[[surfaces.adopted]]` rows are gone.
+  - `preflight` and `doctor` warn about an env schema gap (`ENV_SCHEMA_UNHEALTHY`) instead of failing on it.
+  - A work order spends an attempt only on a grade with an `unmet` verdict. A failed check no longer counts, and `work check` records nothing. `checks` and `off` grading have no attempt cap.
+  - `browser drive` and `browser screenshot` work on any version of a listed agent tool, not only the versions measured in August.
+  - A skill you add needs only a `name` and a `description`. The other skill metadata fields, the line cap and the one-procedure rule no longer apply to your skills.
+  - A provenance needs only `source` and `reason`. `observed_on` and `kind` are optional.
+  - Bootstrap records of checkouts that no longer exist are removed from the machine state directory.
+  
+  **Removed:** custom harnesses (`[[surfaces.harnesses]]`), the Claude plugin bundle (`[surfaces] bundles`), `[testing] native_hooks` and `native_hook_policy`, and an unused internal helper.
+  
+  Upgrade: delete every `[[surfaces.adopted]]` row from cockpit.toml and keep the files under `cockpit/adopted/`; also delete `native_hooks` and `native_hook_policy` from `[testing]`, and any `[[surfaces.harnesses]]` or `bundles`, if present; then a person runs `cockpit sync --interactive`.
+
 ## 0.1.16
 
 ### Patch Changes
