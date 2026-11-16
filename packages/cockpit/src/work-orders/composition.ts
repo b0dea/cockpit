@@ -126,8 +126,9 @@ export interface WorkApplicationComposition {
 type TestWeakeningObservation = Readonly<{ patterns: TestFilePatterns; findings: readonly RepositoryWeakening[] }>
 /**
  * The other open orders in the tree, by accepted scope and base. A changed path outside `own` and inside one's scope is
- * that order's work, which its own grade judges, provided the path is the same at both bases: then its diff shows the
- * whole change. A path that differs between them holds work only this order's diff shows, so it stays this order's.
+ * that order's work, which its own grade judges, provided that order's diff shows the whole change: its base is this
+ * order's or an ancestor of it, or the path is the same at both bases. A path that differs at a later base holds work
+ * only this order's diff shows, so it stays this order's.
  */
 export type Attribution = Readonly<{ own: readonly string[]; others: readonly Readonly<{ id: string; scope: readonly string[]; base: Readonly<Record<string, string>> }>[] }>
 // Who a changed path belongs to when it is not this order's: another order's id, or the default branch it was merged from.
@@ -742,6 +743,12 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         if (observed.kind !== 'executed' || observed.exitCode !== 0 || observed.truncated) throw new RefusalError(`${repository.identity}: ${probeFailure(`git ${args.join(' ')}`, observed)}`)
         return observed.stdout.trim()
     }
+    // Whether `ancestor` is reachable from `descendant`, as `merge-base --is-ancestor` answers with its exit status.
+    const isAncestor = async (repository: typeof repositories[number], ancestor: string, descendant: string) => {
+        const observed = await executeBounded(repository.root, ['git', ...GIT_CHILD_CONFIG, 'merge-base', '--is-ancestor', ancestor, descendant], directories, 30_000, { kind: 'probe' })
+        if (observed.kind === 'executed' && !observed.truncated && (observed.exitCode === 0 || observed.exitCode === 1)) return observed.exitCode === 0
+        throw new RefusalError(`${repository.identity}: ${probeFailure(`git merge-base --is-ancestor ${ancestor} ${descendant}`, observed)}`)
+    }
     let evaluatorAuthority: Promise<EvaluatorAuthority> | undefined
     const resolveEvaluator = async (): Promise<EvaluatorAuthority> => {
         evaluatorAuthority ??= authorities.evaluator ? Promise.resolve(authorities.evaluator)
@@ -956,7 +963,10 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         const others = await Promise.all((attribution?.others ?? []).map(async other => ({ id: other.id, inScope: scopeMatcher(other.scope),
             differing: new Map(await Promise.all(repositories.map(async repository => {
                 const [from, to] = [base[repository.key] ?? 'HEAD', other.base[repository.key] ?? 'HEAD']
-                return [repository.key, new Set(from === to ? [] : (await git(repository, ['diff', '--name-only', '-z', '--no-renames', from, to, '--'],
+                // An order accepted first, from a base this one's descends from, diffs from that earlier base: its grade sees
+                // every change this one's does, so nothing it holds is hidden by leaving it there.
+                if (from === to || await isAncestor(repository, to, from)) return [repository.key, new Set<string>()] as const
+                return [repository.key, new Set((await git(repository, ['diff', '--name-only', '-z', '--no-renames', from, to, '--'],
                     { stdoutLimitBytes: GIT_CHANGE_OUTPUT_BYTES })).split('\0').filter(Boolean))] as const
             }))) })))
         const merged = new Map(await Promise.all(repositories.map(async repository =>

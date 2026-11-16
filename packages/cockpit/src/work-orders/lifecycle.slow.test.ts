@@ -176,6 +176,21 @@ describe('work-order lifecycle', () => {
         expect(await work(root, ['work', 'grade', '--work-order', 'WO-1'])).toMatchObject({ status: 2, result: { outOfScope: ['README.md'] } })
     }, 120_000)
 
+    it('leaves a change to an order accepted from an earlier base, whose grade sees all of it, even when it came before this order', async () => {
+        const root = await cockpit('[work]\ngrading = "checks"')
+        mkdirSync(join(root, 'lib'))
+        writeFileSync(join(root, 'workorders/WO-40.md'), scopedOrder('WO-40', 'lib/'))
+        expect((await work(root, ['work', 'accept', '--work-order', 'WO-40'])).status).toBe(0)
+        writeFileSync(join(root, 'lib/helper.mjs'), 'export const helper = 1\n')
+        git(root, 'add', 'lib'); git(root, 'commit', '-qm', 'helper')
+        // A narrower order accepted later: the helper changed before its base, and after it too.
+        writeFileSync(join(root, 'workorders/WO-41.md'), order('WO-41'))
+        expect((await work(root, ['work', 'accept', '--work-order', 'WO-41'])).status).toBe(0)
+        writeFileSync(join(root, 'lib/helper.mjs'), 'export const helper = 2\n')
+        expect(await work(root, ['work', 'grade', '--work-order', 'WO-41'])).toMatchObject({ status: 0,
+            result: { state: 'graded', outOfScope: [], otherOrders: { 'WO-40': ['lib/helper.mjs'] } } })
+    }, 120_000)
+
     it('records a self-reported closure only with the agent\'s verdict and a note that names each change outside scope, and still fails a failed check', async () => {
         const root = await cockpit('[work]\ngrading = "self"')
         writeFileSync(join(root, 'workorders/WO-2.md'), order('WO-2', '  - id: AC1\n    text: The change reads well.\n  - id: AC2\n    text: add(2, 3) returns 5.\n    check: [node, test/add.test.mjs]'))
