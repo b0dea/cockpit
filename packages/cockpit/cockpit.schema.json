@@ -1251,7 +1251,7 @@
               },
               "requires_stack": {
                 "type": "boolean",
-                "description": "True when the stage needs the stack running."
+                "description": "True when the stage needs the stack running. Every stage gets the leased port variables when this checkout holds a stack, whatever this says."
               },
               "timeout_seconds": {
                 "default": 1800,

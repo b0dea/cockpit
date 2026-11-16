@@ -1,8 +1,11 @@
 export const RUN_VERDICTS = ['PASS', 'FAIL', 'PARTIAL', 'DEGRADED', 'VOID'] as const
 export type RunVerdict = typeof RUN_VERDICTS[number]
 
+// What a failed stage printed: where its combined output was saved and its last lines. A passing stage
+// reports one only when saving failed, so the failure is never silent.
+export type StageOutput = Readonly<{ path?: string; saveError?: string; tail?: readonly string[] }>
 export type StageResult =
-    | Readonly<{ kind: 'executed'; exitCode: number; signal: string | null; outputBytes: number; assertion: 'passed' | 'failed' | 'missing' }>
+    | Readonly<{ kind: 'executed'; exitCode: number; signal: string | null; outputBytes: number; assertion: 'passed' | 'failed' | 'missing'; output?: StageOutput }>
     | Readonly<{ kind: 'unavailable'; reason: string }>
 export type StageObservation = StageResult & Readonly<{ id: string }>
 

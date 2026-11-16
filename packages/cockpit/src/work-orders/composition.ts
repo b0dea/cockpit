@@ -32,12 +32,14 @@ import {
     projectWorkApplicationAuthorities,
 } from '../environment/generated-application/authorities.js'
 import { prepareGeneratedEnvironmentCurrentness } from '../environment/generated-application/check.js'
+import { writeCockpitLocalFiles } from '../guards/local-identity.js'
 import { createLifecycleCommandAdapters } from '../environment/lifecycle-composition.js'
 import { createReadCommandAdapters } from '../environment/read-composition.js'
-import { deriveEntrypoints, observeRetainedPortFamily } from '../environment/ports.js'
+import { deriveEntrypoints, leaseVariables, observeRetainedPortFamily } from '../environment/ports.js'
 import { readState } from '../environment/state.js'
 import { parseDiff, type DiffFile } from '../testing/test-protection.js'
 import { judgedByWeakening, testFilePatterns, weakeningFindings, type RepositoryWeakening, type TestFilePatterns } from '../testing/weakening.js'
+import { type StageOutput } from '../testing/verdict.js'
 import { runGate, type GateDependencies, type GateRegistry, type GateRequest, type ProductGateInvocation } from '../testing/gates.js'
 import { readSiblingCheckouts, missingServedCheckout, servedPath, servedSiblings, type ServedSibling } from '../environment/sibling-checkouts.js'
 import { splitRepositoryPath } from '../repository-path.js'
@@ -1034,7 +1036,8 @@ function declaredCommandEnvironment(environment: Readonly<Record<string, string 
 
 function productGateDependencies(root: string, source: SourceProvenance,
     repositories: readonly Readonly<{ identity: string; root: string; sensitivePaths: ReadonlySet<string>; forbiddenTargets: ReadonlySet<string> }>[],
-    stageEnvironment: Readonly<Record<string, string>>, executableDirectories?: readonly string[]): GateDependencies {
+    stageEnvironment: Readonly<Record<string, string>>, leaseEnvironment: () => Promise<Readonly<Record<string, string>>>,
+    executableDirectories?: readonly string[]): GateDependencies {
     return {
         subject: async () => {
             if (!exactSource(source)) throw new RefusalError('configuration source changed during product gate')
@@ -1047,12 +1050,59 @@ function productGateDependencies(root: string, source: SourceProvenance,
         },
         runProductTool: async (invocation: ProductGateInvocation) => {
             const observed = await executeBounded(root, invocation.command, executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES,
-                invocation.timeoutSeconds * 1_000, { kind: 'declared', env: stageEnvironment, timeoutField: 'testing.stages[].timeout_seconds' })
+                invocation.timeoutSeconds * 1_000, { kind: 'declared', env: { ...stageEnvironment, ...await leaseEnvironment() }, timeoutField: 'testing.stages[].timeout_seconds' })
             if (observed.kind !== 'executed') return { kind: 'unavailable' as const, reason: observed.reason }
+            const output = await saveStageOutput(root, invocation, `${observed.stdout}${observed.stderr}`, observed.truncated, observed.exitCode !== 0)
             return { kind: 'executed' as const, exitCode: observed.exitCode, signal: null, outputBytes: observed.observedBytes ?? 0,
-                assertion: observed.exitCode === 0 ? 'passed' as const : 'failed' as const }
+                assertion: observed.exitCode === 0 ? 'passed' as const : 'failed' as const, ...output ? { output } : {} }
         },
     }
+}
+
+const STAGE_OUTPUT_TAIL_LINES = 40
+const STAGE_OUTPUT_LINE_CHARACTERS = 2_000
+
+// A stage's combined output is kept where cockpit keeps machine-local files, which Git ignores, so a
+// failing run can be read without running the test command again. The file holds what executeBounded
+// retained (the end of long output); a failed stage also reports that file and the last lines.
+async function saveStageOutput(root: string, invocation: ProductGateInvocation, text: string, truncated: boolean, failed: boolean): Promise<StageOutput | undefined> {
+    const name = `test-run-${invocation.gate}-${invocation.stage}`
+    const saved = await writeCockpitLocalFiles(root, [{ name, bytes: `${truncated ? '[output truncated to its end]\n' : ''}${text}` }])
+    const lines = text.split('\n')
+    if (lines.at(-1) === '') lines.pop()
+    const tail = lines.slice(-STAGE_OUTPUT_TAIL_LINES).map(line => line.length > STAGE_OUTPUT_LINE_CHARACTERS ? `${line.slice(0, STAGE_OUTPUT_LINE_CHARACTERS)}[...]` : line)
+    if (saved.kind === 'refusal') return { saveError: saved.message, ...failed ? { tail } : {} }
+    return failed ? { path: join(root, '.cockpit', 'local', name), tail } : undefined
+}
+
+// What `session` would hand a command, for a stack this checkout holds: the leased ports and entrypoints
+// the stack was started with. A checkout with no stack or lease gives none, so a stage without the
+// stack runs as it would; any other failure to read the lease is raised, because a stage that
+// falls back to the base ports can reach another checkout's stack.
+async function leasedStackEnvironment(configPath: string, env: Readonly<Record<string, string | undefined>>): Promise<Readonly<Record<string, string>>> {
+    const lifecycle = createLifecycleCommandAdapters({ configPath, env, sessionId: 'cockpit-work-application-read-only', timeoutMs: 30_000 }, executeProbe)
+    const loaded = await lifecycle.load({ configPath })
+    if (loaded.kind !== 'complete') {
+        if (loaded.diagnostics.some(({ code }) => code === ENVIRONMENT_CODES.ENVIRONMENT_NOT_DECLARED)) return {}
+        throw new RefusalError(`the stack lease could not be read: ${loaded.diagnostics.map(row => row.message).join('; ') || 'lifecycle context is unavailable'}`)
+    }
+    const context = loaded.result
+    const stored = await readState(context.namespace.paths.lifecycle(context.stackId))
+    if (stored.kind === 'missing') return {}
+    if (stored.kind !== 'complete') throw new RefusalError('the stack lease could not be read: lifecycle state is unavailable')
+    const record = decodeLifecycleRecord(stored.value, context)
+    if (!record) throw new RefusalError('the stack lease could not be read: lifecycle state is malformed')
+    if (record.value.teardownComplete) return {}
+    // The recorded declaration, as sleep reads it: the lease is what the stack started with.
+    const retained = await observeRetainedPortFamily({ namespace: context.namespace, stackId: context.stackId,
+        holderId: record.value.holderId, checkoutId: context.checkoutId, config: 'recorded' })
+    if (retained.kind !== 'complete') {
+        if (retained.diagnostics.some(({ code }) => code === ENVIRONMENT_CODES.CLAIM_CO_TENANT)) return {}
+        throw new RefusalError(`the stack lease could not be read: ${retained.diagnostics[0]?.message ?? 'retained ports are unavailable'}`)
+    }
+    const entrypoints = deriveEntrypoints({ lease: retained.lease, declarations: context.entrypointDerivatives })
+    if (entrypoints.kind !== 'complete') throw new RefusalError(`the stack lease could not be read: ${entrypoints.diagnostics[0]?.message ?? 'declared entrypoints are unavailable'}`)
+    return leaseVariables(retained.lease.ports, entrypoints.values)
 }
 
 function executableDirectoriesFromEnvironment(environment: Readonly<Record<string, string | undefined>>): readonly string[] {
@@ -1213,7 +1263,7 @@ export async function createConfiguredWorkApplicationComposition(input: Readonly
             ...(config.browser ? { resolveBrowser } : {}),
             testing: { registry: authority.testing.registry,
                 dependencies: productGateDependencies(config.cockpitRoot, config.source, gateRepositories,
-                    declaredEnvironment, executableDirectories), runtime: gateRuntime },
+                    declaredEnvironment, () => leasedStackEnvironment(captured.configPath, captured.env), executableDirectories), runtime: gateRuntime },
         }, served)
         return { kind: 'complete', composition }
     } catch (error) {

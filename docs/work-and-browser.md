@@ -539,9 +539,18 @@ work as passing, and `doctor` warns that nothing can be graded PASS.
 affects: declare its affected or changed-since run as a targeted gate and its complete run as a full
 gate. A stage command is an argv array run without a shell, from the directory holding
 `cockpit.toml`. Its environment is `PATH` plus `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LANG`,
-`LC_ALL`, `LC_CTYPE` and `TZ` when set; every other variable, including credentials, is withheld. A
-stage that outlives its `timeout_seconds` is stopped and the gate reports DEGRADED. Output past the
-capture limit is dropped from the front and the stage is still judged by its exit status.
+`LC_ALL`, `LC_CTYPE` and `TZ` when set; every other variable, including credentials, is withheld.
+When this checkout holds a leased stack, every stage also gets the variables `session` exports (each
+`[ports.bases]` name with its leased port, and the `COCKPIT_ENTRYPOINT_*` addresses), whatever its
+`requires_stack`, so a stage that does not need the stack still reaches this checkout's ports and
+never another checkout's. With no lease, a stage with `requires_stack = false` runs without them and
+leases nothing. A stage that outlives its `timeout_seconds` is stopped and the gate reports DEGRADED.
+Output past the capture limit is dropped from the front and the stage is still judged by its exit
+status.
+
+Each stage's combined output is saved to `.cockpit/local/test-run-<gate>-<stage>`, which Git
+ignores; the next run of that stage replaces it. When a stage fails, `test-run` also reports that
+file's path and the last 40 lines of its output, in `result.observations[].output` with `--json`.
 
 <!-- cockpit:ref schema=testing.stages --> `test-run --select <kind>:<value>` narrows a gate, where
 kind is `spec`, `file`, `test` or `route`. A stage receives the selection through its own `select`
