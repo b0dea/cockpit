@@ -9,6 +9,7 @@ import { RefusalError } from './contract.js'
 import { ObservationProducerRefusal } from './application/health.js'
 import { cockpitPackageVersion } from '../test-support/package-version.js'
 import { observeMcpStartup } from './mcp-observation.js'
+import { encodeGuardLocalIdentity, GUARD_LOCAL_PATHS } from '../guards/local-identity.js'
 const applicationOwners = vi.hoisted(() => ({
     logs: {} as Partial<Pick<typeof import('./logs.js'), 'collectLogs' | 'planLogs'>>,
     observations: {} as Partial<Pick<typeof import('./observations.js'), 'aggregateObservations' | 'projectDoctor'>>,
@@ -226,6 +227,28 @@ describe('observation application runners', () => {
                 + 'gates = [{ id = "all", tier = "full", stages = ["unit"], changes = "Any behavior" }]')).toEqual([])
             // A docs-only cockpit has no product to test.
             expect(await doctorFor('')).toEqual([])
+        } finally { rmSync(directory, { recursive: true, force: true }) }
+    })
+
+    it('warns, as check fails, about an edit that widens what agents may do until a person syncs it', async () => {
+        const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-doctor-widened-')))
+        try {
+            const configPath = join(directory, 'cockpit.toml')
+            const synced = ['[cockpit]', 'name = "synthetic"', 'siblings_root = "."', '', '[[sibling]]', 'slug = "app"', 'dir = "."', 'mount = "none"',
+                'acquire = "none"', 'var = "APP_DIR"', 'purpose = "Synthetic app"', '', '[ports]', 'bases = {}', ''].join('\n')
+            // The guards on this machine were generated from `synced`, which sync recorded beside their identity.
+            mkdirSync(join(directory, GUARD_LOCAL_PATHS.directory), { recursive: true })
+            writeFileSync(join(directory, GUARD_LOCAL_PATHS.generatedConfig), synced)
+            const identity = Object.fromEntries(['root', 'rootInode', 'configPath', 'configInode', 'node', 'nodeSha256', 'nodeFingerprint', 'module', 'moduleSha256']
+                .map(key => [key, 'synthetic']))
+            writeFileSync(join(directory, GUARD_LOCAL_PATHS.identity), encodeGuardLocalIdentity({ ...identity, configSha256: createHash('sha256').update(synced).digest('hex') } as never))
+            const widened = async () => (await runDoctor({ configPath }, { load: async () => undefined, execute: vi.fn() })).diagnostics
+                .filter(row => row.code === 'GUARD_CONFIG_WIDENED')
+            writeFileSync(configPath, synced)
+            expect(await widened()).toEqual([])
+            writeFileSync(configPath, `${synced}\n[[guards.allow]]\nargv = ["cat", "notes.md"]\ncwd = "."\nreason = "Read the notes."\n`)
+            expect(await widened()).toEqual([expect.objectContaining({ severity: 'warning', target: 'guard', message: expect.stringContaining('(guards.allow)'),
+                fix: expect.stringContaining('--interactive') })])
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 

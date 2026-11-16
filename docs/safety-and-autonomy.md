@@ -1119,7 +1119,7 @@ protected branch takes effect on the next call, and `check` reports the edit as
 widens is not applied: the guard keeps judging every call under the configuration last synced, as `.cockpit/local/guard-config` records
 it, so the agent keeps working and the widened rule is not yet in force. While it waits, an agent's
 `cockpit sync` or `cockpit upgrade` is refused (`GUARD_CONFIG_WIDENED`), work-order commands refuse
-while a `[work]` field is changed that way, and every refusal ends with a sentence naming the widened fields and `sync --interactive`.
+and `test-run` refuses, while a `[work]` or `[testing]` field is changed that way, and every refusal ends with a sentence naming the widened fields and `sync --interactive`.
 
 Sync itself refuses to publish a widening that nobody confirmed (`GUARD_CONFIG_WIDENED`), whoever
 runs it: a person runs `sync --interactive`, reads the preview and answers `yes`. Sync judges
@@ -1127,8 +1127,10 @@ the exact bytes it publishes, so an edit made while it runs is judged too. An `i
 the same way. The first sync on a machine, before any guard is recorded, runs unattended. Cockpit
 cannot tell a person from a program driving a terminal.
 
-An edit whose configuration does not load, and a missing or mismatched recorded copy, hold every
-guarded call until a person syncs. A guarded call is one a generated hook fires on: shell commands,
+An edit whose configuration does not load, and a missing, mismatched or no longer loading recorded
+copy, hold every guarded call until a person syncs. Without a recorded copy that loads, as after an
+upgrade that changed the schema, an agent's sync is refused too, and `sync --interactive` asks for the
+yes saying it cannot show what changed: the person reads `cockpit.toml` itself. A guarded call is one a generated hook fires on: shell commands,
 file edits and writes, and restricted MCP tools under Claude Code. A hold stops nothing else, so
 file reads and unrestricted MCP tools continue.
 

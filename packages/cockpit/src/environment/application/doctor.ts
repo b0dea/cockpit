@@ -27,6 +27,7 @@ import {
 import { ownDataValues } from './shared.js'
 import { cockpitCommand } from '../../fix-catalogue.js'
 import { unreadableStateWarning } from './lifecycle-state.js'
+import { inspectGuardConfigChange } from '../../guards/policy-change.js'
 
 export interface DoctorCommandInput {
     readonly configPath: string
@@ -163,6 +164,16 @@ async function doctorEvaluatorDiagnostics(loading: Promise<LoadedDoctorConfig>, 
         evaluators: evaluatorTools(loaded.result.config) }) : []
 }
 
+// The edit `check` fails on: a widening the guards were not regenerated for is not in force until a person
+// syncs it, and doctor is where an agent looks first. It warns here, as doctor reports and changes nothing.
+async function doctorGuardConfigDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {
+    const loaded = await loading
+    if (loaded.kind !== 'complete') return []
+    const { source, config } = loaded.result
+    return (await inspectGuardConfigChange(dirname(source.path), source.path, { sha256: source.sha256, config }))
+        .filter(row => row.code === ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED).map(row => ({ ...row, severity: 'warning' as const }))
+}
+
 // A product with no declared gate gives test-run nothing to run, so no work in it can be graded PASS;
 // a docs-only cockpit has no product to test and stays quiet.
 async function doctorTestingGateDiagnostics(loading: Promise<LoadedDoctorConfig>): Promise<readonly EnvironmentDiagnostic[]> {
@@ -285,8 +296,8 @@ export async function runDoctor(
     // The machine-wide state reads are independent of the configuration checks, so they run beside them.
     const statePending = adapters.readUnreadableState?.()
     const stacksPending = adapters.inspectStacks?.()
-    const [outcome, guardHosts, testingGate, hookTrust, evaluator, readinessWarnings, servedSiblings, mcp] = await Promise.all([doctorHealth(input, adapters, config, currentness),
-        doctorGuardHostDiagnostics(config), doctorTestingGateDiagnostics(config), hookTrustFindings(),
+    const [outcome, guardHosts, guardConfig, testingGate, hookTrust, evaluator, readinessWarnings, servedSiblings, mcp] = await Promise.all([doctorHealth(input, adapters, config, currentness),
+        doctorGuardHostDiagnostics(config), doctorGuardConfigDiagnostics(config), doctorTestingGateDiagnostics(config), hookTrustFindings(),
         doctorEvaluatorDiagnostics(config, adapters), adapters.inspectReadiness?.() ?? [], config.then(async loaded => adapters.inspectServedSiblings?.(loaded.kind === 'complete' ? loaded : undefined) ?? []), mcpStartup()])
     const stateInventory = await statePending
     const unreadableState = stateInventory?.kind === 'refusal'
@@ -295,7 +306,7 @@ export async function runDoctor(
             message: `doctor could not read this machine's cockpit state, so it did not check for other cockpits' state this version cannot read: ${diagnostic.message}` }))
         : [unreadableStateWarning(stateInventory?.skipped ?? [])].filter((warning) => warning !== undefined)
     const orphanedStacks = await stacksPending ?? []
-    const warnings = [...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings, ...servedSiblings, ...mcp, ...unreadableState, ...orphanedStacks]
+    const warnings = [...guardConfig, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings, ...servedSiblings, ...mcp, ...unreadableState, ...orphanedStacks]
     const reported = warnings.length === 0 ? outcome
         : { ...outcome, diagnostics: [...outcome.diagnostics, ...warnings] }
     // Doctor reports on a configuration; without one there is nothing to report on, and a zero
