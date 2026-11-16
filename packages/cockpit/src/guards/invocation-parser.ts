@@ -507,6 +507,9 @@ const pnpmFlags = new Set(['-r', '--recursive', 'recursive', 'multi', 'm', '-w',
 // Options of git itself, ahead of its subcommand, that take the next word.
 const gitValueOptions = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env', '--attr-source'])
 // Builtins that take a variable name, whose array subscript bash evaluates as arithmetic, and arithmetic runs `$(…)`.
+// A word without the bodies of its `$(…)` substitutions, which are judged as the commands they run: a `[` and `$` inside
+// one, as `$(sed -n '/^[a-z]/p' f | rg "$p")` holds, are that command's text, not a subscript of the word.
+const outsideSubstitutions = (token: Token) => (token.substitutions ?? []).reduce((value, text) => value.replace(`$(${text})`, '$()'), token.value)
 const subscriptEvaluators = new Set(['unset', 'read', 'declare', 'typeset', 'local', 'export', 'readonly', 'printf', 'mapfile', 'readarray', 'test', '['])
 // A shell reads a script by path or a literal `-c` string, both of which the guard follows.
 const scriptShells = new Set(['sh', 'bash', 'zsh'])
@@ -789,7 +792,7 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
         if (gitRefusal) refuse(gitRefusal)
         const remote = name === 'deno' ? args.slice(cursor + 1).find((token) => !token.value.startsWith('-') && REMOTE_SOURCE.test(token.value)) : undefined
         if (remote) fetchedSource(remote.value)
-        if (subscriptEvaluators.has(name) && args.slice(cursor + 1).some((token) => /\[.*[$`]/s.test(token.value))) {
+        if (subscriptEvaluators.has(name) && args.slice(cursor + 1).some((token) => /\[.*[$`]/s.test(outsideSubstitutions(token)))) {
             refuse(`${shown(executable)} evaluates an array subscript as arithmetic, which runs any command substitution in it. Write the index as a number.`)
         }
         if (dynamicExecutables.has(name)) refuse(`${shown(executable)} runs a command or script built from its arguments, which the guard does not parse. Run the command itself.`)
