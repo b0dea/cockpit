@@ -781,6 +781,26 @@ describe('reset planning', () => {
             .toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'RECLAIM_ACCOUNTING_MISMATCH' }] })
     })
 
+    // On a loaded daemon `docker rm -f` timed out, Docker went on removing the container, and a rerun
+    // answered that the removal was already in progress until, minutes later, the container was gone.
+    it('waits out a removal Docker is still finishing, and names the timeout when it never finishes', async () => {
+        const target = (id: string) => ({ kind: 'container', id, name: id, step: { id: `remove:${id}`, timeoutMs: 30_000 } }) as never
+        const timedOut = { kind: 'refusal', code: 'EXECUTION_TIMEOUT', stderr: Buffer.alloc(0) } as never
+        const inProgress = { kind: 'refusal', code: 'EXECUTION_STEP_FAILED',
+            stderr: Buffer.from('Error response from daemon: removal of container a is already in progress\n') } as never
+        const gone = { kind: 'refusal', code: 'EXECUTION_STEP_FAILED', stderr: Buffer.from('Error response from daemon: No such container: a\n') } as never
+        const answers = [timedOut, inProgress, inProgress, gone]
+        const waits: number[] = []
+        expect(await removeTargets([target('a')], async () => answers.shift()!, async (ms) => { waits.push(ms) })).toBeUndefined()
+        expect(answers).toEqual([])
+        expect(waits).toHaveLength(3)
+
+        const stuck = await removeTargets([target('b')], async () => timedOut, async () => {})
+        expect(stuck).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'RECLAIM_ACCOUNTING_MISMATCH',
+            message: expect.stringContaining('each attempt may run 30 s') }] })
+        expect(JSON.stringify(stuck)).toContain('Docker had not finished removing container b')
+    })
+
     it('preserves non-ASCII target bytes through the plan and its exact removal', async () => {
         const root = await canonicalTemp('cockpit-reset-encoding-')
         const target = join(root, 'generated', 'sessión-東京')

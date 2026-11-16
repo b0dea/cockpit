@@ -113,9 +113,11 @@ describe('product architecture', () => {
 
     it('keeps timers, signals and standard streams in the executor', () => {
         const allowed = new Map([
-            // The release query bounds its own HTTPS request; the state lock backs off between attempts.
+            // The release query bounds its own HTTPS request; the state lock backs off between attempts,
+            // and a removal waits between checks on one Docker is still finishing.
             [`${SRC}freshness.ts`, ['setTimeout', 'clearTimeout']],
             [`${ENV}state.ts`, ['node:timers/promises']],
+            [`${ENV}reclaim.ts`, ['node:timers/promises']],
         ])
         const found: string[] = []
         for (const [path, source] of product) {

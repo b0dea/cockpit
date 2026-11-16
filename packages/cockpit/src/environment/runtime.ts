@@ -400,8 +400,12 @@ type DockerRuntimeObservation =
     }>
     | Readonly<{ kind: 'unavailable'; code: typeof ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE; reason: string; fix?: string }>
 
-function runtimeVersionUnavailable(reason: string): DockerRuntimeObservation {
-    return { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason }
+// A probe that ran out of time reached a runtime that answered too slowly, so starting it is the wrong remedy.
+function runtimeVersionUnavailable(reason: string, timedOut = false): DockerRuntimeObservation {
+    return timedOut
+        ? { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason,
+            fix: 'the machine may be too busy for the runtime to answer in time; rerun this command once the load drops' }
+        : { kind: 'unavailable', code: ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE, reason }
 }
 
 // The runtime answered, so starting it is the wrong remedy: the installed tool prints a version
@@ -482,12 +486,17 @@ export async function observeDockerRuntime(
     })
     const versionStep = step('runtime:docker-server-version', ['version', '--format', '{{.Server.Version}}'])
     const composeStep = step('runtime:docker-compose-version', ['compose', 'version', '--short'])
-    // Set only by the probe that threw; every later step returns as soon as a probe fails.
+    // Set only by the probe that threw or ran out of time; every later step returns as soon as a probe fails.
     let probeCause = ''
+    let timedOut = false
     const readText = async (probe: ExecutionStep): Promise<{ value: string; observedAt: string } | undefined> => {
         let raw: ExecuteProbeOutcome
         try { raw = await execute(probe) } catch (error) { probeCause = `: ${errorCause(error)}`; return undefined }
         const outcome = authenticatedExecutionOutcome(raw, probe)
+        if (outcome?.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT) {
+            timedOut = true
+            probeCause = `: it timed out after ${Math.ceil(probe.timeoutMs / 1000)} s`
+        }
         if (!outcome || outcome.kind !== 'complete' || outcome.stderr.byteLength !== 0) return undefined
         try {
             const value = new TextDecoder('utf-8', { fatal: true }).decode(outcome.stdout).trim()
@@ -499,10 +508,10 @@ export async function observeDockerRuntime(
         }
     }
     const server = await readText(versionStep)
-    if (!server) return runtimeVersionUnavailable('Docker server version probe failed or returned unauthenticated output' + probeCause)
+    if (!server) return runtimeVersionUnavailable('Docker server version probe failed or returned unauthenticated output' + probeCause, timedOut)
     if (!OBSERVED_VERSION.test(server.value)) return runtimeVersionUnparseable('Docker Engine', 'docker version --format {{.Server.Version}}', server.value)
     const compose = await readText(composeStep)
-    if (!compose) return runtimeVersionUnavailable('Docker Compose version probe failed or returned unauthenticated output' + probeCause)
+    if (!compose) return runtimeVersionUnavailable('Docker Compose version probe failed or returned unauthenticated output' + probeCause, timedOut)
     if (!OBSERVED_VERSION.test(compose.value)) return runtimeVersionUnparseable('Docker Compose', 'docker compose version --short', compose.value)
     if (!versionAtLeast(compose.value, MINIMUM_COMPOSE_VERSION)) {
         return {

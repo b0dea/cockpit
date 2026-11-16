@@ -155,6 +155,16 @@ function runtimeUnavailable(reason: string, target: string, fix = 'install or st
     }
 }
 
+function probeTimedOut(step: ExecutionStep): EnvironmentDiagnostic {
+    return {
+        severity: 'warning' as const,
+        code: ENVIRONMENT_CODES.EXECUTION_TIMEOUT,
+        message: `the ${step.id} probe timed out after ${Math.ceil(step.timeoutMs / 1000)} s, so the checks it answers were not observed`,
+        target: step.id,
+        fix: 'the machine may be too busy for its probes to finish in time; rerun this command once the load drops',
+    }
+}
+
 function producers(input: {
     readonly checkout: ConsumedSetupCheckoutObservation
     readonly config: Awaited<ReturnType<typeof loadCockpitConfig>> & { readonly kind: 'complete' }
@@ -173,6 +183,13 @@ function producers(input: {
     // Refusals met on the way that explain missing evidence (no container runtime, for one).
     readonly notice: (diagnostics: readonly EnvironmentDiagnostic[]) => void
 }): Readonly<{ observations: HealthObservationProducers; revalidate: () => Promise<boolean> }> {
+    // On a busy machine a probe can run out of time. Without naming it, the rows it would have
+    // answered read as a missing runtime or a broken stack.
+    const execute = async (step: ExecutionStep): Promise<ExecuteProbeOutcome> => {
+        const outcome = await input.execute(step)
+        if (outcome.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT) input.notice([probeTimedOut(step)])
+        return outcome
+    }
     const observedAt = () => new Date().toISOString()
     const siblingRoot = resolve(dirname(input.config.result.source.path), input.config.result.config.cockpit.siblings_root)
     const declaresStack = input.config.result.config.environment.compose_files.length > 0
@@ -196,7 +213,7 @@ function producers(input: {
                 && typeof entry[1] === 'string',
             )),
             timeoutMs: input.timeoutMs,
-        }, input.execute)
+        }, execute)
         if (observed.kind !== 'complete') input.notice([runtimeUnavailable(observed.reason, input.stack, observed.fix)])
     })() : undefined
     const runtimeSession = runningStack ? (async () => {
@@ -205,7 +222,7 @@ function producers(input: {
             env: input.env,
             sessionId: 'cockpit-health-read-only',
             timeoutMs: input.timeoutMs,
-        }, input.execute)
+        }, execute)
         const loaded = await adapters.load({ configPath: input.config.result.source.path })
         if (loaded.kind === 'refusal') return input.refuse?.(loaded.diagnostics)
         if (loaded.kind !== 'complete' || loaded.result.stackId !== input.stack) return undefined
@@ -249,7 +266,7 @@ function producers(input: {
         const session = await runtimeSession
         if (runningStack && !session) return undefined
         const checked = await checkGeneratedEnvironment({ configPath: input.config.result.source.path },
-            { execute: input.execute, observationEnv: input.env })
+            { execute, observationEnv: input.env })
         if (checked.kind !== 'complete') checkRefusal = checked.diagnostics.filter(({ severity }) => severity === 'error') as readonly EnvironmentDiagnostic[]
         return checked.kind === 'complete' ? generatedApplicationProjection(checked.result.application) : undefined
     })()
@@ -259,7 +276,7 @@ function producers(input: {
                 env: input.env,
                 sessionId: 'cockpit-health-machine-floor',
                 timeoutMs: input.timeoutMs,
-            }, input.execute)
+            }, execute)
             const loaded = await adapters.load({ configPath: input.config.result.source.path })
             if (loaded.kind !== 'complete' || loaded.result.stackId !== input.stack) return undefined
             return adapters.withMachineFloorReadiness(loaded.result, async (value) => value,
@@ -274,7 +291,7 @@ function producers(input: {
                 !== JSON.stringify(session.readiness.topology.services.map(({ id }) => id).sort())) return undefined
         const values = new Map<string, RuntimeServiceEvidence>()
         for (const service of completed) {
-            const admitted = await revalidateService(session.readiness.topology, service, { execute: input.execute })
+            const admitted = await revalidateService(session.readiness.topology, service, { execute: execute })
             if (admitted.kind !== 'complete') return undefined
             values.set(service.service, admitted.evidence)
         }
@@ -306,7 +323,7 @@ function producers(input: {
                 checkoutId: input.checkout.checkoutId,
             })
             if (!step) throw new RefusalError('Git health observation could not be planned')
-            const result = observeGit(step, await input.execute(step), {
+            const result = observeGit(step, await execute(step), {
                 stackId: input.stack,
                 checkoutId: input.checkout.checkoutId,
                 source: input.config.result.source.path,
@@ -350,7 +367,7 @@ function producers(input: {
             const observation = await observeRuntimePortFamily({ topology: session.readiness.topology,
                 services: [...services.values()], namespace: session.context.namespace,
                 listenerTimeoutMs: input.timeoutMs,
-                sessionListeners: listenerHost(input.execute),
+                sessionListeners: listenerHost(execute),
                 revalidate: async () => {
                     const fresh = await inspectCurrentServices()
                     if (!fresh) throw new RefusalError('runtime services or lifecycle changed during port observation')
@@ -384,7 +401,7 @@ function producers(input: {
                 git: input.git,
                 env: input.env,
                 timeoutMs: input.timeoutMs,
-            }, { execute: input.execute })
+            }, { execute: execute })
         },
         state: async () => observeConfiguration({
             path: input.config.result.source.path, stackId: input.stack, observedAt: observedAt(),

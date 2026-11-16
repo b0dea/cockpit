@@ -157,7 +157,8 @@ export class ObservationProducerRefusal extends RefusalError {
 export interface HealthEvaluation {
     readonly preflight: PreflightEvaluation
     readonly comparisons: readonly ComparisonRemoteEvaluation[]
-    readonly producerFailures: readonly typeof healthProducerNames[number][]
+    /** A cause is cockpit's own refusal wording; any other error stays unnamed, as it can echo private bytes. */
+    readonly producerFailures: readonly Readonly<{ producer: typeof healthProducerNames[number]; cause?: string }>[]
     /** The diagnostics of producers that failed on a refusal; their dependent evidence rows are left out of the report. */
     readonly producerRefusals: readonly EnvironmentDiagnostic[]
     readonly verdict: PreflightEvaluation['verdict']
@@ -365,7 +366,11 @@ export async function evaluateApplicationHealth(
     adapters: ObservationCommandAdapters,
 ): Promise<HealthEvaluation> {
     const produced = await Promise.allSettled(healthProducerNames.map(async (name) => wellFormedRows(name, await input.producers[name]())))
-    const producerFailures = healthProducerNames.filter((_, index) => produced[index]?.status === 'rejected')
+    const producerFailures = healthProducerNames.flatMap((producer, index) => {
+        const result = produced[index]
+        if (result?.status !== 'rejected') return []
+        return [result.reason instanceof RefusalError ? { producer, cause: errorCause(result.reason) } : { producer }]
+    })
     const producerRefusals = produced.flatMap((result) =>
         result.status === 'rejected' && result.reason instanceof ObservationProducerRefusal ? result.reason.diagnostics : [])
     const observations = produced.map((result) => result.status === 'fulfilled'
@@ -418,9 +423,9 @@ export function healthDiagnostics(health: HealthEvaluation): readonly Environmen
             'in the sibling checkout, run `git status --short --branch` and `git remote -v`; reconcile the selected upstream and declared repository, then rerun the command',
         )]
     })
-    const producerFailures = health.producerFailures.filter((producer) => producer !== 'surfaces' || health.producerRefusals.length === 0).map((producer) => applicationDiagnostic(
+    const producerFailures = health.producerFailures.filter(({ producer }) => producer !== 'surfaces' || health.producerRefusals.length === 0).map(({ producer, cause }) => applicationDiagnostic(
         ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
-        `${producer} observation producer failed`,
+        `${producer} observation producer failed${cause === undefined ? '' : `: ${cause}`}`,
         producer,
         `restore the ${producer} observation producer`,
     ))
