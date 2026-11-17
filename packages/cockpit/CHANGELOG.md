@@ -13,6 +13,12 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.22
+
+### Patch Changes
+
+- 42c488c: Two failures on a heavily loaded machine are gone. `session` no longer ends with `EXECUTION_TERMINATION_UNCONFIRMED` when the command leaves a slow-to-stop process behind, such as a dev server started in the background: what the command left is now always killed before cockpit gives up on it. And `up` joining a stack another session holds reads a running service a second time before refusing it as stopped, since the first Docker read can fail while the container is healthy.
+
 ## 0.1.21
 
 ### Patch Changes
