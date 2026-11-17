@@ -242,6 +242,54 @@ describe('lifecycle application contracts', () => {
         })
     })
 
+    it('reads a co-tenant\'s completed service again before refusing it, as a loaded machine can fail the first read', async () => {
+        const { configPath, context } = await lifecycleContextFixture()
+        const previousHolder = `holder:${'f'.repeat(64)}:session` as const
+        const lifecycleAddress = context.namespace.paths.lifecycle(context.stackId)
+        await transactState(context.namespace, lifecycleAddress, { ownerId: context.holderId }, () => ({
+            format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId: context.cockpitId,
+            subjectId: context.stackId, revision: 0, updatedAt: new Date().toISOString(),
+            value: {
+                holderId: previousHolder, workBasisSha256: 'a'.repeat(64),
+                operationGeneration: 'b'.repeat(64),
+                completedServices: [{ service: 'api', containerId: 'c'.repeat(64) }],
+            },
+        }))
+        const topology = Object.freeze({ services: Object.freeze([{ id: 'api' }]) })
+        const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
+        let reads = 0
+        applicationOwners.runtime.revalidateRuntimeService = async () => {
+            reads += 1
+            return (reads === 1 ? { kind: 'failure' } : { kind: 'observed', observation: { service: 'api' } }) as never
+        }
+        applicationOwners.runtime.admitRuntimeServiceHealth = (observation) => observation as never
+
+        const result = await runUp({ configPath }, {
+            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
+            withRuntimeReadiness: async (_context, use) => use({ topology, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS, activeProfiles: [] } as never),
+            withLifecycleStage: async (_context, use) => use({} as never),
+            withAcquiredPorts: async (_context, use) => use({
+                retainOnFailure: vi.fn(),
+                leaseResult: {
+                    kind: 'complete', change: 'unchanged', holderId: context.holderId,
+                    recordRevision: 2, lease, observation: 'resolved-listener-evidence-accepted',
+                },
+                projection: {
+                    lease,
+                    ownership: {
+                        change: 'unchanged', holderId: context.holderId, recordRevision: 2,
+                        holderCount: 2, holderIds: [context.holderId, previousHolder],
+                    },
+                    entrypoints: [],
+                },
+            } as never),
+            execute: vi.fn(),
+        })
+
+        expect(result).toMatchObject({ kind: 'complete', result: { stackId: context.stackId, change: 'unchanged' } })
+        expect(reads).toBe(2)
+    })
+
     it('surfaces failure to compensate the holder acquired by this invocation', async () => {
         const { configPath, context } = await lifecycleContextFixture()
         const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })

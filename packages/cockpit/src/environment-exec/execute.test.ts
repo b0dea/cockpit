@@ -132,6 +132,46 @@ describe('mechanical environment executor', () => {
         }
     })
 
+    it('kills what a finished foreground process left in its group even when the machine stalls after SIGTERM', async () => {
+        const resolved = await resolveExecutablePath(process.execPath)
+        expect(resolved.state).toBe('available')
+        if (resolved.state !== 'available') return
+        const directory = mkdtempSync(join(tmpdir(), 'cockpit-stalled-foreground-'))
+        scratch.push(directory)
+        const leftover = join(directory, 'leftover')
+        // A dev server started in the background that takes its time over SIGTERM, left behind when the command exits.
+        const descendant = `process.on('SIGTERM', () => {}); require('node:fs').writeFileSync(${JSON.stringify(leftover)}, String(process.pid)); ${KEEP_ALIVE}`
+        const nativeKill = process.kill
+        // A loaded machine can hold the event loop well past the grace period right after SIGTERM goes out.
+        process.kill = ((pid: number, signal?: NodeJS.Signals | number) => {
+            const sent = nativeKill(pid, signal)
+            if (pid < 0 && signal === 'SIGTERM') { const until = Date.now() + 300; while (Date.now() < until) { /* stalled */ } }
+            return sent
+        }) as typeof process.kill
+        let outcome
+        try {
+            outcome = await executeForegroundProcess({
+                executable: resolved.value,
+                argv: ['-e', [
+                    "const { spawn } = require('node:child_process')",
+                    `spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], { stdio: 'ignore' })`,
+                    `const timer = setInterval(() => { if (require('node:fs').existsSync(${JSON.stringify(leftover)})) { clearInterval(timer); process.exit(0) } }, 10)`,
+                ].join(';')],
+                cwd: process.cwd(),
+                env: { PATH: process.env.PATH ?? '' },
+            })
+        } finally {
+            process.kill = nativeKill
+        }
+        const pid = Number(readFileSync(leftover, 'utf8'))
+        try {
+            expect(outcome).toEqual({ kind: 'complete', exitCode: 0, signal: null, terminationConfirmed: true })
+            expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+        } finally {
+            try { process.kill(pid, 'SIGKILL') } catch { /* Already gone, as the assertion above expects. */ }
+        }
+    })
+
     it('stops every step started inside an execution scope when its signal aborts, and starts no more', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-scoped-abort-'))
         scratch.push(directory)
@@ -1141,6 +1181,21 @@ const ready = setInterval(() => {
         expect(outcome).toEqual(expect.objectContaining({ kind: 'refusal', status: 2 }))
         expect(outcome.diagnostics).toEqual([expect.objectContaining({ code: 'EXECUTION_TIMEOUT' })])
         expect(Date.now() - started).toBeLessThan(1_500)
+
+        // A loaded machine can hold the event loop past the grace period right after SIGTERM goes out; SIGKILL still follows.
+        const nativeKill = process.kill
+        process.kill = ((pid: number, signal?: NodeJS.Signals | number) => {
+            const sent = nativeKill(pid, signal)
+            if (pid < 0 && signal === 'SIGTERM') { const until = Date.now() + 300; while (Date.now() < until) { /* stalled */ } }
+            return sent
+        }) as typeof process.kill
+        let stalled
+        try {
+            stalled = await executePlan({ steps: [nodeStep('ignores-term-stalled', `process.on('SIGTERM', () => {}); ${KEEP_ALIVE}`, { timeoutMs: 30 })] })
+        } finally {
+            process.kill = nativeKill
+        }
+        expect(stalled.diagnostics).toEqual([expect.objectContaining({ code: 'EXECUTION_TIMEOUT' })])
     })
 
     it('terminates descendants that keep inherited output pipes open', async () => {

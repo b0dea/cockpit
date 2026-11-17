@@ -370,13 +370,19 @@ async function executeUpRound(
             const evidence: RuntimeServiceEvidence[] = []
             if (!stored || resetProgress) return { kind: 'complete', evidence }
             for (const completed of stored.value.completedServices) {
-                const admitted = await revalidateService(runtime.topology, completed, adapters)
+                let admitted = await revalidateService(runtime.topology, completed, adapters)
                 if (admitted.kind === 'stale') return { kind: 'retry' }
                 // A container that stopped outside cockpit, as a machine's sleep leaves it, is started again
                 // from scratch when the progress is this checkout's and nobody else holds the stack.
                 const soleHolder = stored.value.holderId === context.holderId && ports.projection.ownership.holderIds.length === 1
                     && ports.projection.ownership.holderIds[0] === context.holderId
                 if (admitted.kind !== 'complete' && soleHolder) return { kind: 'retry' }
+                // Another session's stack is refused rather than restarted, so a failed read is taken once more first:
+                // on a loaded machine the Docker reads themselves fail or run late while the container stays healthy.
+                if (admitted.kind !== 'complete') {
+                    admitted = await revalidateService(runtime.topology, completed, adapters)
+                    if (admitted.kind === 'stale') return { kind: 'retry' }
+                }
                 if (admitted.kind !== 'complete') {
                     const logDiagnostics = await reportFailedService(admitted.logs, completed.service, context, adapters)
                     const primary = lifecycleRefusal(
