@@ -321,12 +321,12 @@ describe('restriction expansion', () => {
         }
 
         await mkdir(join(directory, 'nested'))
-        const runs = (name: 'claudecode' | 'codexcli', cwd: string, env: NodeJS.ProcessEnv, file: string) => {
+        const runs = (name: 'claudecode' | 'codexcli', cwd: string, env: NodeJS.ProcessEnv, call: string | ReturnType<typeof bash> | ReturnType<typeof edit>) => {
             const registration = JSON.parse(target(result, name).files[0]!.bytes) as {
                 hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> }
             }
             return spawnSync('/bin/sh', ['-c', registration.hooks.PreToolUse[0]!.hooks[0]!.command], {
-                cwd, env, input: JSON.stringify({ ...edit(join(directory, file)), cwd }), encoding: 'utf8',
+                cwd, env, input: JSON.stringify({ ...typeof call === 'string' ? edit(join(directory, call)) : call, cwd }), encoding: 'utf8',
             })
         }
         const { CLAUDE_PROJECT_DIR: _unset, ...ambient } = process.env
@@ -366,7 +366,30 @@ describe('restriction expansion', () => {
         await mkdir(join(worktree, '.cockpit/guards'), { recursive: true })
         await writeFile(join(worktree, '.git'), 'gitdir: /workspace/elsewhere/.git/worktrees/wt\n')
         await writeFile(join(worktree, '.cockpit/guards/bash-guard.sh'), 'printf worktree-guard >&2; exit 0\n')
-        // Until sync runs in the worktree, its guard is unrecorded and holds the call; then it runs.
+        // Until sync runs in the worktree it has no guard identity, so the checkout above it judges the call: an
+        // agent that changed into it can still `cd` back out. That checkout's policy does not cover the worktree's
+        // own files, so nothing else runs there, a read included. A worktree of a branch without a cockpit is
+        // judged the same way.
+        const bare = join(directory, 'worktrees/bare')
+        await mkdir(bare, { recursive: true })
+        await writeFile(join(bare, '.git'), 'gitdir: /workspace/elsewhere/.git/worktrees/bare\n')
+        for (const cwd of [worktree, bare]) {
+            for (const [name, env] of [['claudecode', { ...ambient, CLAUDE_PROJECT_DIR: cwd }], ['codexcli', ambient]] as const) {
+                const run = runs(name, cwd, env, bash(`pwd && cd ${directory}`))
+                expect(run.status, run.stderr).toBe(0)
+                if (name === 'claudecode') expect(run.stdout).toContain('permissionDecision":"allow')
+                else expect(run.stdout).toBe('')
+            }
+        }
+        for (const [cwd, call] of [[worktree, edit(join(worktree, 'env/service.env.example'))], [worktree, bash('cat README.md')], [bare, bash('rm .claude/settings.json')]] as const) {
+            const run = runs('claudecode', cwd, { ...ambient, CLAUDE_PROJECT_DIR: cwd }, call)
+            expect(run.status, run.stderr).toBe(0)
+            expect(run.stdout, JSON.stringify(call)).toContain('permissionDecision":"deny')
+            expect(run.stdout).toContain('linked worktree where nobody has installed dependencies')
+        }
+        // Once sync has run there, the worktree's own guard runs.
+        await mkdir(join(worktree, '.cockpit/local'))
+        await writeFile(join(worktree, '.cockpit/local/guard-identity'), 'synced\n')
         expect(runs('codexcli', worktree, ambient, 'env/service.env')).toMatchObject({ status: 2, stderr: expect.stringContaining('unrecorded') })
         recordTestGuard(worktree)
         for (const [name, env] of [['claudecode', { ...ambient, CLAUDE_PROJECT_DIR: worktree }], ['codexcli', ambient]] as const) {
@@ -752,7 +775,7 @@ while (Date.now() < end) {
         const checked = { COCKPIT_GUARD_CHECKED_ROOT: root, COCKPIT_GUARD_CHECKED_IDENTITY: readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8') }
         expect(runGuard(result, bash('git status'), { ...checked, COCKPIT_GUARD_CHECK_PROTOCOL: GUARD_CHECK_PROTOCOL })).toMatchObject(permitted)
         // The machine's one check is written by the latest sync, which may be another cockpit's release.
-        for (const protocol of [{}, { COCKPIT_GUARD_CHECK_PROTOCOL: String(Number(GUARD_CHECK_PROTOCOL) + 1) }] as Record<string, string>[]) {
+        for (const protocol of [{}, { COCKPIT_GUARD_CHECK_PROTOCOL: '3' }] as Record<string, string>[]) {
             expect(runGuard(result, bash('git status'), { ...checked, ...protocol })).toMatchObject({ status: 2, stderr: expect.stringContaining('another cockpit release') })
         }
     })
