@@ -13,6 +13,13 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.21
+
+### Patch Changes
+
+- eaf32f1: A refusal naming another session's hold on the stack now suggests `ps -o pid,ppid,command -p <pid>`, so one call shows whether the holder is a process your own agent started, such as an MCP server.
+- 668bff9: An agent that changes into a linked worktree where nobody has installed and synced cockpit no longer loses its shell: the checkout above the worktree judges its calls until `sync` runs there, admitting only `cd` and `pwd`, so the agent can leave. Before, every later call was refused, including the `cd` back out, and only a person could recover the session.
+
 ## 0.1.20
 
 ### Patch Changes
