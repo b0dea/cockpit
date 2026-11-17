@@ -82,8 +82,10 @@ export type ExecutePlanOutcome =
           }
       }
 
+// A process group gets SIGKILL this long after SIGTERM, then this long to be gone. The grace is counted from SIGKILL:
+// counted from SIGTERM, an event loop a loaded machine held past it gave up before SIGKILL went out, leaving the group alive.
+const TERMINATION_KILL_MS = 50
 const TERMINATION_GRACE_MS = 100
-const TERMINATION_KILL_MS = TERMINATION_GRACE_MS / 2
 // The step each outcome came from, so a caller can prove its result came from this executor for that step.
 const issuedOutcomes = new WeakMap<object, string>()
 
@@ -470,7 +472,7 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
                 return hasErrorCode(error, 'ESRCH')
             }
         }
-        let terminationDeadline = 0
+        let terminationDeadline = Infinity
         const confirmTermination = (): void => {
             if (settled || terminationConfirmed) return
             if (processGroupGone()) {
@@ -488,10 +490,10 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
         const beginTermination = (): void => {
             if (!terminationConfirmed) return
             terminationConfirmed = false
-            terminationDeadline = Date.now() + TERMINATION_GRACE_MS
             terminate('SIGTERM')
             killTimer = setTimeout(() => {
                 terminate('SIGKILL')
+                terminationDeadline = Date.now() + TERMINATION_GRACE_MS
             }, TERMINATION_KILL_MS)
             confirmTermination()
         }
@@ -731,7 +733,7 @@ export async function executeForegroundProcess(
         let settled = false
         let killTimer: ReturnType<typeof setTimeout> | undefined
         let pollTimer: ReturnType<typeof setTimeout> | undefined
-        let deadline = 0
+        let deadline = Infinity
         const groupGone = (): boolean => {
             if (child.pid === undefined) return closed !== undefined
             try {
@@ -774,9 +776,11 @@ export async function executeForegroundProcess(
         const beginTermination = (): void => {
             if (terminationStarted) return
             terminationStarted = true
-            deadline = Date.now() + TERMINATION_GRACE_MS
             terminate('SIGTERM')
-            killTimer = setTimeout(() => terminate('SIGKILL'), TERMINATION_KILL_MS)
+            killTimer = setTimeout(() => {
+                terminate('SIGKILL')
+                deadline = Date.now() + TERMINATION_GRACE_MS
+            }, TERMINATION_KILL_MS)
             confirmGone()
         }
         const abort = (): void => {
