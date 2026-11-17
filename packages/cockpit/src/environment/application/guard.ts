@@ -95,6 +95,8 @@ export interface GuardEvaluationApplicationInput {
     readonly harness: GuardSurfaceTarget
     readonly cwd: string
     readonly askIsDeny?: boolean
+    /** The call is made in a linked worktree nobody has synced, which this checkout's guard judges for it. */
+    readonly unsyncedWorktree?: boolean
     readonly ripgrepConfigActive?: boolean
     /** The harness's command search path, whose directories inside the allowed roots the guard protects. */
     readonly searchPath?: string
@@ -203,12 +205,13 @@ export async function runGuardEvaluationApplication(
         return { decision: { ...decision, reason }, diagnostics: [{ severity: 'error', code: 'GUARD_REFUSED', message: reason, target: 'guard' }] }
     }
     try {
-        const data = ownDataValues(snapshotJson(input), ['cwd', 'guardRoot', 'harness', 'identity', 'payload'], ['askIsDeny', 'ripgrepConfigActive', 'searchPath', 'home', 'xdgConfigHome', 'agentSession', 'agentEnvironment'])
+        const data = ownDataValues(snapshotJson(input), ['cwd', 'guardRoot', 'harness', 'identity', 'payload'], ['askIsDeny', 'unsyncedWorktree', 'ripgrepConfigActive', 'searchPath', 'home', 'xdgConfigHome', 'agentSession', 'agentEnvironment'])
         const directory = (value: unknown) => value === undefined || typeof value === 'string' && isAbsolute(value) && !/[\x00-\x1f\x7f]/.test(value)
             && Buffer.byteLength(value) <= GUARD_INPUT_LIMITS.pathBytes
         if (!data || !directory(data.home) || !directory(data.xdgConfigHome)
             || data.searchPath !== undefined && (typeof data.searchPath !== 'string' || /[\x00-\x1f\x7f]/.test(data.searchPath) || Buffer.byteLength(data.searchPath) > GUARD_INPUT_LIMITS.inputBytes)
             || data.askIsDeny !== undefined && typeof data.askIsDeny !== 'boolean'
+            || data.unsyncedWorktree !== undefined && typeof data.unsyncedWorktree !== 'boolean'
             || data.ripgrepConfigActive !== undefined && typeof data.ripgrepConfigActive !== 'boolean'
             || !isGuardSurfaceTarget(data.harness)) return unavailable('Guard request is malformed.')
         const agentSession = data.agentSession === undefined ? {} : ownDataValues(data.agentSession, [], ['transcriptPath', 'sessionId', 'scratchpadDir', 'agentType'])
@@ -740,7 +743,16 @@ export async function runGuardEvaluationApplication(
         const another = `Runs cockpit on ${foreign}, not ${identity.configPath}, the configuration this guard was generated from and judges by: an agent works in its own cockpit, so a person approves working in another.`
         const asked: GuardDecision = foreign === undefined || decision.decision === 'deny' || decision.decision === 'unavailable' ? decision
             : { decision: policy.unresolved === 'deny' ? 'deny' : 'ask', reason: decision.decision === 'ask' ? `${another} ${decision.reason}` : another }
-        return refused(instruction ?? asked)
+        const judged = instruction ?? asked
+        // This checkout's policy is anchored at its own root, so it does not cover an unsynced worktree's hook
+        // registrations, MCP wrappers, instances or secret paths, and even a read there can print what the worktree's
+        // own guard would hold. An allow stands only for `cd` and `pwd`: enough to leave.
+        if (data.unsyncedWorktree === true && judged.decision === 'allow' && !(parsed.tool === 'Bash' && !parsed.background && !parsed.unreadable
+            && parsed.invocations.every(({ executable, argv, words, redirects }) => redirects.length === 0
+                && (executable === null ? words.length === 1 && words[0]!.role === 'directory' : executable === 'pwd' && argv.length === 0)))) {
+            return refused({ decision: 'deny', reason: `${parsed.cwd} is in a linked worktree where nobody has installed dependencies and run cockpit sync, so it has no guard of its own. Until it does, the checkout above it judges calls made there and admits only \`cd\` and \`pwd\`. Change to the main checkout and work on the worktree from there with \`git -C <worktree>\`, or a person installs dependencies and runs sync in the worktree.` })
+        }
+        return refused(judged)
     } catch (error) {
         if (error instanceof CallPathUnreadable) return unavailable(error.message)
         return unavailable(`Guard authority could not be read or revalidated: ${errorCause(error)}`)

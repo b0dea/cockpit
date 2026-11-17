@@ -45,6 +45,10 @@ export const GUARD_CHECK_PATH = '.cockpit/guards/check.sh'
 // The guard script refuses a check whose protocol is not the one it was written for; raise it when what the check
 // hands the script changes.
 export const GUARD_CHECK_PROTOCOL = '1'
+// What the check hands instead when a linked worktree nobody has synced is judged by the checkout above it, whose
+// policy does not cover the worktree's own hook registrations, MCP wrappers, instances or secret paths; the guard then
+// admits only `cd` and `pwd`. A guard script from before this fallback refuses it as another release's, as it refused the call before.
+export const GUARD_CHECK_UNSYNCED_PROTOCOL = '2'
 export const GUARD_CHECK_SCRIPT = `# Written by cockpit sync: finds the cockpit at or above a session's directory and runs its guard script once it and the identity match the digests sync recorded.
 refuse() {
     echo "cockpit guard: $1; a person reviews what changed it and runs cockpit sync in a terminal" >&2
@@ -52,17 +56,32 @@ refuse() {
 }
 start=$1
 shift
-d=$start
-r=
-n=0
-while [ -n "$d" ]; do
-    [ -f "$d/${GUARD_SCRIPT_PATH}" ] && { r=$d; n=$((n+1)); }
-    [ -e "$d/.git" ] && break
-    d=\${d%/*}
-done
-if [ "$n" -gt 1 ]; then
-    echo "cockpit guard: more than one ${GUARD_SCRIPT_PATH} at or above $start, so the guard to run is ambiguous; a person removes the one that is not the cockpit's" >&2
-    exit 2
+# Sets r to the directory holding the guard script from $1 up to the nearest one with a .git entry, and g to that one.
+find_guard() {
+    d=$1
+    r=
+    g=
+    n=0
+    while [ -n "$d" ]; do
+        [ -f "$d/${GUARD_SCRIPT_PATH}" ] && { r=$d; n=$((n+1)); }
+        [ -e "$d/.git" ] && { g=$d; break; }
+        d=\${d%/*}
+    done
+    if [ "$n" -gt 1 ]; then
+        echo "cockpit guard: more than one ${GUARD_SCRIPT_PATH} at or above $start, so the guard to run is ambiguous; a person removes the one that is not the cockpit's" >&2
+        exit 2
+    fi
+}
+find_guard "$start"
+v=${GUARD_CHECK_PROTOCOL}
+# A linked worktree nobody has installed and synced has no guard identity, so its own guard would refuse every
+# call, a \`cd\` back out included, and Claude Code keeps judging later calls from it. The checkout it sits in
+# judges it instead, admitting only \`cd\` and \`pwd\`; that guard is recorded like any other.
+i=$r/${GUARD_LOCAL_PATHS.identity}
+if [ -n "$g" ] && [ -f "$g/.git" ] && { [ -z "$r" ] || { [ ! -e "$i" ] && [ ! -L "$i" ]; }; }; then
+    w=$r
+    find_guard "\${g%/*}"
+    if [ -n "$r" ]; then v=${GUARD_CHECK_UNSYNCED_PROTOCOL}; else r=$w; fi
 fi
 if [ -z "$r" ]; then
     echo "cockpit guard: no ${GUARD_SCRIPT_PATH} at or above $start; a person starts the agent in a cockpit, or runs cockpit sync there in a terminal" >&2
@@ -94,7 +113,7 @@ if [ -f "$i" ]; then
 fi
 h1=$(digest "$script")
 { [ -n "$k1" ] && [ "\${h1%% *}" = "$k1" ]; } || refuse "guard script changed or unrecorded in $c"
-COCKPIT_GUARD_CHECK_PROTOCOL=${GUARD_CHECK_PROTOCOL} COCKPIT_GUARD_CHECKED_ROOT=$c COCKPIT_GUARD_CHECKED_IDENTITY=$identity exec /bin/bash -c "$script" "$s" "$@"
+COCKPIT_GUARD_CHECK_PROTOCOL=$v COCKPIT_GUARD_CHECKED_ROOT=$c COCKPIT_GUARD_CHECKED_IDENTITY=$identity exec /bin/bash -c "$script" "$s" "$@"
 `
 
 /** Where sync records the digest for the cockpit at canonical `root`: the root's own path below the record directory. */

@@ -10,6 +10,7 @@ import { GUARD_EXECUTABLE_SEARCH_PATH, resolveGitExecutable } from './environmen
 import { executeProbe, runUntilDeadline } from './environment-exec/execute.js'
 import { loadCockpitConfig } from './config/load.js'
 import { GUARD_AGENT_VARIABLES } from './guards/agent-workspaces.js'
+import { GUARD_CHECK_UNSYNCED_PROTOCOL } from './guards/guard-record.js'
 
 // MCP arguments are opaque to a tool-name policy; bound the native envelope before parsing it.
 const NATIVE_INPUT_BYTES = 1_048_576
@@ -69,6 +70,7 @@ export async function runGuardCommand(
             const agentEnvironment = Object.fromEntries(GUARD_AGENT_VARIABLES.flatMap(name => guardEnvironment[name] ? [[name, guardEnvironment[name]]] : []))
             return await runGuardEvaluationApplication({ identity: JSON.parse(identityBytes), guardRoot, payload, harness, cwd: process.cwd(),
                 askIsDeny: guardEnvironment.COCKPIT_ASK_IS_DENY === '1',
+                unsyncedWorktree: guardEnvironment.COCKPIT_GUARD_CHECK_PROTOCOL === GUARD_CHECK_UNSYNCED_PROTOCOL,
                 ripgrepConfigActive: Object.hasOwn(guardEnvironment, 'RIPGREP_CONFIG_PATH') || guardEnvironment.COCKPIT_RIPGREP_CONFIG_ACTIVE === '1',
                 searchPath: guardEnvironment.PATH ?? '', agentSession, agentEnvironment,
                 ...guardEnvironment.HOME ? { home: guardEnvironment.HOME } : {}, ...guardEnvironment.XDG_CONFIG_HOME ? { xdgConfigHome: guardEnvironment.XDG_CONFIG_HOME } : {} }, {

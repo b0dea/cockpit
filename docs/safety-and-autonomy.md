@@ -174,7 +174,9 @@ Limits, stated plainly:
   worktree of the checkout (`AGENT_NESTED_REPOSITORY`). `git worktree add` stays allowed, since a
   worktree carries its own committed guard, but a session started in a subdirectory of a worktree kept
   below the root is guarded only once `sync` has run in that worktree; `doctor` there reports
-  `CLAUDE_LOCAL_HOOK_MISSING` until it has.
+  `CLAUDE_LOCAL_HOOK_MISSING` until it has. Until then the checkout above the worktree judges calls made
+  in it and admits only `cd` and `pwd`: an agent that changes into it can still leave, and its policy does
+  not cover the worktree's own settings, wrappers, instances or secret paths, so nothing else runs there.
 - Claude Code refuses a call whose guard hook times out, through `onFailure: "block"` (measured
   2026-11-15); what Codex does then is not measured. The guard keeps its own 25-second
   deadline and refuses at it ([Native adapter behavior](#native-adapter-behavior)).
@@ -1161,7 +1163,7 @@ generated Claude Code and Codex commands are one line that runs the committed gu
 holds the recovery text. Each takes the outermost directory at or above the session's that holds the
 guard script, starting for Claude Code from `CLAUDE_PROJECT_DIR`, else the working directory, and
 stopping at the nearest directory with a `.git` entry, so a linked worktree kept below its main checkout
-runs its own guard; it blocks the call when more than one directory within that bound holds one, since
+runs its own guard once synced there, and the main checkout's, admitting only `cd` and `pwd`, until then; it blocks the call when more than one directory within that bound holds one, since
 it cannot tell which is the cockpit's; a script that is missing or exits with any status but 0 or 2 blocks
 the call with `cockpit guard failed (<status>); a person runs cockpit sync in a terminal`. The generated Claude Code and Codex registrations give the guard hook a
 `timeout` of 30 seconds; a guard call spawns several Node and Git processes and was seen to exceed
