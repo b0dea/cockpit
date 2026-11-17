@@ -750,7 +750,7 @@ export async function runGuardEvaluationApplication(
         if (data.unsyncedWorktree === true && judged.decision === 'allow' && !(parsed.tool === 'Bash' && !parsed.background && !parsed.unreadable
             && parsed.invocations.every(({ executable, argv, words, redirects }) => redirects.length === 0
                 && (executable === null ? words.length === 1 && words[0]!.role === 'directory' : executable === 'pwd' && argv.length === 0)))) {
-            return refused({ decision: 'deny', reason: `${parsed.cwd} is in a linked worktree where nobody has installed dependencies and run cockpit sync, so it has no guard of its own. Until it does, the checkout above it judges calls made there and admits only \`cd\` and \`pwd\`. Change to the main checkout and work on the worktree from there with \`git -C <worktree>\`, or a person installs dependencies and runs sync in the worktree.` })
+            return refused({ decision: 'deny', reason: `${parsed.cwd} is in a linked worktree where nobody has installed dependencies and synced cockpit, so it has no guard of its own. Until it does, the checkout above it judges calls made there and admits only \`cd\` and \`pwd\`. Change to the main checkout and work on the worktree from there with \`git -C <worktree>\`, or a person installs dependencies and syncs cockpit in the worktree.` })
         }
         return refused(judged)
     } catch (error) {
