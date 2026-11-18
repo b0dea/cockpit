@@ -13,6 +13,12 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.23
+
+### Patch Changes
+
+- 3351b09: A work-order check or test stage whose command is a relative path, such as `./node_modules/@b00dea/cockpit/bin/cockpit.mjs`, now runs from the cockpit root as a shell there would. Before, cockpit looked the path up on PATH and reported the command unavailable.
+
 ## 0.1.22
 
 ### Patch Changes
