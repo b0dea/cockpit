@@ -13,6 +13,12 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.24
+
+### Patch Changes
+
+- 09613f2: The guard now judges a program under any spelling of its name. On a case-insensitive disk, such as macOS's default, `GIT push origin HEAD:main`, `SUDO true` or `ENV` ran the real program while skipping every rule written for its lowercase name. A declared deny naming a program, such as `make release`, now also refuses the program run by its path, as in `/usr/bin/make release`.
+
 ## 0.1.23
 
 ### Patch Changes
