@@ -18,7 +18,7 @@ vi.mock('node:fs/promises', async importOriginal => {
 })
 
 // Each case is a real cockpit in a throwaway Git repository, and the checks run as real processes.
-// Only the person is simulated, by the terminal answer `confirmWorkOrder` returns.
+// Only the person is simulated, by the answer `asPerson` gives to each step approve shows.
 const roots: string[] = []
 afterEach(() => { opening.around = undefined; for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 
@@ -71,10 +71,11 @@ process.stdout.write(JSON.stringify({ type: 'result', is_error: false, session_i
     chmodSync(join(tools, 'claude'), 0o700)
     return tools
 }
-// A person at a terminal: no JSON, --interactive, and the answer they type to the prompt they read.
-async function asPerson(root: string, args: readonly string[], answer: (prompt: string, digest: string) => string): Promise<number> {
-    const io: CliIo = { stdout: { write: () => true }, stderr: { write: () => true }, confirmWorkOrder: async ({ prompt, digest }) => answer(prompt, digest) }
-    return runCli([...args, '--config', join(root, 'cockpit.toml'), '--interactive'], io, {}, { env: { ...process.env, CI: '' } })
+// A person at a terminal outside any agent runs approve, and answers each step by the screen it shows.
+async function asPerson(root: string, answer: (screen: string) => boolean): Promise<number> {
+    const io: CliIo = { stdout: { write: () => true }, stderr: { write: () => true },
+        confirm: async ({ title, why, details }) => answer([title, `Why you: ${why}`, ...details].join('\n')) }
+    return runCli(['approve', '--config', join(root, 'cockpit.toml')], io, {}, { env: { ...process.env, CI: '', CLAUDECODE: '', CODEX_THREAD_ID: '', OPENCODE: '' } })
 }
 const record = (root: string, id: string) => JSON.parse(readFileSync(join(root, `.cockpit/work-orders/${id}.json`), 'utf8')) as Record<string, any>
 
@@ -362,7 +363,7 @@ describe('work-order lifecycle', () => {
         writeFileSync(join(root, GUARD_LOCAL_PATHS.identity), encodeGuardLocalIdentity({ ...identity, configSha256: sha256Hex(checksToml) } as never))
         writeFileSync(join(root, GUARD_LOCAL_PATHS.generatedConfig), checksToml)
         expect((await work(root, ['work', 'status'])).diagnostics[0]?.message)
-            .toMatch(/cockpit\.toml changes work\.grading since the guards were generated, which widens what agents may do; a person runs .* --interactive/)
+            .toMatch(/cockpit\.toml changes work\.grading since the guards were generated, which widens what agents may do; this needs a person: they run npx --no cockpit approve/)
         // test-run reads the grading to judge test weakening, so it waits for that sync too.
         expect((await work(root, ['test-run', '--gate', 'quick', '--mode', 'canonical'])).diagnostics[0]?.message).toMatch(/changes work\.grading since the guards were generated/)
         // [testing] says which files hold tests and what each stage runs, so an edit of it waits as well.
@@ -454,26 +455,26 @@ describe('work-order lifecycle', () => {
             diagnostics: [{ code: 'WORK_VERIFY_FAILED', message: expect.stringContaining('WO-6 decision 1: its record docs/adr/0003-sum-with-the-operator.md does not cite WO-6') }] })
     }, 120_000)
 
-    it('passes a person step only for the digest a person types, and never weakens a criterion on an agent\'s word', async () => {
+    it('passes a person step only on a person\'s yes, and never weakens a criterion on an agent\'s word', async () => {
         const root = await cockpit('[work]\ngrading = "checks"')
         writeFileSync(join(root, 'workorders/WO-3.md'), order('WO-3', '  - id: AC1\n    text: add(2, 3) returns 5.\n    check: [node, test/add.test.mjs]\n  - id: AC2\n    text: add(0, 0) returns 0.\n    check: [node, test/add.test.mjs]'))
         expect((await work(root, ['work', 'accept', '--work-order', 'WO-3'])).result).toMatchObject({ state: 'accepted', by: 'agent' })
 
-        // Removing an accepted criterion moves the bar, so it needs a person. The control: an agent's plain
-        // run, which has no terminal, is refused, and a wrong digest records nothing.
+        // Removing an accepted criterion moves the bar, so it needs a person. The control: an agent's own
+        // run is refused, and a person's no records nothing.
         writeFileSync(join(root, 'workorders/WO-3.md'), order('WO-3'))
         const refused = await work(root, ['work', 'accept', '--work-order', 'WO-3'])
-        expect(refused).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_PERSON_REQUIRED' }] })
-        expect(String(refused.result?.prompt)).toContain('AC2 is removed')
-        expect(await asPerson(root, ['work', 'accept', '--work-order', 'WO-3'], () => `amend ${'0'.repeat(64)}`)).toBe(2)
+        expect(refused).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_PERSON_REQUIRED' }], result: { title: 'Amend WO-3' } })
+        expect(await asPerson(root, () => false)).toBe(0)
         expect(record(root, 'WO-3').amendments).toEqual([])
-        expect(await asPerson(root, ['work', 'accept', '--work-order', 'WO-3'], (prompt, digest) => prompt.includes('AC2 is removed') ? `amend ${digest}` : '')).toBe(0)
+        await work(root, ['work', 'accept', '--work-order', 'WO-3'])
+        expect(await asPerson(root, screen => screen.includes('AC2 is removed'))).toBe(0)
         expect(record(root, 'WO-3').amendments).toEqual([expect.objectContaining({ by: 'person', weakened: ['AC2 is removed'] })])
 
         // Under checks grading no model can judge a widened scope, so it is a person's too.
         writeFileSync(join(root, 'workorders/WO-3.md'), order('WO-3').replace('scope: [src/, test/]', 'scope: [src/, test/, docs/]'))
         expect((await work(root, ['work', 'accept', '--work-order', 'WO-3'])).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
-        expect(await asPerson(root, ['work', 'accept', '--work-order', 'WO-3'], (prompt, digest) => prompt.includes('Changed scope: "src/, test/" -> "src/, test/, docs/"') ? `amend ${digest}` : '')).toBe(0)
+        expect(await asPerson(root, screen => screen.includes('Changed scope: "src/, test/" -> "src/, test/, docs/"'))).toBe(0)
         expect(record(root, 'WO-3').amendments[1]).toMatchObject({ by: 'person', weakened: [], review: [{ field: 'scope', before: 'src/, test/', after: 'src/, test/, docs/' }] })
     }, 120_000)
 
@@ -510,12 +511,13 @@ describe('work-order lifecycle', () => {
             result: { state: 'accepted', criteria: [{ id: 'AC1', verdict: 'met' }, { id: 'test-protection', verdict: 'unmet' }],
                 testProtection: { testFiles: expect.stringContaining('built-in') } } })
 
-        // The agent's plain run has no terminal, so it cannot acknowledge for itself; a wrong digest records nothing.
+        // The agent cannot acknowledge for itself, and a person's no records nothing.
         const note = ['work', 'acknowledge', '--work-order', 'WO-4', '--note', 'the extra test duplicated AC1']
         expect((await work(root, note)).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
-        expect(await asPerson(root, note, () => `acknowledge ${'0'.repeat(64)}`)).toBe(2)
+        expect(await asPerson(root, () => false)).toBe(0)
         expect(record(root, 'WO-4').acknowledgements).toEqual([])
-        expect(await asPerson(root, note, (prompt, digest) => prompt.includes('test/extra.test.mjs: test-file-removed') ? `acknowledge ${digest}` : '')).toBe(0)
+        await work(root, note)
+        expect(await asPerson(root, screen => screen.includes('test/extra.test.mjs: test-file-removed'))).toBe(0)
         expect(record(root, 'WO-4').acknowledgements).toEqual([expect.objectContaining({ by: 'person', note: 'the extra test duplicated AC1' })])
         expect(await work(root, ['work', 'grade', '--work-order', 'WO-4'])).toMatchObject({ status: 0, result: { state: 'graded',
             criteria: [{ id: 'AC1' }, { id: 'test-protection', verdict: 'met' }], testProtection: { acknowledgedBy: 'person' } } })
@@ -583,11 +585,11 @@ describe('work-order lifecycle', () => {
             { code: 'WORK_GRADE_UNSATISFIED', message: expect.stringContaining('the next amendment of WO-7 is a person\'s') }] })
         // The agent may close a capped order as partial or abandoned; fresh attempts are a person's. An agent's amendment keeps the count, so it is not offered.
         expect((await run(['work', 'check', '--work-order', 'WO-7'])).diagnostics[0]?.message)
-            .toMatch(/attempt cap \(1\); record the root cause with work note, then close it with .*--partial\|--abandon --note <why>, or a person grants it fresh attempts with .*work retry /)
+            .toMatch(/attempt cap \(1\); record the root cause with work note, then close it with .*--partial\|--abandon --note <why>, or ask a person for fresh attempts: run .*work retry /)
         // A grade that found the agent's amendments lower the bar makes the next amendment a person's.
         writeFileSync(join(root, 'workorders/WO-7.md'), order('WO-7'))
         expect((await run(['work', 'accept', '--work-order', 'WO-7'])).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
-        expect(await asPerson(root, ['work', 'accept', '--work-order', 'WO-7'], (prompt, digest) => prompt.includes('lower the bar') ? `amend ${digest}` : '')).toBe(0)
+        expect(await asPerson(root, screen => screen.startsWith('Amend WO-7') && screen.includes('lower the bar'))).toBe(0)
         // A person's amendment settles the review, so the next grade carries no amendments criterion.
         writeFileSync(join(tools, 'verdict'), 'met')
         expect(((await run(['work', 'grade', '--work-order', 'WO-7'])).result?.criteria as { id: string }[]).map(row => row.id))
@@ -612,7 +614,8 @@ describe('work-order lifecycle', () => {
         expect((await run(['work', 'signoff', '--work-order', 'WO-10', '--abandon', '--note', 'stopping here'])).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
         writeFileSync(join(root, 'workorders/WO-10.md'), order('WO-10'))
         expect((await run(['work', 'accept', '--work-order', 'WO-10'])).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
-        expect(await asPerson(root, ['work', 'accept', '--work-order', 'WO-10'], (prompt, digest) => prompt.includes('lower the bar') ? `amend ${digest}` : '')).toBe(0)
+        // The agent's signoff waits beside the amendment; the person approves only the amendment.
+        expect(await asPerson(root, screen => screen.startsWith('Amend WO-10') && screen.includes('lower the bar'))).toBe(0)
         // A person's amendment settles it: the agent may reword its contract again.
         writeFileSync(join(root, 'workorders/WO-10.md'), reworded)
         expect((await run(['work', 'accept', '--work-order', 'WO-10'])).result).toMatchObject({ amended: true, by: 'agent' })
@@ -710,7 +713,7 @@ describe('work-order lifecycle', () => {
         expect((await work(root, ['work', 'signoff', '--work-order', 'WO-30'])).result).toMatchObject({ state: 'done' })
         const abandon = ['work', 'signoff', '--work-order', 'WO-32', '--abandon', '--note', 'superseded']
         expect((await work(root, abandon)).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
-        expect(await asPerson(root, abandon, (prompt, digest) => prompt.includes('WO-30 closed done on a grade that left lib/legacy.test.mjs to WO-32') ? `signoff ${digest}` : '')).toBe(0)
+        expect(await asPerson(root, screen => screen.includes('WO-30 closed done on a grade that left lib/legacy.test.mjs to WO-32'))).toBe(0)
         expect(record(root, 'WO-32')).toMatchObject({ state: 'abandoned', closure: { by: 'person' } })
     }, 120_000)
 
@@ -755,14 +758,15 @@ describe('work-order lifecycle', () => {
         expect((await run(['work', 'accept', '--work-order', 'WO-14'])).status).toBe(0)
         writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => a - b\n')
         expect((await run(['work', 'grade', '--work-order', 'WO-14', '--verdict', 'unmet', '--note', 'add subtracts'])).status).toBe(2)
-        expect((await run(['work', 'check', '--work-order', 'WO-14'])).diagnostics[0]?.message).toMatch(/attempt cap \(1\); record the root cause with work note, then close it with .*--partial\|--abandon --note <why>, or a person grants it fresh attempts with .*work retry .*--note <the root cause> --interactive$/)
+        expect((await run(['work', 'check', '--work-order', 'WO-14'])).diagnostics[0]?.message).toMatch(/attempt cap \(1\); record the root cause with work note, then close it with .*--partial\|--abandon --note <why>, or ask a person for fresh attempts: run .*work retry .*--note <the root cause>, then they run npx --no cockpit approve in a terminal outside the agent$/)
         expect((await run(['work', 'accept', '--work-order', 'WO-14'])).diagnostics[0]?.message)
             .toMatch(/^WO-14 is already accepted and workorders\/WO-14\.md has not changed since, so there is nothing to amend; it is at its attempt cap \(1\): /)
         const retry = ['work', 'retry', '--work-order', 'WO-14', '--note', 'add subtracted; fixed in src/add.mjs']
         expect((await run(retry)).diagnostics[0]?.code).toBe('WORK_PERSON_REQUIRED')
         let shown = ''
-        expect(await asPerson(root, retry, (prompt, digest) => { shown = prompt; return `retry ${digest}` })).toBe(0)
-        expect(shown).toMatch(/Last failed:\n  AC1 unmet: add subtracts\n  check AC1 exit 1\nRoot cause given:\n  add subtracted; fixed in src\/add\.mjs\nwork retry is always a person's step/)
+        expect(await asPerson(root, screen => { shown = screen; return true })).toBe(0)
+        expect(shown).toBe('Give WO-14 1 fresh attempts after 1 failed\nWhy you: only a person grants fresh attempts after failures, or an agent could retry its own failed work forever\n'
+            + 'Root cause given: add subtracted; fixed in src/add.mjs\nFailed AC1: unmet: add subtracts\nFailed check AC1: exit 1')
         expect(record(root, 'WO-14')).toMatchObject({ attempts: 0, retries: [{ by: 'person', attempts: 1, note: 'add subtracted; fixed in src/add.mjs', failed: [{ id: 'AC1', text: 'unmet: add subtracts' }, { id: 'check AC1', text: 'exit 1' }] }] })
         expect((await run(retry)).diagnostics[0]?.message).toBe('WO-14 has 1 of its 1 attempts left; work retry is for an order at its attempt cap')
         // Rewording its contract does not hand the agent its attempts back.

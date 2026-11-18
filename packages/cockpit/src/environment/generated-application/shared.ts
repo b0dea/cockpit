@@ -609,7 +609,7 @@ export function complete(
             ...prepared.unapprovedMcpServers.map(server => ({
                 severity: 'warning' as const, code: 'MCP_NOT_APPROVED' as const satisfies McpDiagnostic['code'], target: server.name,
                 message: `MCP server ${server.name}, declared in ${server.sources.join(', ')}, has no approval in [mcp.approved] for its current declaration (command, arguments, working directory and environment names for a local server; URL, header references and headers helper for a remote one), so every harness keeps it disabled`,
-                fix: 'to enable it, a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal outside the agent, reviews the declaration it shows and answers yes, which records the approval. A sync an agent runs keeps it off; to keep it off at that yes too, which approves every server it lists, remove it from the MCP source the sibling declares',
+                fix: 'to enable it, a person runs npx --no cockpit approve in a terminal outside the agent, reviews the declaration it shows and answers yes, which records the approval. A sync an agent runs keeps it off; to keep it off at that yes too, which approves every server it lists, remove it from the MCP source the sibling declares',
             })),
             ...prepared.mcpTransportGaps.map(gap => ({
                 severity: 'warning' as const, code: 'MCP_TRANSPORT_UNAVAILABLE' as const satisfies McpDiagnostic['code'], target: gap.name,

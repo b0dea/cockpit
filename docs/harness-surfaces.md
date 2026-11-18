@@ -229,8 +229,7 @@ its command, arguments, working directory relative to the cockpit, and environme
 declaration lives in a sibling's file, which an agent can edit, so a server whose declaration
 changed is no longer approved. A declared server absent from the list, or whose digest differs, is
 rendered disabled for every harness (for Claude Code through `disabledMcpjsonServers`, because it
-ignores `disabled` in `.mcp.json`), and `sync` and `check` report `MCP_NOT_APPROVED` with the digest
-to approve. A person approves with the one yes at `sync --interactive`, which shows each server's
+ignores `disabled` in `.mcp.json`), and `sync` and `check` report `MCP_NOT_APPROVED`. A person approves with the one yes at `npx --no cockpit approve`, which shows each server's
 name, what it runs, the environment variable names it is given or the headers it sends (their
 references, never values), and where it is declared, and writes the entry; nobody types or copies a hash.
 An approval whose name no source declares refuses every sync (`MCP_APPROVAL_UNKNOWN`) until the entry is deleted, so a yes never covers a server it did not show. Cockpit rejects conflicting
@@ -274,7 +273,7 @@ Each name is exact. Every other tool from that server, including a newly added o
 empty list denies all tools; an absent server has no restriction. The server must be declared, and
 overlapping native server namespaces are refused.
 
-Widening the list needs a person's yes at `sync --interactive`, as other increases in agent
+Widening the list needs a person's yes at `npx --no cockpit approve`, as other increases in agent
 authority do, and so does removing a server's list. Adding a restriction or removing tools narrows
 access, so an agent can sync it: when the restriction leaves a listed tool with no servers, `sync`
 removes that tool's MCP-only file (`.mcp.json` or `.cursor/mcp.json`) as long as its bytes are
@@ -435,7 +434,7 @@ An upgrade replaces the generated files that guard and instruct every agent, so 
 name it, detects the package manager from the one lockfile at the cockpit root, installs the exact
 version as a dev dependency, then runs `npx --no cockpit sync --config <path>` in a new process so
 the new version renders. Sync's output and exit code pass through: it removes stale generated files, and an upgrade
-that widens what agents may do waits for a person's `sync --interactive` yes. It ends by printing the `Upgrade:` lines from the installed `CHANGELOG.md`
+that widens what agents may do waits for a person's `npx --no cockpit approve` yes. It ends by printing the `Upgrade:` lines from the installed `CHANGELOG.md`
 between the two versions (each names a step `sync` does not do), or the npm page when there is no
 changelog.
 

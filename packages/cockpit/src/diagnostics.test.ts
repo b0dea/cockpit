@@ -55,7 +55,7 @@ describe('diagnostic envelope', () => {
             { kind: 'container', identity: 'demo-1a2b-api-1', declaration: 'demo-1a2b-api-1' },
         ] })).toBe(`Reset would remove 2 targets (${stackId}); plan ${'d'.repeat(64)}:\n`
             + '  volume demo-1a2b_data (data)\n  container demo-1a2b-api-1\n'
-            + 'Nothing was changed. To apply this plan, run the same command with --interactive and approve it.\n')
+            + 'Nothing was changed. To apply it, run the same command with --apply; without a declared seed it waits for a person, who runs npx --no cockpit approve.\n')
         expect(review('reset', { stackId, change: 'reset', targets: [{ kind: 'volume', identity: 'demo-1a2b_data', declaration: 'data' }] }))
             .toBe(`Reset removed 1 target (${stackId}):\n  volume demo-1a2b_data (data)\n`
                 + 'The next up recreates the removed volumes and, where environment.seed is declared, runs the seed to fill them.\n')

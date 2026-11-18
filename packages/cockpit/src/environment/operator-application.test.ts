@@ -21,29 +21,13 @@ const preview = Object.freeze({
 })
 
 describe('operator application admission', () => {
-    it.each([
-        ['JSON', { interactive: true, json: true, ci: undefined, terminal: true }],
-        ['CI', { interactive: true, json: false, ci: '1', terminal: true }],
-        ['piped input', { interactive: true, json: false, ci: undefined, terminal: false }],
-    ] as const)('refuses reset in %s before opening a session', async (_name, admission) => {
-        const begin = vi.fn()
-        const outcome = await runResetOperatorApplication(
-            { configPath: '/synthetic/cockpit.toml' },
-            admission,
-            { preview: vi.fn(), begin, confirm: vi.fn(), policy: policyAdapter().load },
-        )
-
-        expect(outcome.status).toBe(2)
-        expect(begin).not.toHaveBeenCalled()
-    })
-
-    it('uses the preview-only reset runner outside interactive mode', async () => {
+    it('previews a reset outside a person\'s run', async () => {
         const outcome = Object.freeze({ ...preview, result: Object.freeze({ noop: true }) })
         const runPreview = vi.fn(async () => outcome)
 
         await expect(runResetOperatorApplication(
             { configPath: '/synthetic/cockpit.toml' },
-            { interactive: false, json: false, ci: undefined, terminal: false },
+            { person: false },
             { preview: runPreview, begin: vi.fn(), confirm: vi.fn(), policy: policyAdapter().load },
         )).resolves.toBe(outcome)
         expect(runPreview).toHaveBeenCalledWith({ configPath: '/synthetic/cockpit.toml' })
@@ -58,7 +42,7 @@ describe('operator application admission', () => {
 
         await runResetOperatorApplication(
             { configPath: '/synthetic/cockpit.toml' },
-            { interactive: true, json: false, ci: undefined, terminal: true },
+            { person: true },
             { preview: vi.fn(), begin: vi.fn(async () => Object.freeze({ preview, decide })), confirm, policy: policyAdapter().load },
         )
 
@@ -74,7 +58,7 @@ describe('operator application admission', () => {
         const adapters = { preview: vi.fn(), begin: vi.fn(async () => ({ preview, decide })), confirm, policy: policyAdapter().load }
         let completed = false
         const pending = runResetOperatorApplication({ configPath: '/synthetic/cockpit.toml' },
-            { interactive: true, json: false, ci: undefined, terminal: true }, adapters)
+            { person: true }, adapters)
             .then(outcome => { completed = true; return outcome })
         await vi.waitFor(() => expect(decide).toHaveBeenCalledWith('decline'))
         expect(completed).toBe(false)
@@ -89,7 +73,7 @@ describe('operator application admission', () => {
         const decide = vi.fn(async () => { throw failure })
         const adapters = { preview: vi.fn(), begin: vi.fn(async () => ({ preview, decide })), confirm: async () => false, policy: policyAdapter().load }
         await expect(runResetOperatorApplication({ configPath: '/synthetic/cockpit.toml' },
-            { interactive: true, json: false, ci: undefined, terminal: true }, adapters)).rejects.toBe(failure)
+            { person: true }, adapters)).rejects.toBe(failure)
         expect(decide).toHaveBeenCalledWith('decline')
     })
 
@@ -99,7 +83,7 @@ describe('operator application admission', () => {
             const begin = vi.fn(async () => Object.freeze({ preview, decide }))
             const confirm = vi.fn()
             return { begin, confirm, outcome: runResetOperatorApplication({ configPath: '/synthetic/cockpit.toml' },
-                { interactive: false, apply: true, json: false, ci: undefined, terminal: false },
+                { person: false, apply: true },
                 { preview: vi.fn(), begin, confirm, policy: policyAdapter(policyOf(policy)).load }) }
         }
         const seeded = run({ seeded: true })
@@ -116,11 +100,11 @@ describe('operator application admission', () => {
     })
 
     it('prunes orphaned stacks for an agent, and deletes volumes only where an agent may reset or a person answers yes', async () => {
-        const run = (deletesData: boolean, seeded: boolean, admission: Partial<{ interactive: boolean; apply: boolean; yes: boolean }> = { apply: true }) => {
+        const run = (deletesData: boolean, seeded: boolean, admission: Partial<{ person: boolean; apply: boolean; yes: boolean }> = { apply: true }) => {
             const apply = vi.fn(async () => Object.freeze({ status: 0, diagnostics: Object.freeze([]), result: { removed: [] } }))
             const begin = vi.fn(async () => Object.freeze({ preview, digest: 'b'.repeat(64), empty: false, deletesData, apply }))
             const outcome = runStacksPruneOperatorApplication({ configPath: '/synthetic/cockpit.toml' },
-                { interactive: admission.interactive ?? false, apply: admission.apply ?? false, json: false, ci: undefined, terminal: true },
+                { person: admission.person ?? false, apply: admission.apply ?? false },
                 { begin, confirm: vi.fn(async () => admission.yes === true), policy: policyAdapter(policyOf({ seeded })).load })
             return { apply, begin, outcome }
         }
@@ -137,10 +121,10 @@ describe('operator application admission', () => {
         expect((await data.outcome).diagnostics[0]?.code).toBe('RESET_CONFIRMATION_REQUIRED')
         expect(data.apply).not.toHaveBeenCalled()
         expect((await run(true, true).outcome).status).toBe(0)
-        const declined = run(true, false, { interactive: true, yes: false })
-        expect((await declined.outcome).diagnostics[0]?.code).toBe('STACKS_PRUNE_UNCONFIRMED')
+        const declined = run(true, false, { person: true, yes: false })
+        expect((await declined.outcome).status).toBe(130)
         expect(declined.apply).not.toHaveBeenCalled()
-        const approved = run(true, false, { interactive: true, yes: true })
+        const approved = run(true, false, { person: true, yes: true })
         expect((await approved.outcome).status).toBe(0)
         expect(approved.begin).toHaveBeenCalledWith({ configPath: '/synthetic/cockpit.toml', scope: 'machine' })
     })
@@ -153,16 +137,16 @@ describe('operator application admission', () => {
             if (!input.dryRun) approvals.push(await input.authorizeStaleRemoval?.(request))
             return { status: 0, diagnostics: [], result: { dryRun: input.dryRun === true, sourceSha256: 'a'.repeat(64) } }
         })
-        await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, { interactive: false, json: false, ci: undefined, terminal: false },
+        await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, { person: false },
             { synchronize, policy: policyAdapter().load, confirmWidening: vi.fn() })
-        await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, { interactive: true, json: false, ci: undefined, terminal: true },
+        await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, { person: true },
             { synchronize, policy: policyAdapter().load, confirmWidening: vi.fn() })
         expect(approvals).toEqual([{ format: 'cockpit-stale-removal-approval/v1', digest: request.digest }, { format: 'cockpit-stale-removal-approval/v1', digest: request.digest }])
     })
 
     it('applies a widening and enables MCP servers only on one yes, recording the approvals and binding the sync to the bytes that hold them', async () => {
         const server: McpApproval = { name: 'docs', sha256: 'd'.repeat(64), approved: false, sources: ['web:.mcp.json'], runs: 'node docs-server.mjs (in web)', environment: [], headers: [] }
-        const interactive = { interactive: true, json: false, ci: undefined, terminal: true }
+        const person = { person: true }
         const run = async (yes: boolean) => {
             const approveMcp = vi.fn(async () => 'e'.repeat(64))
             const before = policyOf({ widened: ['guards.allow'], approveMcp })
@@ -176,7 +160,7 @@ describe('operator application admission', () => {
                 return { status: 0, diagnostics: [], result: null }
             })
             const confirmWidening = vi.fn(async () => yes)
-            const outcome = await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, interactive, { synchronize, policy, confirmWidening })
+            const outcome = await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, person, { synchronize, policy, confirmWidening })
             return { outcome, writes, approveMcp, confirmWidening }
         }
         const approved = await run(true)
@@ -185,7 +169,7 @@ describe('operator application admission', () => {
         expect(approved.approveMcp).toHaveBeenCalledExactlyOnceWith([server])
         expect(approved.writes).toEqual([expect.objectContaining({ guardWidening: { configSha256: 'e'.repeat(64) } })])
         const declined = await run(false)
-        expect(declined.outcome).toMatchObject({ status: 2, diagnostics: [{ code: 'GUARD_CONFIG_WIDENED' }] })
+        expect(declined.outcome).toMatchObject({ status: 130, diagnostics: [] })
         expect(declined.approveMcp).not.toHaveBeenCalled()
         expect(declined.writes).toEqual([])
         // A server whose approval an unsynced edit typed into cockpit.toml is shown with what it starts, and needs no second write.
@@ -194,7 +178,7 @@ describe('operator application admission', () => {
         const approveMcp = vi.fn(async () => 'e'.repeat(64))
         const synchronize = vi.fn(async (input: GeneratedEnvironmentSyncHandlerInput) => ({ status: 0, diagnostics: [],
             result: input.dryRun ? { dryRun: true, sourceSha256: 'a'.repeat(64), mcpApprovals: [typed] } : null }))
-        expect((await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, interactive, { synchronize, confirmWidening,
+        expect((await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, person, { synchronize, confirmWidening,
             policy: async () => policyOf({ widened: ['mcp.approved.maps'], approveMcp }) })).status).toBe(0)
         expect(confirmWidening).toHaveBeenCalledExactlyOnceWith({ widens: ['mcp.approved.maps'], unrecorded: false, mcpServers: [typed] })
         expect(approveMcp).not.toHaveBeenCalled()
@@ -205,7 +189,7 @@ describe('operator application admission', () => {
         const confirmWidening = vi.fn(async () => true)
         const synchronize = vi.fn(async (input: GeneratedEnvironmentSyncHandlerInput) => ({ status: 0, diagnostics: [],
             result: input.dryRun ? { dryRun: true, sourceSha256: 'a'.repeat(64), mcpApprovals: [typed] } : null }))
-        expect((await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, { interactive: true, json: false, ci: undefined, terminal: true },
+        expect((await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, { person: true },
             { synchronize, confirmWidening, policy: async () => policyOf({ unrecorded: true }) })).status).toBe(0)
         expect(confirmWidening).toHaveBeenCalledExactlyOnceWith({ widens: [], unrecorded: true, mcpServers: [typed] })
     })
@@ -214,7 +198,7 @@ describe('operator application admission', () => {
         const synchronize = vi.fn(async (_input: GeneratedEnvironmentSyncHandlerInput) => ({ status: 0, diagnostics: [], result: null }))
         const confirmWidening = vi.fn()
         const policy = policyAdapter(policyOf({ widened: ['guards.allow'] }))
-        await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, { interactive: false, json: false, ci: undefined, terminal: false },
+        await runSyncOperatorApplication({ configPath: 'cockpit.toml' }, { person: false },
             { synchronize, policy: policy.load, confirmWidening })
         expect(synchronize).toHaveBeenCalledOnce()
         expect(synchronize.mock.calls[0]![0].guardWidening).toBeUndefined()
@@ -228,7 +212,7 @@ describe('operator application admission', () => {
         // The file on disk after the approvals were written is not the one they were written to.
         const policy = vi.fn().mockResolvedValueOnce(policyOf()).mockResolvedValue(policyOf({ configSha256: 'f'.repeat(64) }))
         const outcome = await runSyncOperatorApplication({ configPath: 'cockpit.toml' },
-            { interactive: true, json: false, ci: undefined, terminal: true }, { synchronize, policy, confirmWidening: async () => true })
+            { person: true }, { synchronize, policy, confirmWidening: async () => true })
         expect(outcome).toMatchObject({ status: 2, diagnostics: [{ code: 'CONFIG_CHANGED_DURING_EXECUTION' }] })
         expect(synchronize.mock.calls.every(([input]) => input.dryRun === true)).toBe(true)
     })

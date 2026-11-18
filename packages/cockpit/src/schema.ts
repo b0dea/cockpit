@@ -450,15 +450,15 @@ export const McpAllowedTools = z.record(
 ).refine(servers => Object.keys(servers).length <= 256, 'at most 256 MCP servers can have tool restrictions')
 
 // THE approval list: each approved server name maps to the digest of the declaration a person
-// approved, which `sync --interactive` writes here when the person answers yes. Approving a name
+// approved, which `cockpit approve` writes here when the person answers yes. Approving a name
 // alone let an agent rewrite the command of an approved server in a sibling's declaration file and
 // the next human sync start it. A server absent from it, or changed since, is generated disabled on
 // every harness, so the three cannot disagree about what may start.
 const Mcp = z
     .object({
         allowed_tools: McpAllowedTools.default({}).describe('Exact tool names permitted per declared MCP server. An empty list denies every tool; an absent server has no tool restriction. Review the tool implementation: names and read-only annotations do not establish read-only behavior. Unsupported harnesses receive no restricted server.'),
-        approved: z.record(z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/).max(128), z.string().regex(/^[a-f0-9]{64}$/, 'an approval is the sha256 sync --interactive records for the server'))
-            .refine((approved) => Object.keys(approved).length <= 256, 'at most 256 MCP servers can be approved').default({}).describe('Approved MCP servers, each mapped to the sha256 of the declaration a person approved; sync --interactive writes them. Others stay disabled.'),
+        approved: z.record(z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/).max(128), z.string().regex(/^[a-f0-9]{64}$/, 'an approval is the sha256 cockpit approve records for the server'))
+            .refine((approved) => Object.keys(approved).length <= 256, 'at most 256 MCP servers can be approved').default({}).describe('Approved MCP servers, each mapped to the sha256 of the declaration a person approved; cockpit approve writes them when a person answers yes. Others stay disabled.'),
     })
     .strict()
 

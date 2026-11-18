@@ -17,6 +17,7 @@ This generated index is for users choosing the command that owns their next oper
 ## Generate and verify
 
 - `cockpit sync`: Write the Compose ownership override and agent files from cockpit.toml.
+- `cockpit approve`: Show each step that waits for a person, and apply the ones you approve.
 - `cockpit check`: Report generated files that no longer match cockpit.toml.
 
 ## Run the stack
@@ -31,7 +32,7 @@ This generated index is for users choosing the command that owns their next oper
 - `cockpit exec`: Run a command inside one service's container of this checkout's stack.
 - `cockpit sleep`: Release this checkout and stop the stack if no other holder remains.
 - `cockpit down`: Stop and remove the stack (on the active local Docker context).
-- `cockpit reset`: Preview a reset, then approve it interactively, or apply it where a seed is declared (on the active local Docker context).
+- `cockpit reset`: Preview a reset, or apply it where a seed is declared and otherwise leave it for a person to approve (on the active local Docker context).
 - `cockpit stacks`: List every stack on this machine, or preview and remove those whose checkout is gone (stacks prune).
 
 ## Diagnose
@@ -52,7 +53,7 @@ This generated index is for users choosing the command that owns their next oper
 - `cockpit work acknowledge`: Acknowledge that an order weakened tests.
 - `cockpit work grade`: Grade an accepted order the way [work] grading says.
 - `cockpit work signoff`: Close a graded order as done, or any open one as partial or abandoned.
-- `cockpit work retry`: Grant an order at its attempt cap fresh attempts, as a person at a terminal.
+- `cockpit work retry`: Ask a person to grant an order at its attempt cap fresh attempts.
 - `cockpit work recover`: Inspect or remove a crashed command's work-order lock.
 - `cockpit work verify`: Check every record against its order.
 - `cockpit grade`: Independently grade uncommitted work against a criteria file, with no work order.

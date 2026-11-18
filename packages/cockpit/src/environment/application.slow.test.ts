@@ -1141,7 +1141,7 @@ describe('guard policy construction', () => {
         const widened = parse(readFileSync(configPath, 'utf8')) as { guards: { allow: unknown[] } }
         widened.guards.allow.push({ argv: ['cat', join(outside, 'notes.md')], cwd: '.', reason: 'Read the selected input.' })
         writeFileSync(configPath, stringify(widened))
-        const notice = ` ${canonicalConfig} has an unapproved edit that widens what agents may do (guards.allow); calls are judged under the configuration last synced until a person runs \`${root}/node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${canonicalConfig} --interactive\` in a terminal, outside the agent, and confirms it.`
+        const notice = ` ${canonicalConfig} has an unapproved edit that widens what agents may do (guards.allow); calls are judged under the configuration last synced until a person runs \`npx --no cockpit approve\` in ${root}, in a terminal outside the agent, and confirms it.`
         expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({ decision: { decision: 'allow' }, diagnostics: [] })
         const release = await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin', payload: shellPayload(`cat ${join(outside, 'notes.md')}`, root) }, adapters)
         expect(release.decision.decision).not.toBe('allow')
@@ -1150,7 +1150,7 @@ describe('guard policy construction', () => {
         // A spelling the guard cannot prove starts the installed cockpit is held as surely: `/./`, another case, or a path from inside the package's scope.
         const scope = dirname(dirname(dirname(launcher)))
         for (const command of [`${launcher} upgrade`, `${launcher} session --config ${canonicalConfig} -- ${launcher} sync --config ${canonicalConfig}`,
-            `node ${scope}/./cockpit/dist/cli.js sync --config ${canonicalConfig} --interactive`, `node ${scope.toUpperCase()}/COCKPIT/dist/cli.js upgrade`,
+            `node ${scope}/./cockpit/dist/cli.js sync --config ${canonicalConfig}`, `node ${scope.toUpperCase()}/COCKPIT/dist/cli.js upgrade`,
             `cd ${scope} && node cockpit/dist/cli.js sync --config ${canonicalConfig}`]) {
             expect((await runGuardEvaluationApplication({ ...sync, payload: shellPayload(command, root) }, adapters)).decision.reason, command).toMatch(/^Refusing to run cockpit (sync|upgrade)/)
         }
@@ -1217,8 +1217,8 @@ describe('guard policy construction', () => {
             const held = await decide(write('app/.env.example'))
             expect(held).toMatchObject({ decision: 'unavailable',
                 reason: expect.stringContaining(`the configuration last synced is missing from ${GUARD_LOCAL_PATHS.generatedConfig} or does not load there`) })
-            // Plain sync refuses in this state, so the hold names the sync a person runs.
-            expect(held.reason).toContain(`sync --config ${configPath} --interactive\` in a terminal, outside the agent`)
+            // Plain sync refuses in this state, so the hold names the approval a person gives.
+            expect(held.reason).toContain('npx --no cockpit approve` in ')
         } finally { renameSync(`${record}.away`, record); repair() }
 
         // An edit that widens nothing but whose policy cannot be built is judged under the record instead.

@@ -311,7 +311,7 @@ describe('shipped skill contract', () => {
         expect(body).toContain('lines starting `Upgrade:`')
         expect(body).toContain('prove the fix with the product\'s own test runner, and report that no gate graded it')
         expect(body).toContain('Is this a work order?')
-        expect(body).toContain('Never type the digest yourself.')
+        expect(body).toContain('Never answer it for them.')
         expect(body).toContain('./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config cockpit.toml --work-order WO-001')
         expect(body).toContain('## On drift')
         expect(body).toContain('commit it together with the guide change')
@@ -331,13 +331,14 @@ describe('shipped skill contract', () => {
         expect(body).toContain('Show the human the proposed sibling declaration before invoking the command')
         expect(body).toContain('The command writes cockpit.toml immediately; `--json` changes only its output format')
         // A new repository is a new directory the agent may write, so its sync is a person's; an added tool is not, so the agent runs it.
-        expect(body).toContain('Adding or removing a repository widens what agents may do (a new repository is a new directory they may write), so until a person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a terminal and confirms it, calls are judged under the configuration last synced and every refusal names the sibling')
+        expect(body).toContain('Adding or removing a repository widens what agents may do (a new repository is a new directory they may write), so until a person runs `npx --no cockpit approve` in a terminal outside the agent and confirms it, calls are judged under the configuration last synced and every refusal names the sibling')
         expect(body).not.toContain('the hold names')
         expect(body).toContain('Adding a tool does not widen what agents may do, so you may run `tool add`')
         expect(body).not.toContain('until a person runs `./node_modules/.bin/cockpit down')
         expect(body).not.toContain('until a person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs down')
         expect(body).not.toContain('--gate unit')
         expect(body).not.toContain('`work accept --interactive`')
+        expect(body).not.toContain('--interactive` in a terminal')
         const explain = result.files.find(file => file.target === 'codexcli' && file.path === '.agents/skills/cockpit-explain/SKILL.md')
         const fix = result.files.find(file => file.target === 'opencode' && file.path === '.opencode/skills/cockpit-fix/SKILL.md')
         const setup = result.files.find(file => file.target === 'codexcli' && file.path === '.agents/skills/cockpit-setup/SKILL.md')
@@ -346,7 +347,7 @@ describe('shipped skill contract', () => {
         // Installing a release by hand makes the guard hold every agent call, so the sync that follows is a person's.
         const upgrade = body.slice(body.indexOf('## After upgrading cockpit'))
         const exactInstall = upgrade.indexOf('npm install --save-dev --save-exact @b00dea/cockpit@<version>')
-        const humanSync = upgrade.indexOf('a person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --dry-run` and then `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a terminal')
+        const humanSync = upgrade.indexOf('a person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --dry-run`, then `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`, then `npx --no cockpit approve` in a terminal outside the agent')
         expect(exactInstall).toBeGreaterThan(-1)
         expect(humanSync).toBeGreaterThan(exactInstall)
         expect(explain?.bytes).toContain('This skill changes nothing.')
@@ -492,7 +493,7 @@ describe('shipped procedure commands', () => {
             .map(match => match[1]!.replaceAll('<tool>', 'claudecode').replaceAll('<reference>', 'app:.env.schema').split(' '))
         expect(invocations.length).toBeGreaterThanOrEqual(9)
         // The procedure is run by a person at a terminal; a CI runner's CI variable would make the
-        // interactive sync step refuse, correctly, before routing.
+        // person-only step refuse, correctly, before routing.
         const { CI: _ci, ...humanEnvironment } = process.env
         for (const argv of invocations) {
             let invoked = false
@@ -500,7 +501,7 @@ describe('shipped procedure commands', () => {
             let output = ''
             const sink = { write: (text: string) => { output += text; return true } }
             const status = await runCli(argv, { stdout: sink, stderr: sink,
-                confirmWorkOrder: async candidate => candidate.digest, confirmWidening: async () => true }, {
+                confirm: async () => true }, {
                 init: async input => { invoked = true; return { kind: 'pending', status: 0, artifact: null, destination: null, diagnostics: [], result: { stage: 'surface-previewed', root: input.root, target: input.target, previewSha256: 'a'.repeat(64), files: [] } } },
                 // The documented work commands are the agent's; a gate the policy gives an agent needs no binding.
                 beginOperatorWorkApplication: async () => { invoked = true; return { status: 0, result: null, diagnostics: [] } },

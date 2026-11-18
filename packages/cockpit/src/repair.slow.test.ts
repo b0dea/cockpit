@@ -11,7 +11,8 @@ import { applyGeneratedEnvironmentRepair, syncGeneratedEnvironment } from './env
 import * as transaction from './generated-environment/transaction.js'
 import { proposeGeneratedEnvironmentRepair } from './repair.js'
 import { runCli, type CliIo } from './cli.js'
-import { loadOperatorPolicy, type WideningPreview } from './environment/operator-application.js'
+import { loadOperatorPolicy } from './environment/operator-application.js'
+import type { Approval } from './operator-confirmation.js'
 import { initializeTeamMetadata } from '../test-support/team-metadata.js'
 import { stubComposeTopology } from '../test-support/compose-topology-docker.js'
 
@@ -109,27 +110,29 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
         const original = await readFile(configPath, 'utf8')
         const generatedFrom = async () => parseGuardLocalIdentity(await readFile(join(root, GUARD_LOCAL_PATHS.identity), 'utf8'))!.configSha256
         const digestOf = async () => createHash('sha256').update(await readFile(configPath)).digest('hex')
-        const sync = async (args: readonly string[], confirm?: (preview: WideningPreview) => Promise<boolean>) => {
+        const sync = async (args: readonly string[]) => {
             let stdout = ''
-            const io = { stdout: { write: (text: string) => { stdout += text; return true } }, stderr: { write: () => true },
-                ...confirm ? { confirmWidening: confirm } : {} } as CliIo
+            const io = { stdout: { write: (text: string) => { stdout += text; return true } }, stderr: { write: () => true } } as CliIo
             const status = await runCli(['sync', '--config', configPath, ...args], io, {}, { env: {} })
             return { status, stdout }
         }
+        // A person at a terminal outside any agent, answering what approve shows.
+        const approve = (confirm: (approval: Approval) => Promise<boolean>) =>
+            runCli(['approve', '--config', configPath], { stdout: { write: () => true }, stderr: { write: () => true }, confirm } as CliIo, {}, { env: {} })
         const synced = await generatedFrom()
         await writeFile(configPath, `${original}\n[[guards.allow]]\nargv = ["cat", "notes.md"]\ncwd = "."\nreason = "Read the selected input."\n`)
         const refused = await sync(['--json'])
         expect(refused.status).toBe(2)
         const envelope = JSON.parse(refused.stdout)
         expect(envelope.diagnostics).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED', message: expect.stringContaining('(guards.allow)') })])
-        expect(envelope.guidance).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED', text: expect.stringContaining('--interactive') })])
+        expect(envelope.guidance).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED', text: expect.stringContaining('npx --no cockpit approve') })])
         expect(await generatedFrom()).toBe(synced)
-        // A no applies nothing; a yes to the preview applies exactly this edit.
-        expect((await sync(['--interactive'], async () => false)).status).toBe(2)
+        // A no applies nothing; a yes to the screen applies exactly this edit, recorded or not.
+        expect(await approve(async () => false)).toBe(0)
         expect(await generatedFrom()).toBe(synced)
-        const shown: WideningPreview[] = []
-        expect((await sync(['--interactive'], async preview => { shown.push(preview); return true })).status).toBe(0)
-        expect(shown).toEqual([{ widens: ['guards.allow'], unrecorded: false, mcpServers: [] }])
+        const shown: Approval[] = []
+        expect(await approve(async approval => { shown.push(approval); return true })).toBe(0)
+        expect(shown).toEqual([expect.objectContaining({ why: 'these changes widen what agents may do: guards.allow', details: ['Widens guards.allow'] })])
         expect(await generatedFrom()).toBe(await digestOf())
         await writeFile(configPath, original)
         expect((await sync(['--json'])).status).toBe(0)
@@ -138,12 +141,12 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
         const narrowed = await generatedFrom()
         let stdout = ''
         const io = { stdout: { write: (text: string) => { stdout += text; return true } }, stderr: { write: (text: string) => { stdout += text; return true } },
-            confirmWidening: async () => { throw new Error('nothing widened when sync classified the file') } } as CliIo
-        expect(await runCli(['sync', '--config', configPath, '--interactive'], io, { loadPolicy: async path => {
+            confirm: async () => { throw new Error('nothing widened when sync classified the file') } } as CliIo
+        expect(await runCli(['sync', '--config', configPath], io, { loadPolicy: async path => {
             const classified = await loadOperatorPolicy(path)
             await writeFile(configPath, `${original}\n[[guards.allow]]\nargv = ["cat", "late.md"]\ncwd = "."\nreason = "Read the selected input."\n`)
             return classified
-        } }, { env: {} })).toBe(2)
+        } }, { env: {}, approving: '1 of 1' })).toBe(2)
         expect(stdout).toMatch(/GUARD_CONFIG_WIDENED .*\(guards\.allow\); nothing was written/)
         expect(await generatedFrom()).toBe(narrowed)
     })
@@ -158,13 +161,13 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
         const identity = parseGuardLocalIdentity(await readFile(join(root, GUARD_LOCAL_PATHS.identity), 'utf8'))!
         expect(await writeGuardLocalIdentity(root, { ...identity, configSha256: createHash('sha256').update(previous).digest('hex') }, previous)).toEqual({ kind: 'complete' })
         let stdout = ''
-        const io = (confirm?: (preview: WideningPreview) => Promise<boolean>) => ({ stdout: { write: (text: string) => { stdout += text; return true } },
-            stderr: { write: () => true }, ...confirm ? { confirmWidening: confirm } : {} }) as CliIo
+        const io = (confirm?: (approval: Approval) => Promise<boolean>) => ({ stdout: { write: (text: string) => { stdout += text; return true } },
+            stderr: { write: () => true }, ...confirm ? { confirm } : {} }) as CliIo
         expect(await runCli(['sync', '--config', configPath, '--json'], io(), {}, { env: {} })).toBe(2)
         expect(JSON.parse(stdout).diagnostics).toEqual([expect.objectContaining({ code: 'GUARD_CONFIG_WIDENED', message: expect.stringContaining('no longer loads') })])
-        const shown: WideningPreview[] = []
-        expect(await runCli(['sync', '--config', configPath, '--interactive'], io(async preview => { shown.push(preview); return true }), {}, { env: {} })).toBe(0)
-        expect(shown).toEqual([{ widens: [], unrecorded: true, mcpServers: [] }])
+        const shown: Approval[] = []
+        expect(await runCli(['approve', '--config', configPath], io(async approval => { shown.push(approval); return true }), {}, { env: {} })).toBe(0)
+        expect(shown).toEqual([expect.objectContaining({ why: expect.stringContaining('cannot show what changed since the last sync'), details: [] })])
         expect(parseGuardLocalIdentity(await readFile(join(root, GUARD_LOCAL_PATHS.identity), 'utf8'))!.configSha256)
             .toBe(createHash('sha256').update(await readFile(configPath)).digest('hex'))
     })

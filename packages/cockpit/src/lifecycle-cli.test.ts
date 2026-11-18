@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { commands } from './command-table.js'
 import { runCli, type CliIo } from './cli.js'
+import type { Approval } from './operator-confirmation.js'
 import * as destructiveComposition from './environment/destructive-composition.js'
 import * as lifecycleComposition from './environment/lifecycle-composition.js'
 import { observeProcessStart, processHost } from './environment/claims.js'
@@ -38,13 +39,13 @@ async function activeContextHost(endpoint: string) {
     }
 }
 
-function captureIo(confirmReset?: CliIo['confirmReset']) {
+function captureIo(confirm?: CliIo['confirm']) {
     let stdout = ''
     let stderr = ''
     const io: CliIo = {
         stdout: { write: (text) => ((stdout += text), true) },
         stderr: { write: (text) => ((stderr += text), true) },
-        ...(confirmReset ? { confirmReset } : {}),
+        ...(confirm ? { confirm } : {}),
     }
     return { io, output: () => ({ stdout, stderr }) }
 }
@@ -141,12 +142,12 @@ describe('lifecycle CLI composition', () => {
         }
     })
 
-    it('opens the interactive reset on the active local Docker context when none is named', async () => {
+    it('opens a person\'s reset on the active local Docker context when none is named', async () => {
         const host = await activeContextHost('unix:///synthetic/docker.sock')
         const factory = vi.spyOn(destructiveComposition, 'createDestructiveCommandAdapters')
         const capture = captureIo(async () => true)
 
-        expect(await runCli(['reset', '--config', '/synthetic/missing-cockpit.toml', '--interactive'], capture.io, {}, { env: host.env })).toBe(2)
+        expect(await runCli(['reset', '--config', '/synthetic/missing-cockpit.toml'], capture.io, {}, { env: host.env, approving: '1 of 1' })).toBe(2)
         expect(capture.output().stderr).toContain('CONFIG_NOT_FOUND')
         expect(factory).toHaveBeenCalledWith(expect.objectContaining({ dockerContext: 'synthetic-local' }), expect.any(Function))
     })
@@ -318,7 +319,7 @@ describe('lifecycle CLI composition', () => {
     it.each([
         ['approve', true],
         ['decline', false],
-    ] as const)('keeps the interactive reset continuation in process for %s', async (decision, approved) => {
+    ] as const)('keeps a person\'s reset continuation in process for %s', async (decision, approved) => {
         const decide = vi.fn(async () => complete(approved ? 'reset' : 'unchanged'))
         const preview = Object.freeze({
             kind: 'preview' as const,
@@ -327,23 +328,23 @@ describe('lifecycle CLI composition', () => {
             result: Object.freeze({
                 stackId: `stack:${'3'.repeat(64)}`,
                 planDigest: '4'.repeat(64),
-                targets: Object.freeze([{ kind: 'volume', name: 'synthetic-cache' }]),
+                targets: Object.freeze([{ kind: 'volume', identity: 'synthetic-cache', declaration: 'cache' }]),
                 noop: false,
             }),
         })
         const beginOperatorReset = vi.fn(async () => Object.freeze({ preview, decide }))
         const reset = vi.fn()
-        const confirmReset = vi.fn(async (shown) => {
-            expect(shown).toBe(preview)
+        const confirmReset = vi.fn(async (shown: Approval) => {
+            expect(shown).toMatchObject({ title: `Reset stack:${'3'.repeat(64)}`, details: ['volume synthetic-cache (cache)'] })
             return approved
         })
         const capture = captureIo(confirmReset)
 
         const status = await runCli(
-            ['reset', '--config', '/synthetic/cockpit.toml', '--interactive'],
+            ['reset', '--config', '/synthetic/cockpit.toml'],
             capture.io,
             { reset, beginOperatorReset },
-            { env: {} },
+            { env: {}, approving: '1 of 1' },
         )
 
         expect(status).toBe(approved ? 0 : 130)
@@ -366,8 +367,8 @@ describe('lifecycle CLI composition', () => {
             })
             const capture = captureIo(async () => false)
             const begin = async () => ({ preview: complete('preview'), decide })
-            const status = await runCli(['reset', '--config', '/synthetic/cockpit.toml', '--interactive'], capture.io,
-                { beginOperatorReset: begin }, { env: {} })
+            const status = await runCli(['reset', '--config', '/synthetic/cockpit.toml'], capture.io,
+                { beginOperatorReset: begin }, { env: {}, approving: '1 of 1' })
             expect(status).toBe(throws ? 2 : 130)
             expect(decide).toHaveBeenCalledExactlyOnceWith('decline')
             expect(decide).not.toHaveBeenCalledWith('approve')
@@ -378,35 +379,4 @@ describe('lifecycle CLI composition', () => {
         }
     })
 
-    it('does not open an operator reset session from piped input', async () => {
-        const capture = captureIo()
-        const beginOperatorReset = vi.fn()
-        const status = await runCli(
-            ['reset', '--config', '/synthetic/cockpit.toml', '--interactive'],
-            { ...capture.io, stdin: { isTTY: false } as NodeJS.ReadStream },
-            { beginOperatorReset },
-            { env: {} },
-        )
-        expect(status).toBe(2)
-        expect(beginOperatorReset).not.toHaveBeenCalled()
-    })
-
-    it.each([
-        ['JSON', ['reset', '--config', '/synthetic/cockpit.toml', '--interactive', '--json']],
-        ['CI', ['reset', '--config', '/synthetic/cockpit.toml', '--interactive']],
-    ] as const)('does not mint an operator continuation in %s mode', async (mode, args) => {
-        const reset = vi.fn()
-        const beginOperatorReset = vi.fn()
-        const capture = captureIo(async () => true)
-
-        const status = await runCli(args, capture.io, { reset, beginOperatorReset }, {
-            env: mode === 'CI' ? { CI: 'true' } : {},
-        })
-
-        expect(status).toBe(2)
-        expect(reset).not.toHaveBeenCalled()
-        expect(beginOperatorReset).not.toHaveBeenCalled()
-        const output = mode === 'JSON' ? JSON.parse(capture.output().stdout) : capture.output().stderr
-        expect(JSON.stringify(output)).toContain('RESET_CONFIRMATION_MISMATCH')
-    })
 })

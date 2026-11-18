@@ -13,6 +13,7 @@ Every diagnostic message names what failed and how to fix it. The sections below
 | `SURFACE_STATE_CONFLICT` | Sync would overwrite a hand edit or a file cockpit has no record of writing. | Move a hand edit into `cockpit.toml` or a surface overlay and ask a person before discarding it; for a team's own settings file, have a person move it to `cockpit/adopted/<the same path>` and run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
 | `GENERATED_ARTIFACT_DRIFT` | Generated files no longer match the canonical configuration. | Review the diff, run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`, then retry. |
 | `GENERATED_OWNERSHIP_INVALID` | Cockpit has no trustworthy record of which files it owns. | Restore the committed ownership metadata, then rerun `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
+| `APPROVE_TERMINAL_REQUIRED` | `approve` ran without a terminal on both stdin and stderr, with `--json`, under CI, or inside an agent tool's session. | A person opens a terminal outside the agent, in the cockpit root, and runs `npx --no cockpit approve` (add `--config <file>` when `cockpit.toml` is not in the current directory). |
 | `GUARD_AUTHORITY_UNAVAILABLE` | The guard cannot read the current policy it needs to decide safely. | Restore `cockpit.toml` and generated guard files, then have a human run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
 | `GUARD_REFUSED` | The command is outside the current guard policy. | Follow the named reason, or ask a human to update `cockpit.toml` and run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. |
 | `RUNTIME_UNAVAILABLE` | The container runtime cannot be reached, or its Docker Compose is older than cockpit runs. | Start it and verify `docker info`; if the message names an old Compose, or a Docker or Compose version with no X.Y.Z core, upgrade to a release the message names. Then retry. |
@@ -42,8 +43,8 @@ the command to a person, or proposes a `[[guards.allow]]` rule, rather than rewo
 | `… sets <NAME>, which changes where Git looks for its repository and configuration, what a shell runs as it starts, or whether an agent is marked as running` | A prefixed or exported `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_CONFIG*`, `GIT_EXEC_PATH`, `HOME`, `XDG_CONFIG_HOME`, `BASH_ENV`, `ENV` or session-marker assignment. | Run the command without that assignment. |
 | `The guard does not read this shell form` | The call uses shell the parser does not read: `case`, `[[ … ]]`, `eval`, `watch`, `xargs -I`, arithmetic over a name, an expanding heredoc, or a `cd` inside a loop or `if` or after `!`. What runs inside it is unknown, so it asks; Codex and OpenCode refuse it. | Write it as plain commands joined with `&&`, use `[ … ] &&` or `if`, or put it in a script file. |
 | `Refusing \`--no-verify\`` / `Refusing \`git -c <key>\`` | Skipping hooks, or a configuration key that chooses a program Git runs. | Run without it and fix what the hook reports. |
-| `… is a cockpit command an agent does not run unprompted` / `… is a cockpit command that publishes policy or is not one an agent runs` | A cockpit command the command table does not admit to an agent: `sync --interactive`, `reset --interactive` and the other commands that change what agents may do or ask for a person, however spelled. | A person runs it in a terminal. |
-| `Refusing to sync the cockpit` / `Refusing to run cockpit upgrade` | An agent ran it while `cockpit.toml` holds an unsynced edit that widens what agents may do (`GUARD_CONFIG_WIDENED`). | A person reviews the edit and runs `sync --interactive`, or reverts it. |
+| `… is a cockpit command an agent does not run unprompted` / `… is a cockpit command that publishes policy or is not one an agent runs` | A cockpit command the command table does not admit to an agent: `approve` and the other commands that change what agents may do or ask for a person, however spelled. | A person runs it in a terminal. |
+| `Refusing to sync the cockpit` / `Refusing to run cockpit upgrade` | An agent ran it while `cockpit.toml` holds an unsynced edit that widens what agents may do (`GUARD_CONFIG_WIDENED`). | A person reviews the edit and runs `npx --no cockpit approve` in a terminal outside the agent, or reverts it. |
 | `Refusing … it runs sync or upgrade from a copy of cockpit` / `… runs a copy of cockpit outside the installed package` | `node <copy>/dist/cli.js sync` would bind the guard to a copy an agent can edit. | A person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` in a terminal; an agent runs the installed package. |
 | `… downloads files whose names the guard cannot see into <dir>, which holds guard files` | `gh run download`, or `gh release download` without `-p`, writes into a directory that holds guard files, such as the cockpit root. | Download into another directory, such as `build/`, or name the release assets with `-p`. |
 | `… names <path>, which holds guard files, and the guard does not know whether it writes them` | A Git command, an operand writer such as `rsync`, or a program with a declared allow rule names a directory that holds guard files: `git restore --source=<rev> .`, `git pull . <branch>`, `git clone . <dir>`. In Codex and OpenCode the ask is a refusal. | Name the files it needs, or run it from a subdirectory; otherwise a person approves or runs it. |
@@ -73,12 +74,12 @@ the command to a person, or proposes a `[[guards.allow]]` rule, rather than rewo
 | `… only once the file's TOML \u escapes are read as the characters they stand for` | The edit's old text holds a character the file spells as an escape such as `\u2014`. | Spell the escape with its backslash in the old and new text (`\\u2014` in the tool's JSON), or edit a span without escapes. |
 | `the installed cockpit is older than the one that generated the guards` | The checkout's dependencies install an older cockpit than the one that generated its guards, as after a branch switch. | Run the install the message names, such as `npm ci`; sync only when the older version is intended. |
 | `cockpit guard failed (<status>): <script>; sync the cockpit` | The hook could not run the guard script, or it failed: 127 means the script is missing. | Start the agent from the cockpit root on a branch that has the cockpit, or a person runs sync. |
-| `… has an unapproved edit that widens what agents may do` (appended) | `cockpit.toml` widens the policy; calls are judged under the configuration last synced. | A person runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a terminal, reads the widened fields and answers yes, or reverts the edit. |
+| `… has an unapproved edit that widens what agents may do` (appended) | `cockpit.toml` widens the policy; calls are judged under the configuration last synced. | A person runs `npx --no cockpit approve` in a terminal outside the agent, reads the widened fields and answers yes, or reverts the edit. |
 | `The guard ran out of time` | The guard did not decide within its own 25-second deadline, so it refused the call rather than leave it to the harness's hook timeout. | Retry; a call that searches or lists a very large tree is slow, so name a narrower path. On a heavily loaded machine, wait for other work to finish. |
 
 `sync` itself reports `GUARD_CONFIG_WIDENED` and writes nothing when `cockpit.toml` widens what
-agents may do and nobody confirmed it: a person runs `sync --interactive`, reads the widened fields
-and answers yes, or the edit is reverted. A narrowing or neutral edit syncs unattended.
+agents may do and nobody confirmed it: a person runs `npx --no cockpit approve`, reads the widened
+fields and answers yes, or the edit is reverted. A narrowing or neutral edit syncs unattended.
 
 ## GENERATED_ARTIFACT_DRIFT
 
@@ -201,7 +202,7 @@ same-name environment reference, confined working directory, or remote server UR
 reference or `headersHelper` named by the message.
 `MCP_COMMAND_CONFLICT` means two sources give one server name different commands; make them agree or give them distinct names. `MCP_NOT_APPROVED` leaves a declared
 server disabled because `[mcp.approved]` has no entry for it, or its declaration changed since it
-was approved; a person runs `sync --interactive` in a terminal, reads the server's name, what it
+was approved; a person runs `npx --no cockpit approve` in a terminal outside the agent, reads the server's name, what it
 runs and where it is declared, and answers yes, which writes the entry. An agent may remove an
 approval and narrow an exact allowlist under `[mcp.allowed_tools]`, which grant nothing new; adding
 an approval or widening tool access waits for that yes.
@@ -319,6 +320,8 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `AGENT_HOOKS_DISABLED` | remove disableAllHooks from the named Claude Code settings file; a person makes this change; [see above](#codex-hooks-in-linked-worktrees) |
 | `AGENT_NESTED_REPOSITORY` | declare the repository as a [[sibling]], move it outside the cockpit root, or remove its .git entry; a person makes this change; [see above](#codex-hooks-in-linked-worktrees) |
 | `AGENT_SETTINGS_NESTED` | review each file a person did not intend, and remove it, or move what it holds into the cockpit root's settings and run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; [see above](#codex-hooks-in-linked-worktrees) |
+| `APPROVAL_NOT_RECORDED` | make .cockpit/local in the cockpit root a plain directory you can write, then run the command again |
+| `APPROVE_TERMINAL_REQUIRED` | open a terminal outside the agent and run: npx --no cockpit approve; [see above](#common-refusal-guidance) |
 | `BROWSER_ROUTE_FINDINGS` | this run asked for a clean route (--fail-on-findings). Read result.receipt.surfaces[].diagnostics, including excerpt.messages where present: fix the product for each console error, uncaught page error and failed request that matters, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs browser drive --config <your cockpit.toml> --route <name> --fail-on-findings; third-party traffic never counts |
 | `CLAIM_CO_TENANT` | [see above](#common-refusal-guidance) |
 | `CLAUDE_LOCAL_HOOK_MISSING` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal; if sync cannot read .claude/settings.local.json, make it a JSON object or remove it first; [see above](#codex-hooks-in-linked-worktrees) |
@@ -356,7 +359,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GENERATED_STALE_APPROVAL_REQUIRED` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>, which removes the stale entries it lists; [see above](#merge-ownership-and-generation) |
 | `GENERATED_STALE_ARTIFACT` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>, which removes it |
 | `GUARD_AUTHORITY_UNAVAILABLE` | [see above](#common-refusal-guidance) |
-| `GUARD_CONFIG_WIDENED` | [see above](#guard-refusals) |
+| `GUARD_CONFIG_WIDENED` | this needs a person: they run npx --no cockpit approve in a terminal outside the agent, or the change is reverted; [see above](#guard-refusals) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_RECORD_MISMATCH` | review what changed the guard script, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal; [see above](#codex-hooks-in-linked-worktrees) |
 | `GUARD_REFUSED` | [see above](#common-refusal-guidance) |
@@ -385,7 +388,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `PROJECTION_RESULT_BOUNDS` | [see above](#sibling-projection-and-skills) |
 | `PROJECTION_ROOT_AMBIGUOUS` | [see above](#sibling-projection-and-skills) |
 | `REGISTRY_INPUT_INVALID` | [see above](#harness-surface-failures) |
-| `RESET_CONFIRMATION_REQUIRED` | a person runs the same command with --interactive in a terminal outside CI and answers the preview, or the team declares [environment] seed in cockpit.toml |
+| `RESET_CONFIRMATION_REQUIRED` | this needs a person: they run npx --no cockpit approve in a terminal outside the agent, or the team declares [environment] seed in cockpit.toml |
 | `RESTRICTION_ADAPTER_INVALID` | [see above](#mcp-and-restrictions) |
 | `RESTRICTION_EVENT_UNADAPTED` | [see above](#mcp-and-restrictions) |
 | `RESTRICTION_INPUT_INVALID` | [see above](#mcp-and-restrictions) |
@@ -461,6 +464,6 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `UPGRADE_REGISTRY_UNREACHABLE` | check the network, the registry login and that npm is on PATH, or name the version: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version> |
 | `UPGRADE_SYNC_FAILED` | act on what sync reported above, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> |
 | `WORK_CHECK_FAILED` | read result.results: fix the product for a check that failed, make one that did not run runnable from the cockpit root, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work check --config <your cockpit.toml> --work-order <id> |
-| `WORK_PERSON_REQUIRED` | stop and ask a person to run the same command with --interactive in a terminal outside CI, read what it shows, and type the digest; never type it for them |
+| `WORK_PERSON_REQUIRED` | this needs a person: they run npx --no cockpit approve in a terminal outside the agent, which shows the step and asks them; never answer it for them |
 | `WORK_VERIFY_FAILED` | for an order changed since acceptance, run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config <your cockpit.toml> --work-order <id> or revert the change; for a done order without a passing grade, regrade it with work grade; for a decision record that is missing or no longer cites its order, restore it from git or put back its "Work order: <id>" line |
 <!-- cockpit:diagnostic-index:end -->

@@ -2,7 +2,7 @@
 
 How a command reports that it finished, and how the generated pages stay current with the source.
 
-## Command completion and interactive decline
+## Command completion and a person's decline
 
 In `--json` mode every public CLI outcome carries a bounded invocation record: the command name,
 the floored monotonic duration in milliseconds, the resolved configuration path when there is one,
@@ -12,7 +12,7 @@ and one exit status. Human-mode runs print no record; the process exit code is t
 | --- | --- |
 | `0` | Success. |
 | `2` | Failure. |
-| `130` | Clean interactive cancellation. |
+| `130` | A person declined. |
 
 `session` is the exception: once cleanup completes, it exits with its command's own status (see
 *Lifecycle and ownership* in the user guide `docs/environment.md`). These statuses are separate
@@ -20,9 +20,11 @@ from the guard adapters' decision encoding. The [CLI application](../../packages
 measures elapsed time; [invocation records](../../packages/cockpit/src/invocation.ts) validate the
 common completion fields.
 
-Declining an interactive reset waits for cleanup, then exits 130 with no result; if that cleanup
-throws, the run reports failure instead of cancellation. JSON mode, CI and non-terminal input
-cannot open an interactive confirmation, so a noninteractive reset stays a preview. The
+A step only a person may take runs for them only from `cockpit approve`, which refuses JSON mode,
+CI, an agent tool's session and input or output that is not a terminal. Every other run of that step
+refuses and records it for `approve`; a reset outside it stays a preview. Declining a step at
+`approve` exits that step with 130 and no result; a declined reset waits for cleanup first, and if
+that cleanup throws, the run reports failure instead of cancellation. The
 [operator application](../../packages/cockpit/src/environment/operator-application.ts) owns these
 boundaries.
 

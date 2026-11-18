@@ -27,8 +27,9 @@ budget: uncapped
   from, and clears only when a person acts on its fix in a terminal. Any other edit to `cockpit.toml`
   holds nothing. One that does not widen what agents may do is judged as written, so run
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself; one that widens
-  is judged under the configuration last synced, and each refusal says so, until a person runs that
-  sync with `--interactive` in a terminal and answers its one yes. When the guard refuses a
+  is judged under the configuration last synced, and each refusal says so, until a person approves
+  it: they run `npx --no cockpit approve` in a terminal outside the agent and answer its one yes.
+  Never answer it for them. When the guard refuses a
   command, read the reason. To read a file, use your tool's own file reading instead of the shell. A
   refusal for secrets, writes outside the cockpit, protected branches, declared hosts or the guard
   itself is the person's: hand them the exact command and why. A command refused as an unknown

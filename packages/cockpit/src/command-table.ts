@@ -13,6 +13,7 @@ export type WorkHandlerIdentifier =
     | 'browser-drive' | 'browser-screenshot' | 'test-run'
 
 export type HandlerIdentifier = WorkHandlerIdentifier
+    | 'approve'
     | 'check'
     | 'docs-check'
     | 'env-keys'
@@ -106,7 +107,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     from: 'Path to an existing local repository',
     gate: 'Declared product gate to run',
     'instruction-pointer': 'Offer a marked AGENTS.md link for this separate sibling',
-    interactive: 'Ask for explicit approval in a terminal',
+    interactive: 'Ask the init questions in a terminal',
     json: 'Emit one machine-readable JSON response',
     mode: 'Declared gate execution mode',
     mount: 'How the stack uses the sibling: always, none or profile:<name>',
@@ -202,8 +203,6 @@ export function schemaFileReference(text: string): string | undefined {
 }
 
 const browserAdmission: AgentLimits = Object.freeze({ requires: 'browser-preapproval' })
-// --interactive asks for a person at a terminal, so an agent invocation never carries it.
-const personFlag: AgentLimits = Object.freeze({ personFlags: Object.freeze(['interactive']) })
 
 
 export function isWorkHandler(value: HandlerIdentifier): value is WorkHandlerIdentifier {
@@ -295,10 +294,18 @@ const sources = [
         summary: 'Write the Compose ownership override and agent files from cockpit.toml',
         handler: 'sync',
         visibility: 'public',
-        // A real sync applies an edit that widens what agents may do only once a person confirms it with
-        // --interactive, so an agent's sync applies everything else.
-        agent: { personFlags: ['interactive'] },
-        flags: { config: configFlag, 'dry-run': bool(), interactive: bool(), json: jsonFlag },
+        // A real sync applies an edit that widens what agents may do only once a person approves it, so an
+        // agent's sync applies everything else and leaves the widening for approve.
+        flags: { config: configFlag, 'dry-run': bool(), json: jsonFlag },
+    },
+    {
+        name: 'approve',
+        stage: 'generate-and-verify',
+        summary: 'Show each step that waits for a person, and apply the ones you approve',
+        handler: 'approve',
+        visibility: 'public',
+        agent: { person: 'approve applies what only a person may approve' },
+        flags: { config: str(), json: jsonFlag },
     },
     {
         name: 'check',
@@ -398,13 +405,13 @@ const sources = [
     {
         name: 'reset',
         stage: 'run-the-stack',
-        summary: 'Preview a reset, then approve it interactively, or apply it where a seed is declared (on the active local Docker context)',
+        summary: 'Preview a reset, or apply it where a seed is declared and otherwise leave it for a person to approve (on the active local Docker context)',
         handler: 'reset',
         visibility: 'public',
         // Reset deletes stack data, so an agent applies one only where a declared seed refills it; the
         // preview without --apply deletes nothing.
-        agent: { personFlags: ['interactive'], flagGrant: { flags: ['apply'], grant: 'seeded-reset' } },
-        flags: { config: configFlag, interactive: bool(), apply: bool(), json: jsonFlag },
+        agent: { flagGrant: { flags: ['apply'], grant: 'seeded-reset' } },
+        flags: { config: configFlag, apply: bool(), json: jsonFlag },
     },
     {
         name: 'stacks',
@@ -415,8 +422,7 @@ const sources = [
         visibility: 'public',
         // --apply removes only stacks whose checkout is gone; the command itself refuses one that
         // deletes volumes unless an agent may reset.
-        agent: personFlag,
-        flags: { config: configFlag, apply: bool(), interactive: bool(), json: jsonFlag },
+        flags: { config: configFlag, apply: bool(), json: jsonFlag },
     },
     {
         name: 'doctor',
@@ -441,13 +447,11 @@ const sources = [
     // `up` already has; a selector reaches a stage only through the arguments that stage declares.
     { name: 'test-run', handler: 'test-run', stage: 'test-and-grade', summary: 'Run a declared product test gate and report which tests it selected', visibility: 'public',
         flags: { ...configured, gate: str(), mode: str('canonical'), select: str() } },
-    // A step that would let the agent lower the bar its own work is held to waits for the digest a
-    // person types after --interactive, which no agent invocation carries.
+    // A step that would let the agent lower the bar its own work is held to waits for a person at approve.
     { name: 'work status', handler: 'work-status', stage: 'test-and-grade', summary: 'Report each work order, its state and how it closed', visibility: 'public',
         flags: { ...configured, 'work-order': str() } },
     { name: 'work accept', handler: 'work-accept', stage: 'test-and-grade', summary: 'Accept a work order, or a change to an accepted one', visibility: 'public',
-        agent: personFlag,
-        flags: { ...configured, 'work-order': workOrderFlag, interactive: bool() } },
+        flags: { ...configured, 'work-order': workOrderFlag } },
     { name: 'work check', handler: 'work-check', stage: 'test-and-grade', summary: "Run every criterion's check and the order's gates", visibility: 'public',
         flags: { ...configured, 'work-order': workOrderFlag } },
     { name: 'work note', handler: 'work-note', stage: 'test-and-grade', summary: 'Record a note on an order, an open question with --ask, or a decision with --decision', visibility: 'public',
@@ -459,19 +463,16 @@ const sources = [
     { name: 'work answer', handler: 'work-answer', stage: 'test-and-grade', summary: 'Answer an open question on an order', visibility: 'public',
         flags: { ...configured, 'work-order': workOrderFlag, question: str(), text: str() } },
     { name: 'work acknowledge', handler: 'work-acknowledge', stage: 'test-and-grade', summary: 'Acknowledge that an order weakened tests', visibility: 'public',
-        agent: personFlag,
-        flags: { ...configured, 'work-order': workOrderFlag, note: str(), interactive: bool() } },
+        flags: { ...configured, 'work-order': workOrderFlag, note: str() } },
     // Grading hands the order to an evaluator running apart from the agent that did the work, unless
     // [work] grading names checks or self, or the agent submits its subagent's verdict under subagent.
     { name: 'work grade', handler: 'work-grade', stage: 'test-and-grade', summary: 'Grade an accepted order the way [work] grading says', visibility: 'public',
         flags: { ...configured, 'work-order': workOrderFlag, verdict: str(), note: str(), 'from-subagent': bool(), evaluator: str() } },
     { name: 'work signoff', handler: 'work-signoff', stage: 'test-and-grade', summary: 'Close a graded order as done, or any open one as partial or abandoned', visibility: 'public',
-        agent: personFlag,
-        flags: { ...configured, 'work-order': workOrderFlag, partial: bool(), abandon: bool(), note: str(), interactive: bool() } },
+        flags: { ...configured, 'work-order': workOrderFlag, partial: bool(), abandon: bool(), note: str() } },
     // The attempt cap stops an agent retrying its own failed work, so fresh attempts at an unchanged contract are always a person's.
-    { name: 'work retry', handler: 'work-retry', stage: 'test-and-grade', summary: 'Grant an order at its attempt cap fresh attempts, as a person at a terminal', visibility: 'public',
-        agent: personFlag,
-        flags: { ...configured, 'work-order': workOrderFlag, note: str(), interactive: bool() } },
+    { name: 'work retry', handler: 'work-retry', stage: 'test-and-grade', summary: 'Ask a person to grant an order at its attempt cap fresh attempts', visibility: 'public',
+        flags: { ...configured, 'work-order': workOrderFlag, note: str() } },
     // Inspection only reports the holder. --apply removes the lock only once the command has shown its
     // holder gone where a pid probe cannot see: the lock's host and the containers cockpit labels.
     { name: 'work recover', handler: 'work-recover', stage: 'test-and-grade', summary: "Inspect or remove a crashed command's work-order lock", visibility: 'public',

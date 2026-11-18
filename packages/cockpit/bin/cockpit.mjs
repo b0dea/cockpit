@@ -17,7 +17,8 @@ if (!Number.isInteger(major) || major < 22 || (major === 22 && minor < minimumNo
     const { runCli } = await import('../dist/cli.js')
     const argv = process.argv.slice(2)
     // A stopping stack needs the signal too: its steps run detached, so an interruption must end them.
-    if (!['session', 'logs', 'sleep', 'down', 'reset'].includes(argv[0])) {
+    // approve may run a reset for the person.
+    if (!['session', 'logs', 'sleep', 'down', 'reset', 'approve'].includes(argv[0])) {
         process.exitCode = await runCli(argv)
     } else {
         const controller = new AbortController()

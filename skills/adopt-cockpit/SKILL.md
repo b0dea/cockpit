@@ -52,7 +52,7 @@ ask when scope is missing or an exact preview still needs review:
    person: …` comment in `cockpit.toml`. Prepare one review of those values and their consequences;
    the person reads it in the diff before committing. A change that widens what agents may do waits
    for the person's one yes at
-   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a
+   `npx --no cockpit approve` in a
    terminal outside the agent.
 
 ## Install cockpit if it is missing
@@ -254,7 +254,7 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
    run stops at the first field the file leaves out, with `result.interview.outstanding` listing
    only what the file still lacks; add those and rerun. The configuration defaults are written as
    drafted. A different value for an answer already recorded refuses with `INIT_ANSWER_CONFLICT`;
-   `--reset-answer <field>` previews clearing it. A person at a terminal can run `--interactive`
+   `--reset-answer <field>` previews clearing it. A person at a terminal can run `init --interactive`
    instead, which asks the questions and writes; an agent session has no terminal, so there it
    refuses with `INIT_TERMINAL_REQUIRED`. Done when the run has written `cockpit.toml`.
 6. **Work through the expected stops**, rerunning the same command after each:
@@ -291,8 +291,8 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
    - If `cockpit-installed` is reported, clear it first using the repository's package manager
      and reviewed manifest/lockfile delta within the authorized installation scope. An existing
      project-local installation needs no reinstall. Then run
-     `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`; hand it to the
-     person with `--interactive` only when the refusal (`GUARD_CONFIG_WIDENED`) says a widening waits. Done when
+     `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`; hand the person
+     `npx --no cockpit approve` only when the refusal (`GUARD_CONFIG_WIDENED`) says a widening waits. Done when
      `doctor` no longer reports the installation gap.
    - If anyone will run Codex in this cockpit, a person must trust its guard hook on each machine,
      and again whenever sync changes the hook: Codex silently skips a project hook nobody has
@@ -301,7 +301,7 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
      asked, and choose **Trust all and continue** when Codex shows **Hooks need review**. `doctor`
      reports `CODEX_HOOK_UNTRUSTED` until it is done.
    - A declared MCP server stays disabled (`MCP_NOT_APPROVED`) until a person approves it: they run
-     `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a
+     `npx --no cockpit approve` in a
      terminal outside the agent, which shows the servers a yes would enable and the fields that
      widen, and asks once. List the servers and fields in your report, and hand them the command.
    Done when `doctor` reports no required gap and every other gap is cleared or reported. Report
@@ -373,8 +373,8 @@ guesses. So derive each value from what the repository shows, record it as infer
 6. Finish the configuration with the init flow in **Bootstrap**. On an existing cockpit, the guard
    judges calls under an edit to `cockpit.toml` that does not widen what agents may do, so run
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself. While an edit widens it, calls are judged under the configuration last synced, every
-   refusal names the widened fields, and a person runs that sync with `--interactive` in a terminal
-   and answers its one yes. Then run
+   refusal names the widened fields, and a person runs `npx --no cockpit approve` in a terminal
+   outside the agent and answers its one yes. Then run
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json`. Done when the check exits 0.
 7. Where a runtime is declared, start the stack with
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml`. When Docker is missing

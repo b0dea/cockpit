@@ -77,9 +77,10 @@ attempt; a failed check does not, since its cause may be cockpit's. Under `check
 judges, so there is no cap. At `work.attempt_cap` the order is blocked until it is closed or given
 fresh attempts. An amendment a person accepts resets the count. One the agent accepts keeps it, or
 reordering a list in its own contract would undo the cap. When the contract is right and the
-attempts failed for a cause now fixed, a person runs
-`work retry --work-order <id> --note <the root cause> --interactive`: it shows what failed last and
-the cause, and once the person types its digest it grants a fresh set of attempts at the same
+attempts failed for a cause now fixed, the agent runs
+`work retry --work-order <id> --note <the root cause>`, which records the step, and a person runs
+`npx --no cockpit approve`: it shows what failed last and
+the cause, and once the person answers yes it grants a fresh set of attempts at the same
 contract and base. The record keeps the failed count, the cause and, in brief, what failed.
 `work retry` is always a person's step.
 
@@ -137,8 +138,9 @@ only through a person.
 
 The agent accepts, amends, answers and signs off its own work orders; the grade still judges the
 work. A few steps lower the bar the agent's own work is held to, so they are a person's. The command
-shows what is being decided and its digest, and records the step only after a person types that
-digest in a terminal with `--interactive`. Without a terminal it refuses with `WORK_PERSON_REQUIRED`.
+refuses with `WORK_PERSON_REQUIRED` and records the step; a person runs `npx --no cockpit approve` in a terminal
+outside the agent, which re-checks the step, shows what is being decided and applies it only on a
+yes. Nothing is typed back.
 
 - an amendment that removes a criterion or gate, or that no model can judge under `checks` grading,
   or that follows a grade finding the agent's amendments lowered the bar ([Amendments](#amendments));
@@ -146,8 +148,8 @@ digest in a terminal with `--interactive`. Without a terminal it refuses with `W
 - acknowledging a test weakening under `checks` grading ([Test protection](#test-protection));
 - `work retry`.
 
-These steps are best-effort. The guard keeps an agent's tool call from passing `--interactive`, and
-the command needs a terminal on both standard input and output, but cockpit cannot tell a person
+These steps are best-effort. The guard keeps an agent's tool call from running `approve`, and
+`approve` needs a terminal on both standard input and error, but cockpit cannot tell a person
 from a program driving a terminal. The enforced check is a required `work verify` job on the
 protected branch.
 
@@ -254,7 +256,7 @@ made since a person last accepted the contract; under `independent` the evaluato
 them as the change to `workorders/<id>.md`, or, where the order's scope names that file, its diff
 since the base. When it is not met the grade fails, and the next
 amendment and any closure are a person's: revert or rewrite the order, then a person runs
-`work accept --interactive`. The order records the finding, so a later `work check` or grade does
+`npx --no cockpit approve` for the amendment the agent's `work accept` recorded. The order records the finding, so a later `work check` or grade does
 not clear it; only an amendment a person accepts does.
 
 Under `subagent` the same holds for a separate evaluator's `unmet`: an agent cannot reword the
@@ -311,8 +313,8 @@ gate passed. With no open order it says it had nothing to compare with.
 
 `work acknowledge --work-order <id> --note <why it is not a weakening>` records an acknowledgement
 with who passed it. It covers exactly the findings it showed, so a test deleted or skipped later
-fails a `checks` grade again. Under `checks` grading a person runs it with `--interactive` and
-types the digest; an agent's run without a terminal is refused with `WORK_PERSON_REQUIRED`, and an
+fails a `checks` grade again. Under `checks` grading the command refuses with `WORK_PERSON_REQUIRED` and records the step, and a
+person runs `npx --no cockpit approve`; an
 acknowledgement the agent recorded under another mode does not pass the check.
 
 ## Decisions
@@ -515,7 +517,7 @@ with 2xx.
 cockpit does not run a browser service or a browser debugger. To let an agent drive a browser
 through its own Playwright MCP tools, run a browser service in your own Compose file and name its
 loopback address in `browser.endpoint`. cockpit then publishes the Playwright MCP declaration, which
-a person approves with the `sync --interactive` yes, like any MCP server (its server
+a person approves with the `approve` yes, like any MCP server (its server
 must be declared in a JSON file with an `mcpServers` object, listed in a sibling's
 `derives.mcp_sources`), and the `cockpit-browser` skill. Without an endpoint, the Playwright MCP
 server and the skill are reported unavailable and not rendered; `browser drive` and

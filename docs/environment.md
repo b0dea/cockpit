@@ -482,11 +482,11 @@ fresh inventory no longer lists what was removed.
 
 Removing an orphan is housekeeping, so `--apply` runs for an agent. A prune that deletes volumes
 deletes data and follows the reset rule: it runs for an agent only where `[environment] seed` is
-declared and no widening is unsynced, and otherwise a person runs `stacks prune --interactive` in a
-terminal and answers "Remove these stacks? [yes/no]". That rule is this cockpit's own policy, so `--apply` removes only this cockpit's orphans and the
+declared and no widening is unsynced, and otherwise the command records the step and a person runs
+`npx --no cockpit approve` in a terminal outside the agent and answers `y`. That rule is this cockpit's own policy, so `--apply` removes only this cockpit's orphans and the
 state folders an earlier build left. The preview lists every orphan, marks each with `thisCockpit`,
-and warns with `STACKS_PRUNE_UNCONFIRMED` that another cockpit's are removed only by a person's
-`stacks prune --interactive`, which covers the whole machine. `doctor` warns with `STACKS_ORPHANED`
+and warns with `STACKS_PRUNE_UNCONFIRMED` that another cockpit's are removed only by a person, who runs
+`stacks prune --apply` (it records the step) and then `npx --no cockpit approve`, which covers the whole machine. `doctor` warns with `STACKS_ORPHANED`
 when a stack of this cockpit has lost its checkout or a state record cannot be read, without asking
 Docker.
 
@@ -509,8 +509,8 @@ stack in place. To apply one, for example a `[ports.bases]` edit:
    [agent calls](safety-and-autonomy.md#edits-the-guard-has-not-applied) under the edited file, or
    under the one last synced while the edit widens what agents may do. An agent may run
    it where the edit does not widen what agents may do, as a `[ports.bases]` edit does not;
-   otherwise a person runs it in a terminal with `--interactive` and answers yes to the change it
-   shows.
+   otherwise it records the step and a person runs `npx --no cockpit approve` in a terminal outside the agent and
+   answers yes to the change it shows.
 3. Run `cockpit down --config cockpit.toml`. It finds the stack and its lease by the stack, not by
    the edited declaration, and refuses with `CLAIM_CO_TENANT` while another holder remains.
 4. Run `cockpit up --config cockpit.toml --json` and use the newly returned ports and entrypoints.
@@ -822,12 +822,14 @@ is gone. To seed from inside the stack, see
 
 Applying a reset wipes data. An agent may run `reset --apply` where `[environment] seed` is declared
 and no widening is unsynced; otherwise it is refused (`RESET_CONFIRMATION_REQUIRED`) and a person
-runs `reset --interactive` in a terminal and answers y. The next `up` seeds again.
+runs `reset --apply` (which records the step), then `npx --no cockpit approve` in a terminal outside the agent and
+answers y. The plain `reset` preview still deletes nothing. The next `up` seeds again.
 
 ```sh human-only: resets data and requires the declared local stack
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs reset --config cockpit.toml --json
-./node_modules/@b00dea/cockpit/bin/cockpit.mjs reset --interactive --config cockpit.toml
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs reset --config cockpit.toml --apply
+npx --no cockpit approve
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml
 ```
 

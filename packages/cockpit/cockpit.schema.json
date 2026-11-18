@@ -750,7 +750,7 @@
         },
         "approved": {
           "default": {},
-          "description": "Approved MCP servers, each mapped to the sha256 of the declaration a person approved; sync --interactive writes them. Others stay disabled.",
+          "description": "Approved MCP servers, each mapped to the sha256 of the declaration a person approved; cockpit approve writes them when a person answers yes. Others stay disabled.",
           "type": "object",
           "additionalProperties": false,
           "patternProperties": {

@@ -27,8 +27,9 @@ budget: uncapped
   from, and clears only when a person acts on its fix in a terminal. Any other edit to `cockpit.toml`
   holds nothing. One that does not widen what agents may do is judged as written, so run
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself; one that widens
-  is judged under the configuration last synced, and each refusal says so, until a person runs that
-  sync with `--interactive` in a terminal and answers its one yes. When the guard refuses a
+  is judged under the configuration last synced, and each refusal says so, until a person approves
+  it: they run `npx --no cockpit approve` in a terminal outside the agent and answer its one yes.
+  Never answer it for them. When the guard refuses a
   command, read the reason. To read a file, use your tool's own file reading instead of the shell. A
   refusal for secrets, writes outside the cockpit, protected branches, declared hosts or the guard
   itself is the person's: hand them the exact command and why. A command refused as an unknown
@@ -83,8 +84,8 @@ not the thinking: reuse the planning skills the harness already has.
    the order and run `work accept` again to accept the amendment: dropping a criterion or gate always
    needs a person, a rewritten criterion or widened scope needs one under `checks` grading, and
    otherwise the next grade judges whether your amendment lowered the bar. A person's step answers
-   `WORK_PERSON_REQUIRED`: stop, and ask the person to run the same command with `--interactive` in a
-   terminal. Never type the digest yourself. When you
+   `WORK_PERSON_REQUIRED`: stop, and ask the person to run `npx --no cockpit approve` in a
+   terminal outside the agent. Never answer it for them. When you
    need a person's input, run
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work note --config cockpit.toml --work-order WO-001 --ask --text "<question>"`
    and stop: the order is blocked until it is answered with `work answer`. When `work accept` or `work status` lists `relatedDecisions`,
@@ -134,7 +135,7 @@ not the thinking: reuse the planning skills the harness already has.
    (`WORK_GRADE_UNSATISFIED`) lists each criterion's verdict and note under `result.criteria` and
    failed checks under `result.checks`: go back to step 3 for each, reverting a change outside scope
    or a test change the grade calls unneeded. `WORK_TEST_WEAKENED` means a test change was not accepted: restore the test, or under
-   `checks` grading report a legitimate change for a person to acknowledge with `work acknowledge --note <why> --interactive`. When
+   `checks` grading report a legitimate change for a person to acknowledge: run `work acknowledge --note <why>` yourself, which records it, then they run `npx --no cockpit approve`. When
    `amendments-hold-bar` is unmet, the next amendment is a person's: report it. When the person names a grader ("use Codex to
    grade", "use Claude for everything"), pass `--evaluator <tool>` (`codexcli`, `claudecode` or
    `opencode`) on every grade for the rest of the session; only that tool runs, with no fallback.
@@ -142,7 +143,7 @@ not the thinking: reuse the planning skills the harness already has.
 7. **Attempt cap.** Each failed check or grade counts an attempt; at `work.attempt_cap` the order is
    blocked. Record the root cause with `work note`, then do what the refusal names: close it with
    `work signoff --partial` or `--abandon`, yourself; or, when the contract is right and the cause is fixed,
-   hand the person `work retry --note <the root cause> --interactive`, which is always theirs. An
+   run `work retry --note <the root cause>`, which records it, and hand the person `npx --no cockpit approve`: a retry is always theirs. An
    amendment you accept keeps the count. Done when the order is closed or given fresh attempts, or
    the person has the cause and the command.
 8. **Close** with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs work signoff --config cockpit.toml --work-order WO-001`

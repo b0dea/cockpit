@@ -50,7 +50,7 @@ ask when scope is missing or an exact preview still needs review:
    person: …` comment in `cockpit.toml`. Prepare one review of those values and their consequences;
    the person reads it in the diff before committing. A change that widens what agents may do waits
    for the person's one yes at
-   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a
+   `npx --no cockpit approve` in a
    terminal outside the agent.
 
 ## Install cockpit if it is missing
