@@ -2,6 +2,7 @@
  * `cockpit stacks prune`: plans the removal of every orphaned stack and unreadable state folder the
  * inventory shows, binds the plan to a digest, and removes exactly that plan once it is approved.
  */
+import { posix } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { cockpitCommand } from '../fix-catalogue.js'
@@ -54,8 +55,8 @@ function otherCockpitsWarning(stacks: readonly ObservedStack[], configPath: stri
     if (stacks.length === 0) return []
     return [{ severity: 'warning', target: 'stacks',
         code: 'STACKS_PRUNE_UNCONFIRMED' as const satisfies typeof ENVIRONMENT_CODES.STACKS_PRUNE_UNCONFIRMED,
-        message: `orphaned stacks of other cockpits are left to those cockpits, because this cockpit's configuration does not speak for them; an agent's --apply leaves ${stacks.map(({ row }) => row.stackId).join(', ')}`,
-        fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs stacks prune --config <your cockpit.toml> --apply in the cockpit that owns them' }]
+        message: `orphaned stacks of other cockpits, whose checkouts are gone, need a person: this cockpit's configuration does not speak for them, so an agent's --apply leaves ${stacks.map(({ row }) => row.stackId).join(', ')}`,
+        fix: `a person removes them: in ${posix.dirname(configPath)}, run npx --no cockpit approve in a terminal outside the agent` }]
 }
 
 /** What a person or an agent approves: the exact prune a fresh observation shows, and how to apply it. */

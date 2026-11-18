@@ -184,12 +184,13 @@ it('finds a step recorded through a linked path to the cockpit root', async () =
     person.close()
 })
 
-it('queues nothing for an agent\'s prune preview that only warns about other cockpits\' stacks', async () => {
+// Orphans of a cockpit whose checkout is gone have no other owner to prune them, so a person's machine-wide prune waits for them.
+it('queues a machine-wide prune for a person when an agent\'s preview finds other cockpits\' orphans', async () => {
     const { config, pending } = cockpitRoot()
     const preview = { status: 0, result: { dryRun: true }, diagnostics: [{ severity: 'warning' as const, code: 'STACKS_PRUNE_UNCONFIRMED', message: 'other cockpits' }] }
     const beginStacksPrune = async () => ({ preview, digest: 'b'.repeat(64), empty: false, deletesData: false, apply: async () => preview })
     expect((await agentRuns(['stacks', 'prune', '--config', config], { beginStacksPrune })).status).toBe(0)
-    expect(pending()).toEqual([])
+    expect(pending()).toEqual([expect.objectContaining({ argv: ['stacks', 'prune', '--config', config] })])
 })
 
 it('asks about an unsynced widening of cockpit.toml that nothing recorded', async () => {

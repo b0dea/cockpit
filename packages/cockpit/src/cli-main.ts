@@ -1417,11 +1417,13 @@ function resetApproval(preview: CommandOutcome): Approval {
         details: targets.map(({ kind, identity, declaration }) => `${String(kind)} ${String(identity)}${declaration === undefined || declaration === identity ? '' : ` (${String(declaration)})`}`) }
 }
 
-// What an agent's run leaves for a person: an error that says a person's step waits, or a declared MCP
-// server that stays off until one approves it. Other warnings ask nothing of a person.
+// What an agent's run leaves for a person: an error that says a person's step waits, a declared MCP
+// server that stays off until one approves it, or other cockpits' orphans only a person's machine-wide
+// prune removes, since their checkouts are gone. Other warnings ask nothing of a person.
 const PERSON_CODES: ReadonlySet<string> = new Set([ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED, ENVIRONMENT_CODES.RESET_CONFIRMATION_REQUIRED,
     ENVIRONMENT_CODES.WORK_PERSON_REQUIRED])
 const waitsForPerson = (row: Diagnostic) => row.severity === 'error' && PERSON_CODES.has(row.code) || row.code === 'MCP_NOT_APPROVED'
+    || row.code === ENVIRONMENT_CODES.STACKS_PRUNE_UNCONFIRMED
 const PERSON_TITLES: Partial<Record<HandlerIdentifier, string>> = { sync: 'Apply the cockpit.toml change', reset: 'Reset the stack', stacks: 'Remove orphaned stacks' }
 
 // A step is recorded and found under one spelling of its configuration, whatever links led to it.
