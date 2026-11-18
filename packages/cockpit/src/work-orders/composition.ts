@@ -384,7 +384,9 @@ async function executeBounded(root: string, argv: readonly string[], directories
         || Buffer.byteLength(directories.join(delimiter)) > 65_536) {
         return { kind: 'error', reason: 'Execution requires a bounded executable search path' }
     }
-    const resolution = await (isAbsolute(argv[0]) ? executable([dirname(argv[0])], basename(argv[0])) : executable(directories, argv[0]))
+    // A command with a slash names a file the way a shell in the cockpit root would find it; a bare name is looked up on PATH.
+    const named = argv[0].includes('/') ? resolve(root, argv[0]) : undefined
+    const resolution = await (named ? executable([dirname(named)], basename(named)) : executable(directories, argv[0]))
     if (resolution.state !== 'available') return { kind: 'unavailable', reason: resolution.reason }
     const resolved = resolution.value
     const stdoutLimit = mode.stdoutLimitBytes ?? PROBE_OUTPUT_BYTES
