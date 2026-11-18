@@ -982,7 +982,7 @@ describe('built-in read-only profile', () => {
             'base64 -di.env', 'base64 -di.secrets/creds.json', 'head -qn5.env', 'xxd -ps.env', 'grep -rf.env notes.md', 'base64 -dddddddddddddddddi.env']) {
             expect(judged(command), command).toBe('deny')
         }
-        // Names that only resemble a protected one stay allowed.
+        // Names that only look like a protected one stay allowed.
         // A shell glob reaches a leading dot only where it spells one, so these match no protected name.
         // A pattern glued to an option is a pattern, and a middle folder cannot be a file-only name such as .npmrc.
         for (const command of ['cat .se/creds.json', 'cat src/*.json', 'cat ?secrets/creds.json', 'cat [.]secrets/creds.json', 'head -n5 notes.md', `find . -name '*.json' -print`,
