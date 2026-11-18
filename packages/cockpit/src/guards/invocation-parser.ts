@@ -122,7 +122,9 @@ const NESTING_LIMIT = 8
 const BRACE_RANGE_LIMIT = 256
 const FETCHERS = new Set(['curl', 'wget', 'fetch', 'http', 'aria2c'])
 // awk runs what it reads through system(), and each of the others runs a script read from standard input.
-const INTERPRETERS = /^(?:sh|bash|zsh|dash|ksh|fish|csh|tcsh|source|python[\d.]*|node|nodejs|bun|deno|perl|ruby|php|osascript|[gmn]?awk|tclsh[\d.]*|lua[\d.]*|Rscript)$/
+const INTERPRETERS = /^(?:sh|bash|zsh|dash|ksh|fish|csh|tcsh|source|python[\d.]*|node|nodejs|bun|deno|perl|ruby|php|osascript|[gmn]?awk|tclsh[\d.]*|lua[\d.]*|rscript)$/
+// Matched against a folded name, so `SH`, `ſh` and `Rscript` all count.
+const namesInterpreter = (word: string) => INTERPRETERS.test(foldGuardSpelling(posix.basename(word)))
 const FETCHED_CODE = 'Refusing to run downloaded text as code: a download feeds a shell or interpreter, so what runs is whatever the server sends. '
     + 'Download the file into the cockpit, read it, then run it by path.'
 // A URL, or a package spelled as a Git source, runs code no registry name or path the guard can read stands for.
@@ -459,6 +461,23 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
     return { tokens, end: index }
 }
 
+// The one normalisation applied to both sides of every spelling comparison: NFC plus full case
+// folding. A case-insensitive volume resolves `.ENV` or `.ſecrets` to the protected entry, and
+// neither byte equality nor toLowerCase() equates those spellings.
+export function foldGuardSpelling(path: string): string {
+    return path.normalize('NFC').toUpperCase().toLowerCase().normalize('NFC')
+}
+
+/**
+ * A program's name folded, its directory as written. A case-insensitive volume runs `GIT` or `/usr/bin/Git` as git,
+ * so every rule keyed on a program's name sees the folded one; on a case-sensitive volume such a file is some other
+ * program, which no rule names, so judging it as git refuses no less.
+ */
+export function foldGuardProgram(word: string): string {
+    const at = word.lastIndexOf('/') + 1
+    return word.slice(0, at) + foldGuardSpelling(word.slice(at))
+}
+
 const separators = new Set([';', '\n', '&&', '||', '|', '&'])
 const redirects = new Set(['<', '>', '>>', '<<', '<<-', '>&', '<&', '<>', '>|'])
 // `-` is zsh's precommand modifier that runs the command as a login shell would name it.
@@ -535,7 +554,7 @@ const word = (role: InvocationRole, token: Token): InvocationWord => token.dynam
 const fetches = (item: ParsedInvocation) => item.executable !== null && (FETCHERS.has(posix.basename(item.executable))
     || posix.basename(item.executable) === 'gh' && item.argv.find((value) => !value.startsWith('-')) === 'api')
 // `.` sources what a pipe feeds it as `source` does; as any other word, such as jq's filter, it is only a word.
-const interprets = (item: ParsedInvocation) => item.executable !== null && (INTERPRETERS.test(posix.basename(item.executable)) || item.executable === '.')
+const interprets = (item: ParsedInvocation) => item.executable !== null && (namesInterpreter(item.executable) || item.executable === '.')
 
 /**
  * Where the program a launcher at `at` runs starts, or undefined when the words there launch nothing the guard unwraps. A
@@ -668,7 +687,7 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
         for (const item of args.slice(1)) {
             const match = /^([A-Za-z_][A-Za-z0-9_-]*)=(.*)$/s.exec(item.value)
             if (!match || item.dynamic || item.braced) refuse('Unsupported alias definition.')
-            definitions.add(match[1])
+            definitions.add(foldGuardSpelling(match[1]))
         }
         return [{ executable: null, argv: [], cwd, wrapped: false, words: [...words, ...args.map(({ value }) => ({ role: 'definition' as const, value }))], redirects: redirectPaths }]
     }
@@ -696,7 +715,13 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
     assignments()
     let wrapped = false
     let detached = false
-    while (cursor < args.length && wrappers.has(posix.basename(args[cursor].value)) && !args[cursor].dynamic) {
+    // The word in command position, a wrapper's or the program's, is read under its folded name.
+    const commandWord = () => {
+        const token = args[cursor]
+        if (token && !token.dynamic) args[cursor] = { ...token, value: foldGuardProgram(token.value) }
+        return args[cursor]
+    }
+    while (commandWord() && wrappers.has(posix.basename(args[cursor].value)) && !args[cursor].dynamic) {
         // `command -v NAME` and `command -V NAME` only print where a command is.
         if (posix.basename(args[cursor].value) === 'command' && /^-[vV]$/.test(args[cursor + 1]?.value ?? '')
             && args.length > cursor + 2 && args.slice(cursor + 2).every((token) => !token.value.startsWith('-'))) break
@@ -1006,7 +1031,7 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         const inner = (token.substitutions ?? []).flatMap((text) => parseShell(text, directory, deeper))
         if (!inner.some(fetches)) return inner
         const first = items.find((item) => item.kind === 'word' && !ASSIGNMENT.test(item.value))
-        if (command && (token === first || items.some((item) => item.kind === 'word' && INTERPRETERS.test(posix.basename(item.value))))) forbid(FETCHED_CODE)
+        if (command && (token === first || items.some((item) => item.kind === 'word' && namesInterpreter(item.value)))) forbid(FETCHED_CODE)
         context.seen.fetchedValue = true
         return inner
     })
@@ -1031,7 +1056,7 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         // Any word naming an interpreter counts, so a program that runs the rest of its line cannot hide one, and it is
         // named before the stage is read, so a bare `| bash` is refused for what it runs.
         const words = compound ? compoundTokens(compound) : current
-        if (gate === '|' && fetched && words.some((token) => token.kind === 'word' && INTERPRETERS.test(posix.basename(token.value)))) forbid(FETCHED_CODE)
+        if (gate === '|' && fetched && words.some((token) => token.kind === 'word' && namesInterpreter(token.value))) forbid(FETCHED_CODE)
         const target = current.length ? changedDirectory(current, context) : undefined
         if (target !== undefined && !cdAllowed) refuse(`${CD_REFUSAL} A cd inside a loop or an if is not.`)
         // Every directory state assumes a cd's own status, which `!` flips.
@@ -1136,7 +1161,7 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
             }
             if (depth) refuse('Unterminated function definition.')
             i--
-            definitions.add(name)
+            definitions.add(foldGuardSpelling(name))
             functions.push(commands)
             append({ executable: null, argv: [], cwd: states[0]!.directory, wrapped: false, words: body, redirects: [] })
             needsCommand = false
