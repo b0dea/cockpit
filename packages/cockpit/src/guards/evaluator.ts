@@ -1765,6 +1765,10 @@ function inlineCode(invocation: ParsedInvocation): readonly string[] {
     const program = /awk$/.test(name) && !argv.some(arg => /^-[a-zA-Z]*f/.test(arg)) ? argv.filter(arg => !arg.startsWith('-')).slice(0, 1) : []
     return [...valued, ...program, ...invocation.words.filter(word => word.role === 'heredoc-body').map(word => word.value)]
 }
+// A shell glob as a pattern for one path component. A bracket expression stands for any one character: the shells
+// read `[!a]`, `[[:alpha:]]` and a `]` first in the set, `[]s]`, in ways a regular expression does not.
+const globPattern = (component: string) => new RegExp(`^${component.split(/(\*+|\?|\[[!^]?\]?(?:\[:[a-z]+:\]|[^\]])*\])/).map((part, at) => at % 2
+    ? part.startsWith('*') ? '.*' : '.' : part.replace(/[.+^${}()|\\[\]]/g, '\\$&')).join('')}$`)
 const SECRET_SAMPLES = ['.env', '.env.local', '.env.production', '.secrets', 'id_rsa', 'id_ed25519', 'credentials', 'server.pem', 'server.key', '.npmrc', '.netrc',
     '.pgpass', 'auth.json', 'hosts.yml', '.git-credentials', '.vault-token']
 
@@ -3090,11 +3094,14 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         for (const word of [...held, ...held.flatMap(item => defaultWords(item.value).map(value => ({ role: item.role, value }))), ...globs]) {
             const lexical = posix.resolve(invocation.cwd, word.value)
             const folded = fold(lexical)
-            const glob = (globs.includes(word) || held.includes(word) && plainGlob(word)) && new RegExp(`^${posix.basename(folded).split(/(\*+|\?|\[[^\]]*\])/).map((part, at) => at % 2
-                ? part.startsWith('*') ? '.*' : part === '?' ? '.' : part : part.replace(/[.+^${}()|\\]/g, '\\$&')).join('')}$`)
-            // A shell glob matches a leading dot only when it spells one, so `*` reaches no `.env`; a key file a glob
-            // matches inside the roots is the project's, and a credential store is judged by its directory.
-            const secret = glob ? posix.basename(folded).startsWith('.') && SECRET_SAMPLES.some((name) => name.startsWith('.') && glob.test(name)) || credential(posix.dirname(folded))
+            const glob = globs.includes(word) || held.includes(word) && plainGlob(word)
+            // A shell glob matches a leading dot only when it spells one, so `*` reaches no `.env`, in any component:
+            // `.se*/creds.json` reads inside `.secrets`. A key file a glob matches inside the roots is the project's,
+            // and a credential store is judged by its directory.
+            const components = folded.split('/')
+            const secret = glob ? components.some((component, at) => component.startsWith('.') && /[*?[]/.test(component)
+                && SECRET_SAMPLES.some((name) => name.startsWith('.') && (at === components.length - 1 || name === '.secrets') && globPattern(component).test(name)))
+                || credential(posix.dirname(folded))
                 || plainGlob(word) && globReachesProtected(word.value, invocation.cwd) || globNamesProtected(word.value, invocation.cwd)
                 : secretNameDenial(folded) !== undefined
             if (secret) hold(deny(`Refusing ${invocation.executable === null ? 'this command' : named(invocation)}: it holds ${shownGuardWord(word.value)}, which names or can match an environment file, secrets directory, declared instance or credential store. Name the files it needs.`))
@@ -3134,6 +3141,12 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const candidates = git && invocation.argv[position - 1] === '-L' ? [word.slice(word.lastIndexOf(':') + 1)] : undefined
             // An attached short option value, as in `sed -f.env`, is a candidate too.
             const attached = /^-[^-]/.test(word) && word.length > 2 ? [word.slice(2)] : []
+            // So is one after flags grouped before it, `base64 -di.env`, though only as a name: it may as well be a pattern.
+            const grouped = /^-([A-Za-z0-9]+)/.exec(word)?.[1]!.length ?? 0
+            for (let at = 3; at <= grouped + 1 && at < word.length; at++) {
+                const secret = secretNameDenial(fold(posix.resolve(git?.cwd ?? invocation.cwd, word.slice(at))))
+                if (secret && !hardDeny) hold(secret)
+            }
             const defaults = defaultWords(word)
             // `@file` is how curl and gh name a file whose content they send.
             for (const candidate of new Set(candidates ?? [word, word.slice(word.indexOf('=') + 1), word.slice(0, Math.max(word.indexOf(':'), 0)), word.slice(word.lastIndexOf(':') + 1), word.slice(word.lastIndexOf('@') + 1), ...attached, ...defaults])) {
@@ -3193,6 +3206,17 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (loopAccesses?.length && loopAccesses.every(item => item !== undefined && inspectReadOnly(item, chainReadOnly))) readOnly.add(invocation)
         else if (globAccess && inspectReadOnly(globAccess, chainReadOnly)) readOnly.add(invocation)
         else if (access && inspectReadOnly(access, chainReadOnly || nativeGit && alone, approvedExternalRead)) readOnly.add(invocation)
+        // A wrapper, a `sh -c` string or an assignment keeps a command from counting as read-only, but does not
+        // change what it reads: a search it runs is refused for a secret it would reach, as the bare command is.
+        else if (!access && (invocation.wrapped || invocation.words.some(word => word.role === 'environment-assignment-value'))) {
+            const words = invocation.words.filter(word => word.role !== 'environment-assignment-value' && word.role !== 'wrapper-option-value')
+            // A plain glob is read as the pattern it spells, as a bare command's is; any other expansion leaves the reads unknown.
+            const globbed = words.some(word => word.dynamic) && words.every(word => !word.dynamic || word.role === 'argument' && plainGlob(word))
+            const { dynamic: _, ...literal } = invocation
+            const bare = classifyReadOnlyInvocation({ ...globbed ? literal : invocation, wrapped: false,
+                words: globbed ? words.map(({ dynamic: __, ...word }) => word) : words }, { ripgrepConfigActive: resolved.ripgrepConfigActive })
+            if (bare && !inspectReadOnly(bare, chainReadOnly) && searchBlocker?.decision === 'deny') searchRefusals.set(invocation, searchBlocker)
+        }
         else if (searchBlocker) searchRefusals.set(invocation, searchBlocker)
         // A cockpit command its own table does not admit (sync and upgrade publish policy) is a person's,
         // however it is spelled and whatever a grant says.
