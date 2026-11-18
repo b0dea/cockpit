@@ -126,6 +126,15 @@ describe('work-order lifecycle', () => {
         expect(existsSync(join(tools, 'monitor-ran'))).toBe(false)
     })
 
+    it('runs a check whose command is a path relative to the cockpit root, as a shell there would', async () => {
+        const root = await cockpit('[work]\ngrading = "checks"')
+        mkdirSync(join(root, 'bin'))
+        writeFileSync(join(root, 'bin/check.mjs'), "#!/usr/bin/env node\nimport '../test/add.test.mjs'\n", { mode: 0o755 })
+        writeFileSync(join(root, 'workorders/WO-1.md'), order('WO-1', '  - id: AC1\n    text: add(2, 3) returns 5.\n    check: [./bin/check.mjs]'))
+        expect((await work(root, ['work', 'accept', '--work-order', 'WO-1'])).result).toMatchObject({ state: 'accepted' })
+        expect(await work(root, ['work', 'check', '--work-order', 'WO-1'])).toMatchObject({ status: 0, result: { results: [{ criterion: 'AC1', passed: true }] } })
+    })
+
     it('closes an order as checks-passed only after cockpit ran every check, failing changes outside scope and stale contracts', async () => {
         const root = await cockpit('[work]\ngrading = "checks"')
         writeFileSync(join(root, 'workorders/WO-1.md'), order('WO-1'))
