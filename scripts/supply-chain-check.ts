@@ -88,6 +88,7 @@ const WRITE_GRANTS: Readonly<Record<string, readonly string[]>> = Object.freeze(
     '.github/workflows/release.yml#version': ['contents', 'pull-requests'],
     '.github/workflows/release.yml#publish': ['contents', 'id-token'],
     '.github/workflows/dependabot-automerge.yml#automerge': ['contents', 'pull-requests'],
+    '.github/workflows/payload-scan.yml#payload-scan': ['issues'],
 })
 // The only job allowed to publish, or to invoke a repository script that does.
 const PUBLICATION_JOB = '.github/workflows/release.yml#publish'
