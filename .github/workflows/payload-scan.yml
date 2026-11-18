@@ -1,0 +1,115 @@
+name: payload-scan
+
+# Fails any push or pull request that carries the PolinRider payload: an obfuscated
+# JavaScript blob appended to a build or config file after a long run of whitespace,
+# force-pushed as an amended commit that keeps the original author and date. The scan
+# is a checkout plus git grep, never an install or a build, so running it against a
+# poisoned branch cannot execute the payload. Where the organisation has rulesets it is
+# a required check on the protected branches.
+#
+# Cost: ubuntu-slim (the cheapest GitHub runner; this needs only git) and one run per
+# branch at a time, so a burst of pushes costs one run, not one per push.
+#
+# A hit alerts two ways: a Slack post when the organisation secret
+# SECURITY_ALERT_SLACK_WEBHOOK exists, and always a GitHub issue assigned to the logins in
+# the organisation variable SECURITY_ALERT_ASSIGNEES (default b0dea), which GitHub emails.
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+    inputs:
+      alert:
+        description: Open an issue / post to Slack on a hit. Callers gating their own CI pass false; the standalone run alerts.
+        type: boolean
+        default: true
+    secrets:
+      SECURITY_ALERT_SLACK_WEBHOOK:
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  # Keyed on the calling workflow too, so a CI gate and the standalone scan on one push never cancel each other.
+  group: payload-scan-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  payload-scan:
+    runs-on: ubuntu-slim
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Scan the tree for payload markers and whitespace-padded code
+        id: scan
+        shell: bash
+        run: |
+          set -u
+          # shellcheck disable=SC2016  # the markers are literal; nothing here is meant to expand
+          MARK='_\$_4[2]e5|_\$_1[e]42|global\.o=.[0-9]+-[0-9]+-du|global\[.!.\]=|global\[._V.\]=|rmc[e]j%otb%|Cot%[3]t=shtP|e9b53a7c-2342-4[b]15-b02d-bd8b8f6a03f9|TMfKQEd7TJJa5xN[Z]JZ2Lep838vrzrs7mAP|TXfxHUet9pJVU1B[g]VkBAbrES4YUc1nGzcG|vscode-settings-[b]ootstrap|vscode-[b]ootstrapper|vscode-[l]oad-config|default-[c]onfiguration\.vercel|2601[2]0\.vercel|0x1eef0849ed[a]15d87f64e51c73c8442cf3c8bcef3|0xbe03740067[0]fbf1c32364f762975908dc43eeb38759263e7dfcdabc76380811e|0x3f0e5781d0855fb46066[1]ac63257376db1941b2bb522499e4757ecb3ebd5dce3|A10-npm_inj[e]ct'
+          # One character of each marker sits in a bracket expression, so this file carries no
+          # marker. Copies on branches cut before that change still carry them verbatim, so
+          # the scanner's own paths, exactly, stay out of the marker grep, as does Markdown,
+          # where a marker cannot execute. Every other file is scanned, code always.
+          # -i: addresses also appear in mixed-case (checksummed) form.
+          markers=$(git grep -I -n -i -E "$MARK" -- . ':(exclude,glob)**/node_modules/**' ':(exclude,glob)**/*.md' \
+            ':(exclude).github/workflows/payload-scan.yml' ':(exclude).github/workflows/payload-scan-gate.yml' ':(exclude)scripts/payload-scan.sh' ':(exclude)scripts/payload-scan-test.sh' || true)
+          padded=$(git grep -I -n -E '[[:space:]]{1500,}[^[:space:]]' -- \
+            '*.js' '*.cjs' '*.mjs' '*.ts' '*.cts' '*.mts' '*.tsx' '*.jsx' '*.json' '*.css' '*.yml' '*.yaml' '*.sh' \
+            ':(exclude,glob)**/node_modules/**' ':(exclude)*.lock' ':(exclude)package-lock.json' || true)
+          # Build/config/hook/seed files are short and declarative; obfuscation there is never legitimate.
+          CFG=('*.config.js' '*.config.cjs' '*.config.mjs' '*.config.ts' '*.config.cts' '*.config.mts' '.eslintrc.js' '.eslintrc.cjs' '.lintstagedrc.js' '.lintstagedrc.cjs' '.prettierrc.js' '.prettierrc.cjs' '.husky/*' 'prisma/seed.js' 'prisma/seed.ts' 'prisma/seed.mjs' '.vscode/tasks.json')
+          CFGX=(':(exclude,glob)**/node_modules/**' ':(exclude,glob)**/.husky/_/**')
+          obf=$(git grep -I -n -E 'eval\(|new Function\(|Function\(["'"'"']|fromCharCode|(\\x[0-9a-fA-F]{2}){4}|\batob\(|require\(["'"'"'](https?|net|dgram|tls)["'"'"']\)|from ["'"'"'](node:)?(https?|net|dgram|tls)["'"'"']|"runOn": *"folderOpen"|curl [^|]*\| *(ba)?sh\b|base64 (-d|--decode)' -- "${CFG[@]}" "${CFGX[@]}" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|/?\*|#)' || true)
+          long=$(git grep -I -n -E '^.{1000,}$' -- "${CFG[@]}" "${CFGX[@]}" || true)
+          # A payload can also hide as JavaScript in a font file, and the spreader leaves its batch
+          # files behind. A font is judged by its first bytes (wOFF/wOF2), not Git's binary guess,
+          # which .gitattributes can steer; a short plain sentence is a test placeholder.
+          fonts=""
+          while IFS= read -r -d '' f; do
+            case "$(head -c 4 -- "$f")" in wOFF | wOF2) continue ;; esac
+            if [ "$(wc -c < "$f")" -le 512 ] && grep -q ' ' "$f" && ! LC_ALL=C grep -aqv '^[A-Za-z0-9 .,!?-]*$' "$f"; then continue; fi
+            fonts+="$f"$'\n'
+          done < <(git ls-files -z -- '*.woff' '*.woff2' ':(exclude,glob)**/node_modules/**')
+          dropped=$(git ls-files -- ':(glob)**/temp_auto_push.bat' ':(glob)**/config.bat')
+          if [ -n "$markers$padded$obf$long$fonts$dropped" ]; then
+            files=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$markers" "$padded" "$obf" "$long" "$fonts" "$dropped" | cut -d: -f1 | grep . | sort -u | tr '\n' ' ')
+            echo "files=$files" >> "$GITHUB_OUTPUT"
+            echo "::error::Payload signature found. Do not pull, build, install or lint this ref."
+            printf '%s\n' "$markers" | cut -d: -f1,2
+            printf '%s\n' "$padded" "$long" | awk -F: 'NF{print $1":"$2": line of "length($0)" chars"}'
+            printf '%s\n' "$obf" | cut -c1-200
+            printf '%s\n' "$fonts" "$dropped" | awk 'NF{print $0": text file posing as a font, or a PolinRider batch file"}'
+            exit 1
+          fi
+          echo "clean"
+      - name: Alert
+        if: failure() && steps.scan.outcome == 'failure' && toJSON(inputs.alert) != 'false'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WEBHOOK: ${{ secrets.SECURITY_ALERT_SLACK_WEBHOOK }}
+          ASSIGNEES: ${{ vars.SECURITY_ALERT_ASSIGNEES || 'b0dea' }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+          FILES: ${{ steps.scan.outputs.files }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          API: ${{ github.api_url }}
+        run: |
+          esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' '; }
+          body="PolinRider payload detected in $REPO on $REF (${SHA:0:9}), pushed by $ACTOR. Files: $FILES. Do not pull, build, install or lint this ref. Run: $RUN_URL"
+          assignees=$(printf '%s' "$ASSIGNEES" | tr ', ' '\n' | grep . | sed 's/.*/"&"/' | paste -sd, -)
+          curl -sS -o /dev/null -w 'issue: HTTP %{http_code}\n' -X POST "$API/repos/$REPO/issues" \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            --data "{\"title\":\"Security: payload detected on $(esc "$REF") (${SHA:0:9})\",\"body\":\"$(esc "$body")\",\"assignees\":[$assignees]}" || echo "issue creation failed (issues disabled on this repo?)"
+          if [ -n "$WEBHOOK" ]; then
+            curl -sS -o /dev/null -w 'slack: HTTP %{http_code}\n' -X POST -H 'Content-type: application/json' \
+              --data "{\"text\":\"<!channel> :rotating_light: $(esc "$body")\"}" "$WEBHOOK" || echo "slack post failed"
+          else
+            echo "SECURITY_ALERT_SLACK_WEBHOOK not set; Slack skipped"
+          fi
