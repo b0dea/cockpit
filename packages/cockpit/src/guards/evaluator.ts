@@ -1,6 +1,6 @@
 import { posix } from 'node:path'
 import { DOTENV_DOCUMENTATION, errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
-import { GUARD_INPUT_LIMITS, isParsedGuardInput, shownGuardWord, XARGS_INPUT, type ParsedInvocation } from './invocation-parser.js'
+import { foldGuardProgram, foldGuardSpelling, GUARD_INPUT_LIMITS, isParsedGuardInput, shownGuardWord, XARGS_INPUT, type ParsedInvocation } from './invocation-parser.js'
 import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from './host.js'
 import { GuardCommandArgv, McpAllowedTools } from '../schema.js'
 import { renderGuardProjectCommand } from '../environment/install-policy.js'
@@ -225,12 +225,7 @@ export function guardIdentity(status: { readonly dev: number; readonly ino: numb
     return `${status.dev}:${status.ino}`
 }
 const IDENTITY = /^\d+:\d+$/
-// The one normalisation applied to both sides of every spelling comparison: NFC plus full case
-// folding. A case-insensitive volume resolves `.ENV` or `.ſecrets` to the protected entry, and
-// neither byte equality nor toLowerCase() equates those spellings.
-export function foldGuardSpelling(path: string): string {
-    return path.normalize('NFC').toUpperCase().toLowerCase().normalize('NFC')
-}
+export { foldGuardSpelling }
 const fold = foldGuardSpelling
 /** A name the guard treats as an environment file or secrets directory, under any spelling. */
 export function isSensitiveGuardName(name: string): boolean {
@@ -435,15 +430,26 @@ function ruleMatches(invocation: ParsedInvocation, rule: GuardDeclaredAllow | Gu
     if (invocation.executable === null) return false
     const words = [invocation.executable, ...invocation.argv]
     if ('cwd' in rule && rule.cwd !== undefined && rule.cwd !== invocation.cwd) return false
-    if (!('match' in rule) || rule.match === 'prefix') return rule.argv.every((word, index) => words[index] === word)
-    return words.some((_, start) => rule.argv.every((word, index) => words[start + index] === word))
+    const deny = 'match' in rule
+    if (!deny || rule.match === 'prefix') return rule.argv.every((_, index) => ruleWordMatches(rule.argv, index, words[index], deny))
+    return words.some((_, start) => rule.argv.every((_, index) => ruleWordMatches(rule.argv, index, words[start + index], deny)))
+}
+
+// A rule's first word names a program, and the parser reads a program's name folded, so the rule's is folded too.
+// A deny naming a bare program also refuses it run by path, `/usr/bin/make` for `make`, and one naming a path refuses it under
+// any case; an allow admits only the spelling it names.
+function ruleWordMatches(argv: readonly string[], index: number, word: string | undefined, deny: boolean): boolean {
+    if (word === undefined) return false
+    if (index > 0) return argv[index] === word
+    const program = foldGuardProgram(argv[0]!), spelled = foldGuardProgram(word)
+    return program === spelled || deny && (program.includes('/') ? fold(program) === fold(spelled) : posix.basename(spelled) === program)
 }
 
 
 /** A complete cwd-bound command approval supplies the paths this invocation may inspect. */
 export function approvedReadOnlyInvocation(invocation: ParsedInvocation, policy: Pick<GuardEvaluationPolicy, 'declaredAllows' | 'ripgrepConfigActive'>): ReadOnlyAccess | undefined {
     if (invocation.redirects.length || !policy.declaredAllows.some(rule => rule.cwd === invocation.cwd && rule.argv.length === invocation.argv.length + 1
-        && rule.argv[0] === invocation.executable && invocation.argv.every((word, index) => word === rule.argv[index + 1]))) return undefined
+        && ruleWordMatches(rule.argv, 0, invocation.executable ?? undefined, false) && invocation.argv.every((word, index) => word === rule.argv[index + 1]))) return undefined
     return classifyReadOnlyInvocation(invocation, policy)
 }
 
@@ -1687,7 +1693,7 @@ function gitGlobalOptions(argv: readonly string[]): { readonly keys: readonly st
 export function cockpitLaunch(invocation: Pick<ParsedInvocation, 'executable' | 'argv'>): number | undefined {
     const prefix = invocation.executable === null ? undefined : cockpitLauncherPrefix(invocation.executable, invocation.argv)
     if (prefix === undefined) return undefined
-    return ['cockpit', 'cockpit.mjs'].includes(posix.basename(prefix === 0 ? invocation.executable! : invocation.argv[prefix - 1]!)) ? prefix : undefined
+    return ['cockpit', 'cockpit.mjs'].includes(fold(posix.basename(prefix === 0 ? invocation.executable! : invocation.argv[prefix - 1]!))) ? prefix : undefined
 }
 
 /**
@@ -1699,7 +1705,7 @@ export function cockpitShaped(invocation: ParsedInvocation, packages: readonly s
     // Any word: launchers take options before the program (`pnpm --silent exec cockpit`, `node --no-warnings
     // …/cockpit.mjs`), and sync writes `cockpit:*` package scripts that run it by name. A path is resolved and
     // folded, so `@b00dea/./cockpit`, `@B00DEA/cockpit` and `cockpit/dist/cli.js` from `node_modules/@b00dea` count.
-    return [invocation.executable ?? '', ...invocation.argv].some(word => !word.endsWith('/') && ['cockpit', 'cockpit.mjs'].includes(posix.basename(word))
+    return [invocation.executable ?? '', ...invocation.argv].some(word => !word.endsWith('/') && ['cockpit', 'cockpit.mjs'].includes(fold(posix.basename(word)))
         || word.includes('@b00dea/cockpit') || word.startsWith('cockpit:')
         || [word, word.slice(word.indexOf('=') + 1)].some(path => path.includes('/') && installed.some(directory => within(fold(posix.resolve(invocation.cwd, path)), directory))))
 }
@@ -2183,7 +2189,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const defaultWords = (word: string) => [...word.matchAll(/\$\{[A-Za-z_]\w*:?[-=]([^}]*)\}/g)]
         .map(([, value]) => value!.startsWith('~/') && resolved.homeDirectory !== undefined ? resolved.homeDirectory + value!.slice(1) : value!)
     // Words that spell Git skipping its hooks or pushing by force, deleting or to a protected branch, whatever runs them.
-    const gitWords = (words: readonly string[]) => { const git = words.findIndex(word => posix.basename(word) === 'git'); return git < 0 ? [] : words.slice(git + 1) }
+    const gitWords = (words: readonly string[]) => { const git = words.findIndex(word => fold(posix.basename(word)) === 'git'); return git < 0 ? [] : words.slice(git + 1) }
     // Git's own push rules, without the repository facts a spelled push lacks.
     const spelledPush = (words: readonly string[]): GuardDecision | undefined => {
         const after = gitWords(words)
@@ -2215,8 +2221,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (nestedAgentConfiguration(folded, false)) return nestedConfigurationDenial
             if (installedCode(folded, false)) return executionDenial
         }
-        if (tokens.some(token => /^(?:sudo|doas|pkexec)$/.test(token))) return deny('Refusing privilege escalation: it is a person\'s action. Ask them to run it in their own terminal.')
-        if (/\b(?:curl|wget)\b[^|;&]*\|\s*(?:\S*\/)?(?:sh|bash|zsh|dash|source|\.|python[\d.]*|node|perl|ruby)(?![\w.-])/.test(text)) return deny('Refusing to run downloaded text as code. Download the file into the cockpit, read it, then run it by path.')
+        if (fold(text).split(/[^\w./@~+-]+/).some(token => /^(?:sudo|doas|pkexec)$/.test(posix.basename(token)))) return deny('Refusing privilege escalation: it is a person\'s action. Ask them to run it in their own terminal.')
+        if (/\b(?:curl|wget)\b[^|;&]*\|\s*(?:\S*\/)?(?:sh|bash|zsh|dash|source|\.|python[\d.]*|node|perl|ruby)(?![\w.-])/.test(fold(text))) return deny('Refusing to run downloaded text as code. Download the file into the cockpit, read it, then run it by path.')
         // Words keep `:` and `-`, so `HEAD:main`, `:topic` and `-uf` reach Git's push rules; an assignment's value, `cmd=git`, is a word.
         return gitWordsDenial(text.split(/[\s'"`(),[\]=;&|]+/).filter(Boolean))
     }
@@ -2224,7 +2230,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     // declared deny. Nothing else about it is known, so it otherwise asks; Codex and OpenCode refuse an ask.
     if (input.unreadable) {
         const words = input.unreadable.text.split(/[\s;&|()<>`"'{}]+/).filter(Boolean)
-        const declared = resolved.declaredDenies.find(rule => words.some((_, at) => rule.argv.every((word, offset) => words[at + offset] === word)))
+        const declared = resolved.declaredDenies.find(rule => words.some((_, at) => rule.argv.every((_, offset) => ruleWordMatches(rule.argv, offset, words[at + offset], true))))
         return textDenial(input.unreadable.text, input.cwd) ?? (declared ? deny(`${declared.reason}${declared.fix ? ` Fix: ${declared.fix}` : ''}`)
             : ask(`The guard does not read this shell form (${input.unreadable.reason}) Write it as plain commands joined with &&, use \`[ … ] &&\` or \`if\`, or put it in a script file.`))
     }
@@ -3165,7 +3171,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             && outsideRoots(classifyReadOnlyInvocation({ ...invocation, argv: rule.argv.slice(1), redirects: [] }, { ripgrepConfigActive: false })))
         const external = outsideRoots(externalAccess) || externalGrant
         const exactGrant = resolved.declaredAllows.some(rule => rule.cwd === invocation.cwd && rule.argv.length === invocation.argv.length + 1
-            && rule.argv[0] === invocation.executable && invocation.argv.every((word, index) => word === rule.argv[index + 1]))
+            && ruleWordMatches(rule.argv, 0, invocation.executable ?? undefined, false) && invocation.argv.every((word, index) => word === rule.argv[index + 1]))
         // Native external reads leave a read-only Git command in a repository outside the roots to the
         // agent tool, as they do a named file. Its repository's configured helpers run with it, so as with
         // a grant it runs only as the whole call, and nothing else in the call can change what it prints.
@@ -3190,7 +3196,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         else if (searchBlocker) searchRefusals.set(invocation, searchBlocker)
         // A cockpit command its own table does not admit (sync and upgrade publish policy) is a person's,
         // however it is spelled and whatever a grant says.
-        if (cockpitCommand(invocation) && !readOnly.has(invocation) && !resolved.cockpitInvocations.some((profile) => profile.executable === invocation.executable
+        if (cockpitCommand(invocation) && !readOnly.has(invocation) && !resolved.cockpitInvocations.some((profile) => foldGuardProgram(profile.executable) === invocation.executable
             && profile.cwd === invocation.cwd && profile.argv.length === invocation.argv.length && profile.argv.every((word, at) => word === invocation.argv[at]))) {
             // A word reaching into the installed package without running it reads or copies the guard's own code.
             // A package manager reading the registry about the package, as `npm view @b00dea/cockpit versions`, runs nothing.
@@ -3447,7 +3453,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // or declared command for the launcher spelling admits that program as it always has.
         const launcher = invocations[invocations.indexOf(invocation) - 1]
         if (invocation.wrapped && launcher && launchedBy(invocation, launcher) && (resolved.declaredAllows.some(rule => ruleMatches(launcher, rule))
-            || resolved.projectCommands.some((profile) => profile.executable === launcher.executable && profile.checkoutRoot === launcher.cwd
+            || resolved.projectCommands.some((profile) => foldGuardProgram(profile.executable) === launcher.executable && profile.checkoutRoot === launcher.cwd
                 && profile.argv.length === launcher.argv.length && profile.argv.every((word, at) => word === launcher.argv[at])))) continue
         const pending = askDecisions.get(invocation)
         if (stands(pending)) return pending
