@@ -29,7 +29,8 @@ const valid = (row: unknown): row is PendingApproval => {
     if (row === null || typeof row !== 'object' || Array.isArray(row)) return false
     const item = row as Record<string, unknown>
     return Object.keys(item).sort().join(',') === 'argv,at,config,title' && Array.isArray(item.argv) && item.argv.length <= 64
-        && item.argv.every(word => typeof word === 'string' && word.length <= 4_096 && !/[\x00-\x1f\x7f]/.test(word))
+        // A note may span lines or hold a tab, which JSON carries; approve escapes them when it shows one.
+        && item.argv.every(word => typeof word === 'string' && word.length <= 4_096 && !/[\x00-\x08\x0b-\x1f\x7f]/.test(word))
         && APPROVABLE.has(commandSpelling(item.argv as string[]).name ?? '') && text(item.config, 4_096) && text(item.title, 512) && text(item.at, 64)
         // The command runs on the configuration it names last, which is the one recorded.
         && item.argv.at(-2) === '--config' && item.argv.at(-1) === item.config
@@ -64,6 +65,10 @@ async function write(root: string, items: readonly PendingApproval[]): Promise<s
 
 /** Records one command for a person, replacing an earlier record of the same command; the reason when it could not. */
 export async function recordPendingApproval(root: string, item: PendingApproval): Promise<string | undefined> {
+    // Never write what the reader refuses: one such entry would stop every later approve.
+    const command = item.argv.join(' ').slice(0, 200)
+    if (!valid(item)) return `the command ${JSON.stringify(command)} cannot be kept for a person: a word is over 4096 characters, `
+        + 'holds a control character, or the command is not one approve runs'
     const read = readPendingApprovals(root)
     if (read.kind === 'refusal') return read.message
     return write(root, [...read.items.filter(row => !same(row.argv, item.argv)), item].slice(-MAX_ITEMS))

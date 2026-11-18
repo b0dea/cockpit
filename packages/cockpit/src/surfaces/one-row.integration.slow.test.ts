@@ -215,7 +215,7 @@ describe('one-row generated surface integration', () => {
         expect(openCode.mcp['row-server']?.enabled).toBe(false)
         // A harness starts the server outside the guard, so the fix names the person's yes that approves it.
         expect(addedSync.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'MCP_NOT_APPROVED', target: 'row-server',
-            fix: 'to enable it, a person runs npx --no cockpit approve in a terminal outside the agent, reviews the declaration it shows and answers yes, which records the approval. A sync an agent runs keeps it off; to keep it off at that yes too, which approves every server it lists, remove it from the MCP source the sibling declares' }))
+            fix: 'to enable it, a person runs npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent, reviews the declaration it shows and answers yes, which records the approval. A sync an agent runs keeps it off; to keep it off at that yes too, which approves every server it lists, remove it from the MCP source the sibling declares' }))
 
         const evidence = [
             JSON.stringify(addedSync),

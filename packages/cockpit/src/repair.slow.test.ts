@@ -146,7 +146,7 @@ describe('canonical mechanical repair', { timeout: 180_000 }, () => {
             const classified = await loadOperatorPolicy(path)
             await writeFile(configPath, `${original}\n[[guards.allow]]\nargv = ["cat", "late.md"]\ncwd = "."\nreason = "Read the selected input."\n`)
             return classified
-        } }, { env: {}, approving: '1 of 1' })).toBe(2)
+        } }, { env: {}, approving: { progress: '1 of 1', stopped: false } })).toBe(2)
         expect(stdout).toMatch(/GUARD_CONFIG_WIDENED .*\(guards\.allow\); nothing was written/)
         expect(await generatedFrom()).toBe(narrowed)
     })

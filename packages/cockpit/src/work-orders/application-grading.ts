@@ -65,7 +65,7 @@ function protection(weak: Weakening, record: WorkRecord | undefined, rule: Ackno
     const acknowledged = weak.findings.length ? record?.acknowledgements.find(row => row.digest === digest && rule.counts(row)) : undefined
     const gate = rule.decider
     const how = !record ? 'a work order lets it be acknowledged; there is none for this grade'
-        : gate === 'person' ? `run ${ACKNOWLEDGE} and a person approves it with npx --no cockpit approve in a terminal outside the agent` : `acknowledge it with ${ACKNOWLEDGE}`
+        : gate === 'person' ? `run ${ACKNOWLEDGE} and a person approves it with npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent` : `acknowledge it with ${ACKNOWLEDGE}`
     const verdict: Pick<Verdict, 'verdict' | 'note'> | undefined = !weak.findings.length ? undefined
         : acknowledged ? { verdict: 'met', note: `weakening acknowledged by ${acknowledged.by}: ${acknowledged.note}`.slice(0, 4_000) }
             : { verdict: 'unmet', note: `tests were weakened since the base (${rows.join('; ')}; test files from ${weak.patterns.source}); revert it, or ${how}`.slice(0, 4_000) }
@@ -117,7 +117,7 @@ const STANDING: readonly StandingCriterion[] = [
     { id: AMENDMENTS_HOLD, text: ({ amendments }) => amendments.length ? 'The amendments an agent made to the accepted contract do not lower the bar the work is held to: each clarifies or '
         + 'tightens what it replaces, and none excuses work the original asked for. Before and after: '
         + `${listed(amendments.map(row => `${row.field}: "${row.before}" -> "${row.after}"`), '; ')}.` : undefined,
-    remedy: id => `; the next amendment of ${id} is a person's: revert or rewrite workorders/${id}.md, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config <your cockpit.toml> --work-order ${id} and a person approves it with npx --no cockpit approve in a terminal outside the agent` },
+    remedy: id => `; the next amendment of ${id} is a person's: revert or rewrite workorders/${id}.md, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config <your cockpit.toml> --work-order ${id} and a person approves it with npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent` },
 ]
 const RESERVED: ReadonlySet<string> = new Set(STANDING.map(row => row.id))
 const standingCriteria = (input: StandingInput): readonly WorkOrderCriterion[] => STANDING.flatMap(row => {

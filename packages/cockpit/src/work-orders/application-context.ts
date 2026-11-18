@@ -139,7 +139,7 @@ export function workContext(composition: WorkApplicationComposition, operation: 
     // stop an agent retrying its own failed work.
     const capRemedy = (orderId: string) => [
         `record the root cause with work note, then close it with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work signoff --config <your cockpit.toml> --work-order ${orderId} --partial|--abandon --note <why>`,
-        `ask a person for fresh attempts: run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work retry --config <your cockpit.toml> --work-order ${orderId} --note <the root cause>, then they run npx --no cockpit approve in a terminal outside the agent`].join(', or ')
+        `ask a person for fresh attempts: run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work retry --config <your cockpit.toml> --work-order ${orderId} --note <the root cause>, then they run npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent`].join(', or ')
     const current = async (orderId: string): Promise<Readonly<{ row: Observed; record: WorkRecord; order: WorkOrder }>> => {
         const row = await observe(orderId)
         if (!row.record) throw new RefusalError(`${orderId} is not accepted yet; run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work accept --config <your cockpit.toml> --work-order ${orderId}`)

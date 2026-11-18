@@ -147,7 +147,7 @@ describe('lifecycle CLI composition', () => {
         const factory = vi.spyOn(destructiveComposition, 'createDestructiveCommandAdapters')
         const capture = captureIo(async () => true)
 
-        expect(await runCli(['reset', '--config', '/synthetic/missing-cockpit.toml'], capture.io, {}, { env: host.env, approving: '1 of 1' })).toBe(2)
+        expect(await runCli(['reset', '--config', '/synthetic/missing-cockpit.toml'], capture.io, {}, { env: host.env, approving: { progress: '1 of 1', stopped: false } })).toBe(2)
         expect(capture.output().stderr).toContain('CONFIG_NOT_FOUND')
         expect(factory).toHaveBeenCalledWith(expect.objectContaining({ dockerContext: 'synthetic-local' }), expect.any(Function))
     })
@@ -344,7 +344,7 @@ describe('lifecycle CLI composition', () => {
             ['reset', '--config', '/synthetic/cockpit.toml'],
             capture.io,
             { reset, beginOperatorReset },
-            { env: {}, approving: '1 of 1' },
+            { env: {}, approving: { progress: '1 of 1', stopped: false } },
         )
 
         expect(status).toBe(approved ? 0 : 130)
@@ -368,7 +368,7 @@ describe('lifecycle CLI composition', () => {
             const capture = captureIo(async () => false)
             const begin = async () => ({ preview: complete('preview'), decide })
             const status = await runCli(['reset', '--config', '/synthetic/cockpit.toml'], capture.io,
-                { beginOperatorReset: begin }, { env: {}, approving: '1 of 1' })
+                { beginOperatorReset: begin }, { env: {}, approving: { progress: '1 of 1', stopped: false } })
             expect(status).toBe(throws ? 2 : 130)
             expect(decide).toHaveBeenCalledExactlyOnceWith('decline')
             expect(decide).not.toHaveBeenCalledWith('approve')

@@ -520,8 +520,8 @@ gives one to the person.
    previews what would go, and
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs stacks prune --config cockpit.toml --apply` removes this cockpit's
    orphans only. A prune that deletes volumes runs only where `[environment] seed` is declared and no widening
-   is unsynced, and another cockpit's orphans need a person: for either, hand the person
-   `npx --no cockpit approve` for a terminal outside the agent. A stack whose worktree Git still registers, or marks
+   is unsynced; otherwise its refusal records it, so hand the person `npx --no cockpit approve` for a
+   terminal outside the agent. Another cockpit's orphans are pruned from that cockpit. A stack whose worktree Git still registers, or marks
    locked, is kept until `git worktree prune` (after `git worktree unlock` for a locked one) runs in
    its main checkout. Done when `stacks` lists no orphaned stack, or the person has the command.
 

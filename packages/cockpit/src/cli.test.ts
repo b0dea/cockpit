@@ -716,7 +716,7 @@ describe('generated environment process contract', () => {
     })
 
     // approve runs sync for a person with `approving` set; no other run asks anyone.
-    const person = { env: {}, approving: '1 of 1' }
+    const person = { env: {}, approving: { progress: '1 of 1', stopped: false } }
 
     it('applies nothing when the person declines a widening sync', async () => {
         const calls: unknown[] = []
@@ -1411,7 +1411,7 @@ describe('work command routing', () => {
         const confirm = vi.fn(async (_: Approval) => true)
         let stdout = '', stderr = ''
         const io: CliIo = { stdout: { write: text => ((stdout += text), true) }, stderr: { write: text => ((stderr += text), true) }, confirm }
-        const person = { env: {}, approving: '1 of 1' }
+        const person = { env: {}, approving: { progress: '1 of 1', stopped: false } }
         expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-1'], io, { beginOperatorWorkApplication: begin }, person)).toBe(0)
         expect(begin).toHaveBeenCalledExactlyOnceWith({ configPath: 'cockpit.toml', request: { operation: 'work-accept', workOrderId: 'WO-1' } })
         expect(confirm).toHaveBeenCalledExactlyOnceWith(approval)

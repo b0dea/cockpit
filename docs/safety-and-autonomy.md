@@ -1060,8 +1060,10 @@ records the command in `.cockpit/local/pending-approvals` (machine-local, git-ig
 person must run `approve`. `approve` re-checks each waiting step against the current state, so it
 never trusts the stored text, shows the fields that widen and the MCP servers a yes would enable, and
 asks `Approve? [y/N, d = details]`. On yes, cockpit writes the MCP approvals into `[mcp.approved]` in
-`cockpit.toml` itself and applies exactly what was shown. Nobody types or copies a hash. Either way
-the step is cleared; the agent raises it again if it is still needed. `approve` also picks up an
+`cockpit.toml` itself and applies exactly what was shown. Nobody types or copies a hash. `n` clears
+the step, and the agent raises it again if it is still needed; Ctrl-C or the end of input stops
+`approve` and keeps that step and the rest. Detail lines that say what runs or changes are shown
+whole; explanatory notes are cut to one line until the person answers `d`. `approve` also picks up an
 unsynced widening edit that no sync has recorded. It is refused (`APPROVE_TERMINAL_REQUIRED`)
 inside an agent tool's session, in CI, with `--json` and without a terminal.
 

@@ -114,16 +114,16 @@ export interface CliIo {
     stderr: Pick<NodeJS.WriteStream, 'write'>
     stdin?: NodeJS.ReadStream
     answerInitQuestion?: (question: NonNullable<InitResult['question']>) => Promise<string | undefined>
-    /** Answers for the person at `cockpit approve` in place of the terminal. */
-    confirm?: (approval: Approval) => Promise<boolean>
+    /** Answers for the person at `cockpit approve` in place of the terminal; undefined stops approve. */
+    confirm?: (approval: Approval) => Promise<boolean | undefined>
 }
 
 export interface CliRuntime {
     readonly env?: Readonly<Record<string, string | undefined>>
     readonly signal?: AbortSignal
     readonly createReleaseMetadataTransport?: () => ReleaseMetadataTransport
-    /** Set only by `cockpit approve` on the step it runs for the person: where it stands, as "1 of 3". */
-    readonly approving?: string
+    /** Set only by `cockpit approve` on the step it runs for the person. */
+    readonly approving?: Approving
 }
 
 export interface CommandOutcome {
@@ -189,6 +189,9 @@ interface OperatorResetBinding {
     readonly preview: CommandOutcome
     decide(decision: 'approve' | 'decline'): Promise<CommandOutcome>
 }
+
+/** Where `cockpit approve` stands, as "1 of 3", and whether the person stopped it on this step. */
+type Approving = { readonly progress: string; stopped: boolean }
 
 interface OperatorWorkBinding { readonly approval: Approval; approve(): Promise<CommandOutcome> }
 
@@ -490,8 +493,8 @@ function weakenedTestsDiagnostic(operation: WorkApplicationRequest['operation'],
     return { severity: 'error', message,
         code: 'WORK_TEST_WEAKENED' satisfies typeof ENVIRONMENT_CODES.WORK_TEST_WEAKENED,
         fix: operation === 'work-grade'
-            ? 'read result.testProtection.findings and the verdict on them: restore each test weakened to make the change pass. Under [work] grading = "independent" the evaluator judged the test changes unjustified in the diff; under "self" or "subagent" your --note names each flagged file and why; under "checks" run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why it is not a weakening> for a legitimate change, and a person approves it with npx --no cockpit approve in a terminal outside the agent; never answer it for them'
-            : 'read result.testProtection: restore each deleted, skipped, suppressed or loosened test. A grade without an order has the evaluator judge the test changes; an order records the base they are compared with, and under [work] grading = "checks" a legitimate change is acknowledged with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why>, which a person approves with npx --no cockpit approve' }
+            ? 'read result.testProtection.findings and the verdict on them: restore each test weakened to make the change pass. Under [work] grading = "independent" the evaluator judged the test changes unjustified in the diff; under "self" or "subagent" your --note names each flagged file and why; under "checks" run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why it is not a weakening> for a legitimate change, and a person approves it with npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent; never answer it for them'
+            : 'read result.testProtection: restore each deleted, skipped, suppressed or loosened test. A grade without an order has the evaluator judge the test changes; an order records the base they are compared with, and under [work] grading = "checks" a legitimate change is acknowledged with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why>, which a person approves with npx --no cockpit approve in <the cockpit root>' }
 }
 
 type PersonHandler = 'work-accept' | 'work-signoff' | 'work-acknowledge' | 'work-retry'
@@ -503,7 +506,7 @@ function personRequired(handler: PersonHandler, title: string): CommandOutcome {
     const rule = handler === 'work-retry' ? 'always a person\'s step' : 'a person\'s step here, as it would let the agent lower the bar its own work is held to'
     return { artifact: null, destination: null, result: { title }, status: 2, diagnostics: [{ severity: 'error', message: `${handler.slice('work-'.length)} is ${rule}; nothing changed`,
         code: 'WORK_PERSON_REQUIRED' satisfies typeof ENVIRONMENT_CODES.WORK_PERSON_REQUIRED,
-        fix: 'this needs a person: they run npx --no cockpit approve in a terminal outside the agent, which shows the step and asks them; never answer it for them' }] }
+        fix: 'this needs a person: they run npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent, which shows the step and asks them; never answer it for them' }] }
 }
 
 // A grade by the same tool that did the work is weaker than one by another tool, so it is never silent.
@@ -1282,7 +1285,7 @@ async function decodeRequest(
 type InvocationOptions = { readonly interactive: boolean; readonly apply?: boolean; readonly json: boolean; readonly ci: string | undefined;
     readonly env: Readonly<Record<string, string | undefined>>; readonly argv: readonly string[]
     /** Where `cockpit approve` stands, on the run it makes for a person; absent on every other run. */
-    readonly approving?: string }
+    readonly approving?: Approving }
 
 // `sibling` nests its arguments under the operation it runs; every other configured command carries
 // configPath at the top of its input.
@@ -1323,8 +1326,12 @@ async function dispatchHandler(
     )
     // Only a run `cockpit approve` makes for a person asks; every other run leaves the step waiting.
     const approving = options.approving
-    const confirm = approving === undefined ? undefined
-        : (approval: Approval) => io.confirm ? io.confirm(approval) : askApproval(io, approval, approving)
+    const confirm = approving === undefined ? undefined : async (approval: Approval) => {
+        const answer = io.confirm ? await io.confirm(approval) : await askApproval(io, approval, approving.progress)
+        // A stop declines this step, so nothing is applied, and tells approve to keep it and the rest.
+        if (answer === undefined) approving.stopped = true
+        return answer === true
+    }
     if (isWorkHandler(request.handler) && 'request' in request.input) {
         if (isPersonHandler(request.handler)) {
             const opened = await operators.beginOperatorWorkApplication?.(request.input)
@@ -1410,21 +1417,34 @@ function resetApproval(preview: CommandOutcome): Approval {
         details: targets.map(({ kind, identity, declaration }) => `${String(kind)} ${String(identity)}${declaration === undefined || declaration === identity ? '' : ` (${String(declaration)})`}`) }
 }
 
-// What an agent's run leaves for a person, by the code that says it stopped short of one.
-const PERSON_CODES: ReadonlySet<string> = new Set([ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED, 'MCP_NOT_APPROVED', ENVIRONMENT_CODES.RESET_CONFIRMATION_REQUIRED,
-    ENVIRONMENT_CODES.STACKS_PRUNE_UNCONFIRMED, ENVIRONMENT_CODES.WORK_PERSON_REQUIRED])
+// What an agent's run leaves for a person: an error that says a person's step waits, or a declared MCP
+// server that stays off until one approves it. Other warnings ask nothing of a person.
+const PERSON_CODES: ReadonlySet<string> = new Set([ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED, ENVIRONMENT_CODES.RESET_CONFIRMATION_REQUIRED,
+    ENVIRONMENT_CODES.WORK_PERSON_REQUIRED])
+const waitsForPerson = (row: Diagnostic) => row.severity === 'error' && PERSON_CODES.has(row.code) || row.code === 'MCP_NOT_APPROVED'
 const PERSON_TITLES: Partial<Record<HandlerIdentifier, string>> = { sync: 'Apply the cockpit.toml change', reset: 'Reset the stack', stacks: 'Remove orphaned stacks' }
 
-/** Records a step that waits for a person, as the command to run again, with its configuration made absolute. */
+// A step is recorded and found under one spelling of its configuration, whatever links led to it.
+async function canonicalConfig(configPath: string): Promise<string> {
+    const resolved = resolve(configPath)
+    try { return join(await realpath(dirname(resolved)), basename(resolved)) }
+    catch (error) {
+        // A missing directory is reported by the command that reads the configuration.
+        if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return resolved
+        throw error
+    }
+}
+
+/** Records a step that waits for a person, as the command to run again, with its configuration made canonical. */
 async function recordForPerson(handler: HandlerIdentifier, configured: string, args: readonly string[], outcome: CommandOutcome): Promise<CommandOutcome> {
     const title = isPersonHandler(handler) ? (outcome.result as { title?: unknown } | null)?.title : PERSON_TITLES[handler]
-    if (typeof title !== 'string' || args.includes('--dry-run') || !outcome.diagnostics.some(row => PERSON_CODES.has(row.code))) return outcome
-    const config = resolve(configured)
+    if (typeof title !== 'string' || args.includes('--dry-run') || !outcome.diagnostics.some(waitsForPerson)) return outcome
+    const config = await canonicalConfig(configured)
     const argv = args.filter((word, index) => word !== '--json' && word !== '--config' && args[index - 1] !== '--config' && !word.startsWith('--config='))
     const failed = await recordPendingApproval(dirname(config), { argv: [...argv, '--config', config], config, title, at: new Date().toISOString() })
     return failed === undefined ? outcome : { ...outcome, diagnostics: [...outcome.diagnostics, { severity: 'error', target: 'approve',
         code: 'APPROVAL_NOT_RECORDED', message: `this step could not be left for a person to approve: ${failed}`,
-        fix: 'make .cockpit/local in the cockpit root a plain directory you can write, then run the command again' }] }
+        fix: 'make .cockpit/local in the cockpit root a plain directory you can write and the command\'s words shorter, then run it again' }] }
 }
 
 /**
@@ -1433,17 +1453,17 @@ async function recordForPerson(handler: HandlerIdentifier, configured: string, a
  */
 async function runApprove(configPath: string, io: CliIo, overrides: CliHandlerOverrides, runtime: CliRuntime, json: boolean,
     loadPolicy: typeof loadOperatorPolicy): Promise<CommandOutcome> {
+    const config = await canonicalConfig(configPath)
+    const root = dirname(config)
+    const refused = (code: string, message: string, fix: string, result: unknown = null): CommandOutcome => ({ artifact: null, destination: null, result, status: 2,
+        diagnostics: [{ severity: 'error', target: 'approve', code, message, fix }], fixContext: { resolvedConfigPath: config, generatedTargets: [] } })
     // A test answers through io.confirm in place of a terminal; it still must not be an agent, CI or JSON run.
     const absent = personAbsence(io.confirm ? undefined : io, runtime.env ?? process.env, json)
-    if (absent) return { artifact: null, destination: null, result: null, status: 2, diagnostics: [{ severity: 'error', target: 'approve',
-        code: 'APPROVE_TERMINAL_REQUIRED', message: `approve asks a person, and this run has none: ${absent}`,
-        fix: 'open a terminal outside the agent and run: npx --no cockpit approve' }] }
-    const config = resolve(configPath)
-    const root = dirname(config)
+    if (absent) return refused('APPROVE_TERMINAL_REQUIRED', `approve asks a person, and this run has none: ${absent}`,
+        'open a terminal outside the agent and, in <the cockpit root>, run: npx --no cockpit approve')
     const read = readPendingApprovals(root)
-    if (read.kind === 'refusal') return { artifact: null, destination: null, result: null, status: 2, diagnostics: [{ severity: 'error', target: 'approve',
-        code: 'PENDING_APPROVALS_INVALID', message: read.message,
-        fix: 'delete that file; each step an agent runs again that needs a person is recorded again' }] }
+    if (read.kind === 'refusal') return refused('PENDING_APPROVALS_INVALID', read.message,
+        'delete that file; each step an agent runs again that needs a person is recorded again')
     const policy = await loadPolicy(config)
     if (!('configSha256' in policy)) return { artifact: null, destination: null, ...policy }
     // A step recorded under another configuration in this root is that configuration's to approve.
@@ -1455,20 +1475,26 @@ async function runApprove(configPath: string, io: CliIo, overrides: CliHandlerOv
     if (!items.length) return { artifact: 'Nothing waits for a person.\n', destination: null, status: 0, diagnostics: [], result: { steps: [] } }
     const steps: { title: string; outcome: 'approved' | 'declined' | 'failed' }[] = []
     for (const [index, item] of items.entries()) {
-        const progress = `${index + 1} of ${items.length}`
-        let argv = item.argv
+        const approving: Approving = { progress: `${index + 1} of ${items.length}`, stopped: false }
+        let argv: readonly string[] = item.argv
         let status: number = EXIT_CODES.cancelled
         if (commandSpelling(argv).name === 'work retry' && !argv.some(word => word === '--note' || word.startsWith('--note='))) {
-            io.stderr.write(`\n${progress}  ${shown(item.title)}\nA retry records why the earlier attempts failed.\n`)
+            io.stderr.write(`\n${approving.progress}  ${shown(item.title)}\nA retry records why the earlier attempts failed.\n`)
             const note = await askNote(io)
+            if (note === undefined) approving.stopped = true
             argv = note ? [...argv, '--note', note] : []
         }
-        if (argv.length) status = await runCli(argv, io, overrides, { ...runtime, approving: progress })
-        // Answered either way: a declined step is not asked again until an agent's run records it anew.
+        if (argv.length && !approving.stopped) status = await runCli(argv, io, overrides, { ...runtime, approving })
+        // Ctrl-C or the end of input keeps this step and the rest for the next approve.
+        if (approving.stopped) {
+            const left = items.length - index
+            return { artifact: `\nStopped; ${left} ${left === 1 ? 'step still waits' : 'steps still wait'} for npx --no cockpit approve.\n`, destination: null,
+                diagnostics: [], result: { steps, stopped: true }, status: EXIT_CODES.cancelled }
+        }
+        // Answered: a declined step is not asked again until an agent's run records it anew.
         const removed = read.items.includes(item) ? await removePendingApproval(root, item.argv) : undefined
-        if (removed) return { artifact: null, destination: null, result: { steps }, status: 2, diagnostics: [{ severity: 'error', target: 'approve',
-            code: 'PENDING_APPROVALS_INVALID', message: `the answered step could not be removed: ${removed}`,
-            fix: 'make .cockpit/local in the cockpit root a plain directory you can write, then run npx --no cockpit approve again' }] }
+        if (removed) return refused('PENDING_APPROVALS_INVALID', `the answered step could not be removed: ${removed}`,
+            'make .cockpit/local in the cockpit root a plain directory you can write, then run npx --no cockpit approve in <the cockpit root> again', { steps })
         steps.push({ title: item.title, outcome: status === EXIT_CODES.success ? 'approved' : status === EXIT_CODES.cancelled ? 'declined' : 'failed' })
     }
     const count = (outcome: string) => steps.filter(step => step.outcome === outcome).length

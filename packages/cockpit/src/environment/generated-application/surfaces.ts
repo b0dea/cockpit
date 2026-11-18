@@ -232,7 +232,7 @@ export async function prepareSurfaces(
         const playwrightDigest = mcpApprovalDigest(playwright[0]!, prepared.root)
         if (approved.playwright !== playwrightDigest) {
             return refuse('MCP_DECLARATION_INVALID', '[browser] requires the playwright MCP server to be approved at its current declaration', 'playwright',
-                'a person runs npx --no cockpit approve in a terminal outside the agent, reviews the playwright declaration it shows and answers yes')
+                'a person runs npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent, reviews the playwright declaration it shows and answers yes')
         }
         if (process.platform !== 'darwin' && process.platform !== 'linux') {
             return refuse('SURFACE_INPUT_INVALID', 'browser posture state is unavailable on this platform', process.platform)

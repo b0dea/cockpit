@@ -198,7 +198,7 @@ function lifecycleSummary(command: string, result: Readonly<Record<string, unkno
         const targets = result.targets as readonly { kind?: unknown; identity?: unknown; declaration?: unknown }[]
         if (targets.length === 0) return `${escapeForTerminal(`Nothing to reset (${result.stackId}).`)}\n`
         return `${escapeForTerminal(`Reset would remove ${targets.length} ${targets.length === 1 ? 'target' : 'targets'} (${result.stackId}); plan ${result.planDigest}:`)}\n`
-            + `${resetTargetLines(targets)}Nothing was changed. To apply it, run the same command with --apply; without a declared seed it waits for a person, who runs npx --no cockpit approve.\n`
+            + `${resetTargetLines(targets)}Nothing was changed. To apply it, run the same command with --apply; without a declared seed it waits for a person, who runs npx --no cockpit approve in the cockpit root.\n`
     }
     // An applied reset printed nothing, so a person could not tell that their data was gone.
     if (command === 'reset' && result.change === 'reset' && Array.isArray(result.targets)) {

@@ -74,7 +74,7 @@ process.stdout.write(JSON.stringify({ type: 'result', is_error: false, session_i
 // A person at a terminal outside any agent runs approve, and answers each step by the screen it shows.
 async function asPerson(root: string, answer: (screen: string) => boolean): Promise<number> {
     const io: CliIo = { stdout: { write: () => true }, stderr: { write: () => true },
-        confirm: async ({ title, why, details }) => answer([title, `Why you: ${why}`, ...details].join('\n')) }
+        confirm: async ({ title, why, details, notes = [] }) => answer([title, `Why you: ${why}`, ...details, ...notes].join('\n')) }
     return runCli(['approve', '--config', join(root, 'cockpit.toml')], io, {}, { env: { ...process.env, CI: '', CLAUDECODE: '', CODEX_THREAD_ID: '', OPENCODE: '' } })
 }
 const record = (root: string, id: string) => JSON.parse(readFileSync(join(root, `.cockpit/work-orders/${id}.json`), 'utf8')) as Record<string, any>
@@ -758,7 +758,7 @@ describe('work-order lifecycle', () => {
         expect((await run(['work', 'accept', '--work-order', 'WO-14'])).status).toBe(0)
         writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => a - b\n')
         expect((await run(['work', 'grade', '--work-order', 'WO-14', '--verdict', 'unmet', '--note', 'add subtracts'])).status).toBe(2)
-        expect((await run(['work', 'check', '--work-order', 'WO-14'])).diagnostics[0]?.message).toMatch(/attempt cap \(1\); record the root cause with work note, then close it with .*--partial\|--abandon --note <why>, or ask a person for fresh attempts: run .*work retry .*--note <the root cause>, then they run npx --no cockpit approve in a terminal outside the agent$/)
+        expect((await run(['work', 'check', '--work-order', 'WO-14'])).diagnostics[0]?.message).toMatch(/attempt cap \(1\); record the root cause with work note, then close it with .*--partial\|--abandon --note <why>, or ask a person for fresh attempts: run .*work retry .*--note <the root cause>, then they run npx --no cockpit approve in \S+, from a terminal outside the agent$/)
         expect((await run(['work', 'accept', '--work-order', 'WO-14'])).diagnostics[0]?.message)
             .toMatch(/^WO-14 is already accepted and workorders\/WO-14\.md has not changed since, so there is nothing to amend; it is at its attempt cap \(1\): /)
         const retry = ['work', 'retry', '--work-order', 'WO-14', '--note', 'add subtracted; fixed in src/add.mjs']

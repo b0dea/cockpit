@@ -54,8 +54,8 @@ function otherCockpitsWarning(stacks: readonly ObservedStack[], configPath: stri
     if (stacks.length === 0) return []
     return [{ severity: 'warning', target: 'stacks',
         code: 'STACKS_PRUNE_UNCONFIRMED' as const satisfies typeof ENVIRONMENT_CODES.STACKS_PRUNE_UNCONFIRMED,
-        message: `orphaned stacks of other cockpits are removed only with a person's approval, because this cockpit's configuration does not speak for them; an agent's --apply leaves ${stacks.map(({ row }) => row.stackId).join(', ')}`,
-        fix: 'this needs a person: they run npx --no cockpit approve in a terminal outside the agent' }]
+        message: `orphaned stacks of other cockpits are left to those cockpits, because this cockpit's configuration does not speak for them; an agent's --apply leaves ${stacks.map(({ row }) => row.stackId).join(', ')}`,
+        fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs stacks prune --config <your cockpit.toml> --apply in the cockpit that owns them' }]
 }
 
 /** What a person or an agent approves: the exact prune a fresh observation shows, and how to apply it. */

@@ -485,8 +485,9 @@ deletes data and follows the reset rule: it runs for an agent only where `[envir
 declared and no widening is unsynced, and otherwise the command records the step and a person runs
 `npx --no cockpit approve` in a terminal outside the agent and answers `y`. That rule is this cockpit's own policy, so `--apply` removes only this cockpit's orphans and the
 state folders an earlier build left. The preview lists every orphan, marks each with `thisCockpit`,
-and warns with `STACKS_PRUNE_UNCONFIRMED` that another cockpit's are removed only by a person, who runs
-`stacks prune --apply` (it records the step) and then `npx --no cockpit approve`, which covers the whole machine. `doctor` warns with `STACKS_ORPHANED`
+and warns with `STACKS_PRUNE_UNCONFIRMED` that another cockpit's are left to that cockpit, where
+`stacks prune --apply` removes them. A prune that waits for a person covers the whole machine once
+they answer yes at `npx --no cockpit approve`. `doctor` warns with `STACKS_ORPHANED`
 when a stack of this cockpit has lost its checkout or a state record cannot be read, without asking
 Docker.
 
