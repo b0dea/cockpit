@@ -526,14 +526,14 @@ gates = [{ id = "quick", tier = "targeted", stages = ["quick"], changes = "Synth
         'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from .env',
         // No seed is declared here to refill the data a reset deletes, so an applied reset waits for a person.
         'npx --no cockpit reset --config cockpit.toml --apply',
-        'npx --no cockpit work accept --config cockpit.toml --work-order WO-001 --interactive', `node ${join(root, 'app/server.mjs')} doctor --config cockpit.toml`,
+        'npx --no cockpit approve', `node ${join(root, 'app/server.mjs')} doctor --config cockpit.toml`,
         // A session runs only what the agent could run directly.
         'npx --no cockpit session --config cockpit.toml -- rm -rf fixtures',
         // A session inside a session would run a command the guard never judged.
         './node_modules/.bin/cockpit session --config cockpit.toml -- ./node_modules/.bin/cockpit session --config cockpit.toml -- rm -rf fixtures',
         'npx --no cockpit session --config cockpit.toml -- npx --no cockpit session --config cockpit.toml -- true',
     ].map(command => `${command.replaceAll(root, '<root>')}: ${decision(command)}`)
-    expect(asked).toEqual(['npx --no cockpit env schema --config cockpit.toml --path app:.env.local: deny', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from .env: deny', 'npx --no cockpit reset --config cockpit.toml --apply: ask', 'npx --no cockpit work accept --config cockpit.toml --work-order WO-001 --interactive: ask', 'node <root>/app/server.mjs doctor --config cockpit.toml: allow', 'npx --no cockpit session --config cockpit.toml -- rm -rf fixtures: allow', './node_modules/.bin/cockpit session --config cockpit.toml -- ./node_modules/.bin/cockpit session --config cockpit.toml -- rm -rf fixtures: ask', 'npx --no cockpit session --config cockpit.toml -- npx --no cockpit session --config cockpit.toml -- true: ask'])
+    expect(asked).toEqual(['npx --no cockpit env schema --config cockpit.toml --path app:.env.local: deny', 'npx --no cockpit env schema --config cockpit.toml --path app:.env.schema --replace-from .env: deny', 'npx --no cockpit reset --config cockpit.toml --apply: ask', 'npx --no cockpit approve: ask', 'node <root>/app/server.mjs doctor --config cockpit.toml: allow', 'npx --no cockpit session --config cockpit.toml -- rm -rf fixtures: allow', './node_modules/.bin/cockpit session --config cockpit.toml -- ./node_modules/.bin/cockpit session --config cockpit.toml -- rm -rf fixtures: ask', 'npx --no cockpit session --config cockpit.toml -- npx --no cockpit session --config cockpit.toml -- true: ask'])
     expect(decision('npx --no cockpit session --config cockpit.toml -- curl https://api.vendor.example.test/messages')).toBe('deny')
     // A command that writes the configuration runs: a widening edit is held until a person's sync applies it.
     expect(decision(`/usr/bin/sed -i 's/allow = \\[\\]/allow = ["*"]/' cockpit.toml`)).toBe('allow')

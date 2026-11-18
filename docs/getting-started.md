@@ -61,8 +61,8 @@ npx --no cockpit check --config ./cockpit.toml
 - `sync --dry-run` lists every write and removal. Read it.
 - `sync` publishes all generated files as one recoverable transaction. It also removes
   files it generated before and no longer generates. An agent's `sync` refuses a change to
-  `cockpit.toml` that widens what agents may do; a person applies it with `sync --interactive` and
-  one yes ([Who decides](safety-and-autonomy.md#who-decides)).
+  `cockpit.toml` that widens what agents may do; a person applies it with
+  `npx --no cockpit approve` and one yes ([Who decides](safety-and-autonomy.md#who-decides)).
 - `check` confirms nothing has drifted and never changes a file.
 
 Review the output and commit it. Run `npx --no cockpit doctor --config ./cockpit.toml` for what is
@@ -117,7 +117,7 @@ The agent follows these rules for the whole setup:
    answer the agent chose itself is marked `"agent-default"` (below), and its report ends with each
    default, its field and its value.
 7. **A person reviews the diff before the commit.** `init` writes only inside the cockpit root. A
-   widening of what agents may do waits for the person's `sync --interactive` yes
+   widening of what agents may do waits for the person's `npx --no cockpit approve` yes
    ([Safety and autonomy](safety-and-autonomy.md#who-decides)).
 
 These rules are instructions, not enforcement. The guard cockpit installs later blocks some
@@ -581,7 +581,7 @@ fixed once per run ([Choose the Docker daemon](environment.md#choose-the-docker-
 ```
 
 Review and commit the regenerated files. If the new version widens what agents may do, the first
-sync waits for a person's `sync --interactive` yes. [Upgrade cockpit](harness-surfaces.md#upgrade-cockpit) has
+sync waits for a person's `npx --no cockpit approve` yes. [Upgrade cockpit](harness-surfaces.md#upgrade-cockpit) has
 the details.
 
 ## Install from source

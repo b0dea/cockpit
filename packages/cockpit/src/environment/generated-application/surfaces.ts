@@ -176,7 +176,7 @@ export async function prepareSurfaces(
         declarations.push(...parsed.declarations)
         evidence.push({ kind: 'mcp' as const, root, path: source.path, sha256: read.sha256, identity: sourceIdentity(read.identity) })
     }
-    // Only the digests a person approved at `sync --interactive` are approved. That preview renders
+    // Only the digests a person approved at `cockpit approve` are approved. That preview renders
     // every declared server as approved and lists each with what it starts, so the person sees what a
     // yes enables, including a server whose approval an unsynced edit of cockpit.toml added.
     const declaredDigests = Object.fromEntries(declarations.map(row => [row.name, mcpApprovalDigest(row, prepared.root)]))
@@ -232,7 +232,7 @@ export async function prepareSurfaces(
         const playwrightDigest = mcpApprovalDigest(playwright[0]!, prepared.root)
         if (approved.playwright !== playwrightDigest) {
             return refuse('MCP_DECLARATION_INVALID', '[browser] requires the playwright MCP server to be approved at its current declaration', 'playwright',
-                'a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal outside the agent, reviews the playwright declaration it shows and answers yes')
+                'a person runs npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent, reviews the playwright declaration it shows and answers yes')
         }
         if (process.platform !== 'darwin' && process.platform !== 'linux') {
             return refuse('SURFACE_INPUT_INVALID', 'browser posture state is unavailable on this platform', process.platform)

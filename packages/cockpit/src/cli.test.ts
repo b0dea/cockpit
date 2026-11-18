@@ -8,13 +8,13 @@ import * as fixCatalogue from './fix-catalogue.js'
 import { runCli, type CliIo } from './cli.js'
 import { runGuardCommand } from './cli-guard.js'
 import { createInvocationRecord } from './invocation.js'
-import { runSyncOperatorCommand } from './generated-environment/command.js'
 import { loadCockpitConfig } from './config/load.js'
 import { renderHumanDiagnostics } from './diagnostics.js'
 import { RefusalError, type EnvironmentCommandOutcome, type ExecutionStep } from './environment/contract.js'
 import type { SetupResult } from './environment/setup.js'
 import { agentMayRun, commands, describePublicOption, internalCommands } from './command-table.js'
-import type { OperatorPolicy, WideningPreview } from './environment/operator-application.js'
+import type { OperatorPolicy } from './environment/operator-application.js'
+import type { Approval } from './operator-confirmation.js'
 import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS, SURFACE_TARGETS } from './surfaces/harness-registry.js'
 import { installedPackageMetadata } from './package-metadata.js'
 import { cockpitPackageVersion } from './test-support/package-version.js'
@@ -144,8 +144,7 @@ describe('agent admission', () => {
             expect(agentMayRun(args, authority), args.join(' ')).toBe(true)
         }
         for (const args of [['sibling', 'add', 'api'], ['sibling', 'remove', 'api'], ['tool', 'remove', 'codexcli'], ['guard-evaluate', '--harness', 'claudecode'],
-            ['sync', '--interactive'], ['sync', '--interactive=false'], ['reset', '--interactive'], ['stacks', 'prune', '--interactive'],
-            ...['accept', 'acknowledge', 'signoff', 'retry'].map(sub => ['work', sub, '--work-order', 'WO-1', '--interactive']),
+            ['approve'], ['approve', '--config', 'cockpit.toml'],
             ...['--interactive', '--answers=a.toml', '--scaffold-compose=app', '--command=x', '--port=1', '--with=redis']
                 .map(flag => ['init', '.', '--target', 'codexcli', flag]),
             // A profile that mounts an operator-gated sibling never starts without a person.
@@ -355,6 +354,7 @@ describe('CLI help', () => {
             '  upgrade    Move the exact cockpit pin to a newer version and re-run sync\n\n' +
             'Generate and verify:\n' +
             '  sync       Write the Compose ownership override and agent files from cockpit.toml\n' +
+            '  approve    Show each step that waits for a person, and apply the ones you approve\n' +
             '  check      Report generated files that no longer match cockpit.toml\n\n' +
             'Run the stack:\n' +
             '  up         Start or resume the declared environment\n' +
@@ -367,7 +367,7 @@ describe('CLI help', () => {
             '  exec       Run a command inside one service\'s container of this checkout\'s stack\n' +
             '  sleep      Release this checkout and stop the stack if no other holder remains\n' +
             '  down       Stop and remove the stack (on the active local Docker context)\n' +
-            '  reset      Preview a reset, then approve it interactively, or apply it where a seed is declared (on the active local Docker context)\n' +
+            '  reset      Preview a reset, or apply it where a seed is declared and otherwise leave it for a person to approve (on the active local Docker context)\n' +
             '  stacks     List every stack on this machine, or preview and remove those whose checkout is gone (stacks prune)\n\n' +
             'Diagnose:\n' +
             '  doctor     Report environment problems without changing anything\n' +
@@ -398,7 +398,7 @@ describe('CLI help', () => {
             '  acknowledge  Acknowledge that an order weakened tests\n' +
             '  grade        Grade an accepted order the way [work] grading says\n' +
             '  signoff      Close a graded order as done, or any open one as partial or abandoned\n' +
-            '  retry        Grant an order at its attempt cap fresh attempts, as a person at a terminal\n' +
+            '  retry        Ask a person to grant an order at its attempt cap fresh attempts\n' +
             "  recover      Inspect or remove a crashed command's work-order lock\n" +
             '  verify       Check every record against its order\n\n' +
             "Run 'cockpit work <subcommand> --help' for its options.\n")
@@ -428,14 +428,14 @@ const widenedPolicy = async (): Promise<OperatorPolicy> => ({ ...await quietPoli
 
 describe('generated environment process contract', () => {
     function captureIo(
-        confirmWidening?: (preview: WideningPreview) => Promise<boolean>,
+        confirm?: (approval: Approval) => Promise<boolean>,
     ) {
         let stdout = ''
         let stderr = ''
         const io = {
             stdout: { write: (text: string) => ((stdout += text), true) },
             stderr: { write: (text: string) => ((stderr += text), true) },
-            ...(confirmWidening ? { confirmWidening } : {}),
+            ...(confirm ? { confirm } : {}),
         } as unknown as CliIo
         return { io, output: () => ({ stdout, stderr }) }
     }
@@ -715,43 +715,23 @@ describe('generated environment process contract', () => {
 
     })
 
-    it('refuses interactive sync without a terminal before previewing, and applies nothing on a no', async () => {
+    // approve runs sync for a person with `approving` set; no other run asks anyone.
+    const person = { env: {}, approving: { progress: '1 of 1', stopped: false } }
+
+    it('applies nothing when the person declines a widening sync', async () => {
         const calls: unknown[] = []
         const sync = async (input: { dryRun?: boolean }) => {
             calls.push(input)
             return { status: 0, diagnostics: [], result: { action: 'sync', dryRun: input.dryRun === true, sourceSha256: 'a'.repeat(64), changes: [] } }
         }
-
-        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], captureIo().io, { sync, loadPolicy: widenedPolicy }, { env: {} })).toBe(2)
-        expect(calls).toEqual([])
-        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], captureIo(async () => false).io,
-            { sync, loadPolicy: widenedPolicy }, { env: {} })).toBe(2)
+        const shown: Approval[] = []
+        expect(await runCli(['sync', '--config', 'cockpit.toml'], captureIo(async approval => { shown.push(approval); return false }).io,
+            { sync, loadPolicy: widenedPolicy }, person)).toBe(130)
         expect(calls).toEqual([{ configPath: 'cockpit.toml', dryRun: true, approveDeclaredMcp: true }])
+        expect(shown).toEqual([expect.objectContaining({ why: 'these changes widen what agents may do: guards.allow', details: ['Widens guards.allow'] })])
     })
 
-    it('refuses interactive sync in JSON and CI modes before previewing', async () => {
-        let calls = 0
-        const sync = async () => {
-            calls += 1
-            return { status: 0, diagnostics: [], result: { action: 'sync', dryRun: true, changes: [] } }
-        }
-        const confirmed = captureIo(async () => true)
-
-        expect(await runCli(
-            ['sync', '--config', 'cockpit.toml', '--interactive', '--json'],
-            confirmed.io,
-            { sync, loadPolicy: quietPolicy },
-        )).toBe(2)
-        expect(await runCli(
-            ['sync', '--config', 'cockpit.toml', '--interactive'],
-            confirmed.io,
-            { sync, loadPolicy: quietPolicy },
-            { env: { CI: '1' } },
-        )).toBe(2)
-        expect(calls).toBe(0)
-    })
-
-    it('applies interactive sync without prompting when nothing widens', async () => {
+    it('applies a person\'s sync without asking when nothing widens', async () => {
         const calls: unknown[] = []
         let confirmations = 0
         const capture = captureIo(async () => {
@@ -759,13 +739,13 @@ describe('generated environment process contract', () => {
             return false
         })
 
-        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], capture.io, {
+        expect(await runCli(['sync', '--config', 'cockpit.toml'], capture.io, {
             loadPolicy: quietPolicy,
             sync: async (input) => {
                 calls.push(input)
                 return { status: 0, diagnostics: [], result: { action: 'sync', dryRun: input.dryRun === true, sourceSha256: 'a'.repeat(64), changes: [] } }
             },
-        }, { env: {} })).toBe(0)
+        }, person)).toBe(0)
         expect(calls).toEqual([{ configPath: 'cockpit.toml', dryRun: true, approveDeclaredMcp: true },
             expect.objectContaining({ configPath: 'cockpit.toml', guardWidening: { configSha256: 'a'.repeat(64) } })])
         expect(confirmations).toBe(0)
@@ -775,12 +755,12 @@ describe('generated environment process contract', () => {
             ? { action: 'sync', dryRun: true, sourceSha256: 'a'.repeat(64), changes: [] }
             : { action: 'sync', dryRun: false, paths: ['AGENTS.md', 'CLAUDE.md'], changes: [{ operation: 'write', path: 'AGENTS.md' }] } })
         const first = captureIo(async () => false)
-        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], first.io, { loadPolicy: quietPolicy, sync: applied }, { env: {} })).toBe(0)
+        expect(await runCli(['sync', '--config', 'cockpit.toml'], first.io, { loadPolicy: quietPolicy, sync: applied }, person)).toBe(0)
         expect(first.output().stdout).toBe('write "AGENTS.md"\n'
             + 'Sync wrote 1 file; 1 generated file was already current. Review them with git status --short and commit them so teammates get the same files.\n')
         const unchanged = captureIo(async () => false)
-        expect(await runCli(['sync', '--config', 'cockpit.toml', '--interactive'], unchanged.io, { loadPolicy: quietPolicy,
-            sync: async (input) => ({ status: 0, diagnostics: [], result: { action: 'sync', dryRun: input.dryRun === true, sourceSha256: 'a'.repeat(64), paths: ['AGENTS.md', 'CLAUDE.md'], changes: [] } }) }, { env: {} })).toBe(0)
+        expect(await runCli(['sync', '--config', 'cockpit.toml'], unchanged.io, { loadPolicy: quietPolicy,
+            sync: async (input) => ({ status: 0, diagnostics: [], result: { action: 'sync', dryRun: input.dryRun === true, sourceSha256: 'a'.repeat(64), paths: ['AGENTS.md', 'CLAUDE.md'], changes: [] } }) }, person)).toBe(0)
         expect(unchanged.output().stdout).toBe('Nothing to sync: all 2 generated files were already current.\n')
     })
 
@@ -1421,63 +1401,46 @@ afterEach(() => {
     for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true })
 })
 
-describe('generated sync operator admission', () => {
-    it('shows the interactive widening preview as human-readable text', async () => {
-        const stdin = Readable.from(['yes\n']) as NodeJS.ReadStream
-        Object.defineProperty(stdin, 'isTTY', { value: true })
-        const stderr = Object.assign(new PassThrough(), { isTTY: true })
-        let shown = ''
-        stderr.on('data', chunk => { shown += chunk.toString() })
-
-        const outcome = await runSyncOperatorCommand({ configPath: 'cockpit.toml' }, {
-            interactive: true, json: false, ci: undefined,
-        }, { stderr, stdin, env: {} }, async (input) => input.dryRun
-            ? { status: 0, diagnostics: [], result: { dryRun: true, sourceSha256: 'a'.repeat(64) } }
-            : { status: 0, diagnostics: [], result: { dryRun: false } }, widenedPolicy)
-
-        expect(outcome.status).toBe(0)
-        expect(shown).toContain('widens:')
-        expect(shown).toContain('guards.allow')
-        expect(shown).not.toContain('{')
-    })
-})
-
-
 describe('work command routing', () => {
     // Cases name the handler; a person types the command's words, such as `work accept`.
     const spelling = (handler: string) => commands.find(command => command.handler === handler)!.name
-    it('completes a person gate only with the digest typed at a terminal, and passes an agent gate through', async () => {
-        const digest = 'a'.repeat(64), prompt = `Accept WO-1 (digest ${digest})`
-        const decide = vi.fn(async (answer: string) => ({ status: answer === digest ? 0 : 2, result: { accepted: answer === digest }, diagnostics: [] }))
-        const begin = vi.fn(async () => ({ digest, prompt, decide }))
-        const confirm = vi.fn(async (candidate: Readonly<{ digest: string; prompt: string }>) => candidate.digest)
+    it('asks a person only on the run approve makes, and passes an agent gate through', async () => {
+        const approval = { title: 'Accept WO-1', why: 'a person decides this', details: ['Objective: ship it'] }
+        const approve = vi.fn(async () => ({ status: 0, result: { accepted: true }, diagnostics: [] }))
+        const begin = vi.fn(async () => ({ approval, approve }))
+        const confirm = vi.fn(async (_: Approval) => true)
         let stdout = '', stderr = ''
-        const io: CliIo = { stdout: { write: text => ((stdout += text), true) }, stderr: { write: text => ((stderr += text), true) }, confirmWorkOrder: confirm }
-        expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-1', '--interactive'], io, { beginOperatorWorkApplication: begin }, { env: {} })).toBe(0)
+        const io: CliIo = { stdout: { write: text => ((stdout += text), true) }, stderr: { write: text => ((stderr += text), true) }, confirm }
+        const person = { env: {}, approving: { progress: '1 of 1', stopped: false } }
+        expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-1'], io, { beginOperatorWorkApplication: begin }, person)).toBe(0)
         expect(begin).toHaveBeenCalledExactlyOnceWith({ configPath: 'cockpit.toml', request: { operation: 'work-accept', workOrderId: 'WO-1' } })
-        expect(confirm).toHaveBeenCalledExactlyOnceWith({ digest, prompt })
-        expect(decide).toHaveBeenCalledExactlyOnceWith(digest)
+        expect(confirm).toHaveBeenCalledExactlyOnceWith(approval)
+        expect(approve).toHaveBeenCalledOnce()
         // The person who accepted sees what was recorded, not silence.
         expect(stdout).toBe('accepted: true\n')
         expect(humanStderr(stderr)).toBe('')
         for (const [args, request] of [
             [['work', 'signoff', '--work-order', 'WO-1', '--partial', '--note', 'AC3 is left'], { operation: 'work-signoff', workOrderId: 'WO-1', close: 'partial', note: 'AC3 is left' }],
         ] as const) {
-            begin.mockClear(); decide.mockClear(); confirm.mockClear()
-            expect(await runCli([...args, '--config', 'cockpit.toml', '--interactive'], io, { beginOperatorWorkApplication: begin }, { env: {} })).toBe(0)
+            begin.mockClear(); approve.mockClear(); confirm.mockClear()
+            expect(await runCli([...args, '--config', 'cockpit.toml'], io, { beginOperatorWorkApplication: begin }, person)).toBe(0)
             expect(begin).toHaveBeenCalledExactlyOnceWith({ configPath: 'cockpit.toml', request })
-            expect(decide).toHaveBeenCalledExactlyOnceWith(digest)
+            expect(approve).toHaveBeenCalledOnce()
         }
-        // CI, a run without --interactive, and one without a terminal on both standard streams have nobody to read the prompt.
-        const piped = { stdin: Readable.from([`accept ${digest}\n`]), stdout: { write: () => true }, stderr: { write: () => true } } as unknown as CliIo
-        for (const [runIo, args, env] of [[io, ['--interactive'], { CI: '1' }], [io, [], {}], [piped, ['--interactive'], {}]] as const) {
-            decide.mockClear(); confirm.mockClear()
-            let output = ''
-            const captured = runIo === io ? { ...io, stdout: { write: (text: string) => ((output += text), true) } } : runIo
-            expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-1', '--json', ...args], captured, { beginOperatorWorkApplication: begin }, { env })).toBe(2)
-            expect(decide).not.toHaveBeenCalled(); expect(confirm).not.toHaveBeenCalled()
-            if (runIo === io) expect(JSON.parse(output).diagnostics[0].code).toBe('WORK_PERSON_REQUIRED')
-        }
+        // A no applies nothing.
+        approve.mockClear(); confirm.mockResolvedValueOnce(false)
+        expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-1'], io, { beginOperatorWorkApplication: begin }, person)).toBe(130)
+        expect(approve).not.toHaveBeenCalled()
+        // Any other run, a person's own terminal included, leaves the step waiting and asks nobody.
+        approve.mockClear(); confirm.mockClear()
+        let output = ''
+        const config = join(realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-person-step-'))), 'cockpit.toml')
+        scratch.push(dirname(config))
+        mkdirSync(join(dirname(config), '.cockpit'))
+        expect(await runCli(['work', 'accept', '--config', config, '--work-order', 'WO-1', '--json'], { ...io, stdout: { write: text => ((output += text), true) } },
+            { beginOperatorWorkApplication: begin }, { env: {} })).toBe(2)
+        expect(approve).not.toHaveBeenCalled(); expect(confirm).not.toHaveBeenCalled()
+        expect(JSON.parse(output)).toMatchObject({ diagnostics: [{ code: 'WORK_PERSON_REQUIRED' }], guidance: [{ text: expect.stringContaining('npx --no cockpit approve') }] })
         // Under an agent gate the application records the step itself, and no terminal is asked for.
         const recorded = vi.fn(async () => ({ status: 0, result: { by: 'agent' }, diagnostics: [] }))
         expect(await runCli(['work', 'accept', '--config', 'cockpit.toml', '--work-order', 'WO-1'], io, { beginOperatorWorkApplication: recorded }, { env: {} })).toBe(0)

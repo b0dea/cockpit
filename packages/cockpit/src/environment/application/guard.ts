@@ -328,7 +328,7 @@ export async function runGuardEvaluationApplication(
             return recorded.kind === 'complete' && recorded.result.source.path === recordPath && recorded.result.source.sha256 === identity.configSha256
                 ? recorded.result : undefined
         }
-        const personSyncs = `a person runs \`${installedSyncCommand(identity.root, identity.configPath)} --interactive\` in a terminal, outside the agent, and confirms it`
+        const personSyncs = `a person runs \`npx --no cockpit approve\` in ${identity.root}, in a terminal outside the agent, and confirms it`
         // Plain sync refuses a configuration it cannot compare with the last one, so the fix names the sync
         // that asks a person; one with no cockpit.toml to read keeps the recovery for a missing file.
         const unrecorded = (why: string) => unavailable(guardHeld(identity, `${why}, and the configuration last synced is missing from ${GUARD_LOCAL_PATHS.generatedConfig} or does not load there`,

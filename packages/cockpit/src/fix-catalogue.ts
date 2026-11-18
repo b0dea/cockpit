@@ -7,6 +7,8 @@ import type { Diagnostic } from './environment/contract.js'
 // this placeholder, and bindConfigPath replaces it with the resolved path wherever the command line
 // supplied one.
 const CONFIG_PLACEHOLDER = '<your cockpit.toml>'
+// Where a person runs `cockpit approve`: the directory that holds the configuration.
+const ROOT_PLACEHOLDER = '<the cockpit root>'
 
 export type ConfiguredCommand = 'setup' | 'sync' | 'check' | 'upgrade' | 'up' | 'sleep' | 'session' | 'down'
     | 'reset' | 'preflight' | 'doctor' | 'logs' | 'sibling add' | 'sibling remove' | 'stacks' | 'stacks prune' | 'docs check' | 'env keys' | 'env schema' | 'use' | 'pull'
@@ -59,10 +61,11 @@ function bindablePath(path: string | null | undefined): path is string {
         && !unsafeControl.test(path)
 }
 
-/** Replaces the configuration placeholder in printed text with the resolved path, shell-quoted. */
+/** Replaces the configuration and cockpit root placeholders in printed text with the resolved paths, shell-quoted. */
 export function bindConfigPath(text: string, context?: FixContext): string {
     const path = context?.resolvedConfigPath
-    return bindablePath(path) ? text.replaceAll(`--config ${CONFIG_PLACEHOLDER}`, `--config ${formatShellCommand([path])}`) : text
+    return bindablePath(path) ? text.replaceAll(`--config ${CONFIG_PLACEHOLDER}`, `--config ${formatShellCommand([path])}`)
+        .replaceAll(ROOT_PLACEHOLDER, formatShellCommand([dirname(path)])) : text
 }
 
 function safeTarget(target: string): boolean {

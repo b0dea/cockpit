@@ -156,7 +156,23 @@ Reads `cockpit.toml` from `--config`.
 | --- | --- | --- |
 | `--config` | string | unset |
 | `--dry-run` | boolean | `false` |
-| `--interactive` | boolean | `false` |
+| `--json` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
+## cockpit approve
+
+Show each step that waits for a person, and apply the ones you approve.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
 | `--json` | boolean | `false` |
 
 | Exit | Meaning |
@@ -361,14 +377,13 @@ Reads `cockpit.toml` from `--config`.
 
 ## cockpit reset
 
-Preview a reset, then approve it interactively, or apply it where a seed is declared (on the active local Docker context).
+Preview a reset, or apply it where a seed is declared and otherwise leave it for a person to approve (on the active local Docker context).
 
 Reads `cockpit.toml` from `--config`.
 
 | Flag | Type | Default |
 | --- | --- | --- |
 | `--config` | string | unset |
-| `--interactive` | boolean | `false` |
 | `--apply` | boolean | `false` |
 | `--json` | boolean | `false` |
 
@@ -388,7 +403,6 @@ Reads `cockpit.toml` from `--config`.
 | --- | --- | --- |
 | `--config` | string | unset |
 | `--apply` | boolean | `false` |
-| `--interactive` | boolean | `false` |
 | `--json` | boolean | `false` |
 
 | Exit | Meaning |
@@ -499,7 +513,6 @@ Reads `cockpit.toml` from `--config`.
 | `--config` | string | unset |
 | `--json` | boolean | `false` |
 | `--work-order` | string | unset |
-| `--interactive` | boolean | `false` |
 
 | Exit | Meaning |
 | --- | --- |
@@ -602,7 +615,6 @@ Reads `cockpit.toml` from `--config`.
 | `--json` | boolean | `false` |
 | `--work-order` | string | unset |
 | `--note` | string | unset |
-| `--interactive` | boolean | `false` |
 
 | Exit | Meaning |
 | --- | --- |
@@ -646,7 +658,6 @@ Reads `cockpit.toml` from `--config`.
 | `--partial` | boolean | `false` |
 | `--abandon` | boolean | `false` |
 | `--note` | string | unset |
-| `--interactive` | boolean | `false` |
 
 | Exit | Meaning |
 | --- | --- |
@@ -656,7 +667,7 @@ Reads `cockpit.toml` from `--config`.
 
 ## cockpit work retry
 
-Grant an order at its attempt cap fresh attempts, as a person at a terminal.
+Ask a person to grant an order at its attempt cap fresh attempts.
 
 Reads `cockpit.toml` from `--config`.
 
@@ -666,7 +677,6 @@ Reads `cockpit.toml` from `--config`.
 | `--json` | boolean | `false` |
 | `--work-order` | string | unset |
 | `--note` | string | unset |
-| `--interactive` | boolean | `false` |
 
 | Exit | Meaning |
 | --- | --- |

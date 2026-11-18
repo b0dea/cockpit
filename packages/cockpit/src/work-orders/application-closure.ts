@@ -47,13 +47,14 @@ export async function signoff(request: Extract<WorkRequest, { operation: 'work-s
         return paths ? [`${row.id} closed done on a grade that left ${paths.join(', ')} to ${request.workOrderId}; closing it as ${request.close} leaves them ungraded`] : []
     })
     const decider = failedReview || leftHere.length ? 'person' : 'agent'
-    return gated('signoff', decider, [`Close ${request.workOrderId} as ${request.close} (${how})`, ...request.note ? [`Note: ${request.note}`] : [],
-        ...failedReview ? [`A grade found the agent's amendments lower the bar: ${failedReview.note}`] : [], ...leftHere,
-        ...record.grade ? record.grade.criteria.map(row => `${row.id}: ${row.verdict} — ${row.note}`) : [],
-        ...decisions(record).map(row => `Decision ${row.decision} (${row.title}): ${row.resolution!.record ? `recorded in ${row.resolution!.record}` : `no lasting decision — ${row.resolution!.text}`}`)],
-    'signoff', async by => store.update(request.workOrderId, async existing => {
+    return gated(decider, { title: `Close ${request.workOrderId} as ${request.close} (${how})`,
+        why: failedReview ? `a grade found the agent's amendments lower the bar: ${failedReview.note}` : 'closing it leaves another order\'s changes ungraded',
+        details: leftHere, notes: [...request.note ? [`Note: ${request.note}`] : [],
+            ...record.grade ? record.grade.criteria.map(row => `${row.id}: ${row.verdict} — ${row.note}`) : [],
+            ...decisions(record).map(row => `Decision ${row.decision} (${row.title}): ${row.resolution!.record ? `recorded in ${row.resolution!.record}` : `no lasting decision — ${row.resolution!.text}`}`)] },
+    async by => store.update(request.workOrderId, async existing => {
         if (!existing || existing.state !== record.state || existing.accepted.digest !== record.accepted.digest || existing.notes.length !== record.notes.length) {
-            throw new RefusalError(`${request.workOrderId} changed while this prompt was open`)
+            throw new RefusalError(`${request.workOrderId} changed while this step waited`)
         }
         const state: WorkRecord['state'] = request.close
         return { record: { ...existing, state, closure: { at: now(), by, how, ...request.note ? { note: request.note } : {} } },

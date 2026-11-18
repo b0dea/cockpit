@@ -1,5 +1,5 @@
 /**
- * Owns the text edit `sync --interactive` makes to cockpit.toml when a person approves MCP servers:
+ * Owns the text edit `cockpit approve` makes to cockpit.toml when a person approves MCP servers:
  * set one `name = "<sha256>"` line per server in the `[mcp.approved]` table, adding the table when
  * the file has none. Every other byte is left alone. The verified write re-parses the result and
  * refuses anything beyond those approvals; a layout this module cannot locate the table in (an
@@ -48,12 +48,12 @@ export function setMcpApprovals(text: string, approvals: Readonly<Record<string,
  */
 export async function recordMcpApprovals(path: string, text: string, expectedSha256: string, config: CockpitConfig,
     approvals: Readonly<Record<string, string>>): Promise<Exclude<VerifiedWriteResult, { kind: 'complete' }> | Readonly<{ kind: 'complete'; sha256: string }>> {
-    const byHand = 'set each approval under [mcp.approved] in cockpit.toml by hand, as name = "<the sha256 sync --interactive showed>", then run sync --interactive again'
+    const byHand = 'set each approval under [mcp.approved] in cockpit.toml by hand, as name = "<the sha256 sync --dry-run --json reports>", then run npx --no cockpit approve in <the cockpit root> again'
     const edited = setMcpApprovals(text, approvals)
     if (edited.kind === 'unsupported') return { kind: 'refused', code: ENVIRONMENT_CODES.CONFIG_SCHEMA_INVALID,
         message: `cockpit.toml cannot be edited safely: ${edited.reason}; nothing was written`, fix: byHand }
     const expected = canonicalJson({ ...config, mcp: { ...config.mcp, approved: { ...config.mcp.approved, ...approvals } } })
-    const rerun = 'run sync --interactive again and review the fresh preview'
+    const rerun = 'run npx --no cockpit approve in <the cockpit root> again and review the fresh preview'
     const written = await writeVerifiedConfig({
         path, expectedSha256, temporaryTag: 'mcp',
         edit: () => edited.text,
@@ -64,7 +64,7 @@ export async function recordMcpApprovals(path: string, text: string, expectedSha
             invalid: reason => ({ message: `recording the approvals would leave cockpit.toml invalid (${reason}); nothing was written`, fix: byHand }),
             notExact: { message: 'recording the approvals would change more than [mcp.approved]; nothing was written', fix: byHand },
             writtenMismatch: { message: 'the approvals were written, but re-reading cockpit.toml shows a change beyond them',
-                fix: 'review cockpit.toml for the change you did not make, then run sync --interactive again' },
+                fix: 'review cockpit.toml for the change you did not make, then run npx --no cockpit approve in <the cockpit root> again' },
         },
     })
     return written.kind === 'complete' ? { kind: 'complete', sha256: sha256Hex(edited.text) } : written

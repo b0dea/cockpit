@@ -251,7 +251,7 @@ describe('observation application runners', () => {
             expect(await widened()).toEqual([])
             writeFileSync(configPath, `${synced}\n[[guards.allow]]\nargv = ["cat", "notes.md"]\ncwd = "."\nreason = "Read the notes."\n`)
             expect(await widened()).toEqual([expect.objectContaining({ severity: 'warning', target: 'guard', message: expect.stringContaining('(guards.allow)'),
-                fix: expect.stringContaining('--interactive') })])
+                fix: expect.stringContaining('npx --no cockpit approve') })])
         } finally { rmSync(directory, { recursive: true, force: true }) }
     })
 

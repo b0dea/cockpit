@@ -1,4 +1,5 @@
-import { confirmYes } from './operator-confirmation.js'
+import { askApproval, askNote, personAbsence, shown, type Approval } from './operator-confirmation.js'
+import { readPendingApprovals, recordPendingApproval, removePendingApproval, type PendingApproval } from './pending-approvals.js'
 import { randomUUID } from 'node:crypto'
 import { ComposeProfileName, EVALUATOR_COMMANDS, runningEvaluatorTool, type EvaluatorTool } from './schema.js'
 import { installedPackageMetadata } from './package-metadata.js'
@@ -98,7 +99,6 @@ import {
     runSyncOperatorCommand,
     type GeneratedEnvironmentCommandInput,
     type GeneratedEnvironmentCommandOutcome,
-    type GeneratedEnvironmentOperatorIo,
 } from './generated-environment/command.js'
 import type { GeneratedStaleRemovalApproval, GeneratedStaleRemovalApprovalRequest } from './environment/generated-application/shared.js'
 import { runUpgrade } from './environment/upgrade-application.js'
@@ -114,16 +114,16 @@ export interface CliIo {
     stderr: Pick<NodeJS.WriteStream, 'write'>
     stdin?: NodeJS.ReadStream
     answerInitQuestion?: (question: NonNullable<InitResult['question']>) => Promise<string | undefined>
-    confirmReset?: (preview: CommandOutcome) => Promise<boolean>
-    confirmWorkOrder?: (candidate: Readonly<{ digest: string; prompt: string }>) => Promise<string | undefined>
-    confirmWidening?: GeneratedEnvironmentOperatorIo['confirmWidening']
-    confirmStacksPrune?: (preview: CommandOutcome) => Promise<boolean>
+    /** Answers for the person at `cockpit approve` in place of the terminal; undefined stops approve. */
+    confirm?: (approval: Approval) => Promise<boolean | undefined>
 }
 
 export interface CliRuntime {
     readonly env?: Readonly<Record<string, string | undefined>>
     readonly signal?: AbortSignal
     readonly createReleaseMetadataTransport?: () => ReleaseMetadataTransport
+    /** Set only by `cockpit approve` on the step it runs for the person. */
+    readonly approving?: Approving
 }
 
 export interface CommandOutcome {
@@ -139,6 +139,7 @@ export interface CommandOutcome {
 interface WorkCommandInput { readonly configPath: string; readonly request: WorkApplicationRequest; readonly evaluator?: EvaluatorTool }
 
 interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInput> {
+    approve: Readonly<{ configPath: string }>
     check: GeneratedEnvironmentCommandInput
     'docs-check': Readonly<{ configPath: string }>
     'env-keys': Readonly<{ configPath: string }>
@@ -189,7 +190,10 @@ interface OperatorResetBinding {
     decide(decision: 'approve' | 'decline'): Promise<CommandOutcome>
 }
 
-interface OperatorWorkBinding { readonly digest: string; readonly prompt: string; decide(answer: string): Promise<CommandOutcome> }
+/** Where `cockpit approve` stands, as "1 of 3", and whether the person stopped it on this step. */
+type Approving = { readonly progress: string; stopped: boolean }
+
+interface OperatorWorkBinding { readonly approval: Approval; approve(): Promise<CommandOutcome> }
 
 export type CliHandlerOverrides = Partial<CommandHandlers> & Readonly<{
     beginOperatorWorkApplication?: (input: WorkCommandInput) => Promise<OperatorWorkBinding | CommandOutcome>
@@ -489,20 +493,20 @@ function weakenedTestsDiagnostic(operation: WorkApplicationRequest['operation'],
     return { severity: 'error', message,
         code: 'WORK_TEST_WEAKENED' satisfies typeof ENVIRONMENT_CODES.WORK_TEST_WEAKENED,
         fix: operation === 'work-grade'
-            ? 'read result.testProtection.findings and the verdict on them: restore each test weakened to make the change pass. Under [work] grading = "independent" the evaluator judged the test changes unjustified in the diff; under "self" or "subagent" your --note names each flagged file and why; under "checks" a person acknowledges a legitimate change at a terminal with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why it is not a weakening> --interactive; never type the digest for them'
-            : 'read result.testProtection: restore each deleted, skipped, suppressed or loosened test. A grade without an order has the evaluator judge the test changes; an order records the base they are compared with, and under [work] grading = "checks" a person acknowledges a legitimate change with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why> --interactive' }
+            ? 'read result.testProtection.findings and the verdict on them: restore each test weakened to make the change pass. Under [work] grading = "independent" the evaluator judged the test changes unjustified in the diff; under "self" or "subagent" your --note names each flagged file and why; under "checks" run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why it is not a weakening> for a legitimate change, and a person approves it with npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent; never answer it for them'
+            : 'read result.testProtection: restore each deleted, skipped, suppressed or loosened test. A grade without an order has the evaluator judge the test changes; an order records the base they are compared with, and under [work] grading = "checks" a legitimate change is acknowledged with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why>, which a person approves with npx --no cockpit approve in <the cockpit root>' }
 }
 
 type PersonHandler = 'work-accept' | 'work-signoff' | 'work-acknowledge' | 'work-retry'
 const PERSON_HANDLERS: ReadonlySet<string> = new Set<PersonHandler>(['work-accept', 'work-signoff', 'work-acknowledge', 'work-retry'])
 const isPersonHandler = (handler: string): handler is PersonHandler => PERSON_HANDLERS.has(handler)
 
-// A person gate binds what the person reads to the digest they type, so it never completes for an agent.
-function personRequired(handler: PersonHandler, prompt: string): CommandOutcome {
+// A person's step never completes for an agent: the run records it, and `cockpit approve` asks a person.
+function personRequired(handler: PersonHandler, title: string): CommandOutcome {
     const rule = handler === 'work-retry' ? 'always a person\'s step' : 'a person\'s step here, as it would let the agent lower the bar its own work is held to'
-    return { artifact: null, destination: null, result: { prompt }, status: 2, diagnostics: [{ severity: 'error', message: `${handler.slice('work-'.length)} is ${rule}, and this run has no person at a terminal`,
+    return { artifact: null, destination: null, result: { title }, status: 2, diagnostics: [{ severity: 'error', message: `${handler.slice('work-'.length)} is ${rule}; nothing changed`,
         code: 'WORK_PERSON_REQUIRED' satisfies typeof ENVIRONMENT_CODES.WORK_PERSON_REQUIRED,
-        fix: 'stop and ask a person to run the same command with --interactive in a terminal outside CI, read what it shows, and type the digest; never type it for them' }] }
+        fix: 'this needs a person: they run npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent, which shows the step and asks them; never answer it for them' }] }
 }
 
 // A grade by the same tool that did the work is weaker than one by another tool, so it is never silent.
@@ -1000,6 +1004,8 @@ async function decodeRequest(
             request = { operation: handler, workOrderId: workOrderId!, question, text: answer }
         } else if (handler === 'work-acknowledge' || handler === 'work-retry') {
             const note = text('note')
+            // Retry is a person's in every case, so one without a note still waits for them: approve asks for it.
+            if (!note && handler === 'work-retry') return personRequired(handler, `Give ${workOrderId} fresh attempts`)
             if (!note) return usageOutcome('CLI_USAGE_INVALID', handler === 'work-retry' ? 'provide --note <the root cause of the failed attempts>' : 'provide --note <why this change to the tests is not a weakening>', '--note')
             request = { operation: handler, workOrderId: workOrderId!, note }
         } else if (handler === 'work-grade') {
@@ -1109,13 +1115,15 @@ async function decodeRequest(
     }
 
     if (handler === 'sync') {
-        const values = parsed.values as { config?: string; 'dry-run'?: boolean; interactive?: boolean }
+        const values = parsed.values as { config?: string; 'dry-run'?: boolean }
         if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'sync accepts named inputs only')
         if (!values.config) return missingConfig()
-        if (values['dry-run'] && values.interactive) {
-            return usageOutcome('CLI_USAGE_INVALID', 'sync --dry-run and --interactive are mutually exclusive', '--interactive')
-        }
         return { handler, input: { configPath: values.config, ...(values['dry-run'] === true ? { dryRun: true } : {}) } }
+    }
+
+    if (handler === 'approve') {
+        const values = parsed.values as { config?: string }
+        return namedOnly(handler, parsed.positionals) ?? { handler, input: { configPath: values.config ?? 'cockpit.toml' } }
     }
 
     if (handler === 'upgrade') {
@@ -1211,15 +1219,14 @@ async function decodeRequest(
     }
 
     if (handler === 'stacks') {
-        const values = parsed.values as { config?: string; apply?: boolean; interactive?: boolean }
+        const values = parsed.values as { config?: string; apply?: boolean }
         const [operation, ...extra] = parsed.positionals
         if (operation !== undefined && operation !== 'prune' || extra.length > 0) {
-            return usageOutcome('CLI_USAGE_INVALID', `stacks takes no operation, or prune: ${cockpitCommand('stacks')}, or ${cockpitCommand('stacks prune', { args: '[--apply | --interactive]' })}`)
+            return usageOutcome('CLI_USAGE_INVALID', `stacks takes no operation, or prune: ${cockpitCommand('stacks')}, or ${cockpitCommand('stacks prune', { args: '[--apply]' })}`)
         }
-        if (operation === undefined && (values.apply || values.interactive)) {
-            return usageOutcome('CLI_USAGE_INVALID', '--apply and --interactive belong to stacks prune; stacks alone only lists', values.apply ? '--apply' : '--interactive')
+        if (operation === undefined && values.apply) {
+            return usageOutcome('CLI_USAGE_INVALID', '--apply belongs to stacks prune; stacks alone only lists', '--apply')
         }
-        if (values.apply && values.interactive) return usageOutcome('CLI_USAGE_INVALID', 'choose --apply or --interactive, not both', '--apply')
         if (!values.config) return missingConfig()
         return { handler, input: { configPath: values.config, operation: operation === 'prune' ? 'prune' : 'list' } }
     }
@@ -1276,7 +1283,9 @@ async function decodeRequest(
 }
 
 type InvocationOptions = { readonly interactive: boolean; readonly apply?: boolean; readonly json: boolean; readonly ci: string | undefined;
-    readonly env: Readonly<Record<string, string | undefined>>; readonly argv: readonly string[] }
+    readonly env: Readonly<Record<string, string | undefined>>; readonly argv: readonly string[]
+    /** Where `cockpit approve` stands, on the run it makes for a person; absent on every other run. */
+    readonly approving?: Approving }
 
 // `sibling` nests its arguments under the operation it runs; every other configured command carries
 // configPath at the top of its input.
@@ -1315,20 +1324,21 @@ async function dispatchHandler(
         `the "${request.handler}" command is unavailable`,
         request.handler,
     )
+    // Only a run `cockpit approve` makes for a person asks; every other run leaves the step waiting.
+    const approving = options.approving
+    const confirm = approving === undefined ? undefined : async (approval: Approval) => {
+        const answer = io.confirm ? await io.confirm(approval) : await askApproval(io, approval, approving.progress)
+        // A stop declines this step, so nothing is applied, and tells approve to keep it and the rest.
+        if (answer === undefined) approving.stopped = true
+        return answer === true
+    }
     if (isWorkHandler(request.handler) && 'request' in request.input) {
         if (isPersonHandler(request.handler)) {
             const opened = await operators.beginOperatorWorkApplication?.(request.input)
             if (!opened) return unavailable()
-            if (!('decide' in opened)) return opened
-            const terminal = io.confirmWorkOrder !== undefined || io.stdin?.isTTY === true && 'isTTY' in io.stdout && io.stdout.isTTY === true
-            if (!options.interactive || options.json || options.ci && options.ci.length > 0 || !terminal) return personRequired(request.handler, opened.prompt)
-            let answer: string | undefined
-            if (io.confirmWorkOrder) answer = await io.confirmWorkOrder({ digest: opened.digest, prompt: opened.prompt })
-            else if (io.stdin) {
-                const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
-                try { answer = await prompt.question(`${opened.prompt}\n`) } finally { prompt.close() }
-            }
-            return opened.decide(answer ?? '')
+            if (!('approve' in opened)) return opened
+            if (!confirm) return personRequired(request.handler, opened.approval.title)
+            return await confirm(opened.approval) ? opened.approve() : { status: EXIT_CODES.cancelled, diagnostics: [], result: null }
         }
         const handler = handlers[request.handler]
         return handler?.(request.input) ?? unavailable()
@@ -1353,7 +1363,7 @@ async function dispatchHandler(
         },
     }, handlers.init ?? (async () => refusalOutcome('INIT_UNAVAILABLE', 'init application is unavailable')))
     if (request.handler === 'setup') return handlers.setup?.(request.input) ?? unavailable()
-    if (request.handler === 'sync') return runSyncOperatorCommand(request.input, options, { ...io, env: options.env }, handlers.sync ?? (async () => unavailable()), operators.loadPolicy ?? loadOperatorPolicy)
+    if (request.handler === 'sync') return runSyncOperatorCommand(request.input, confirm, handlers.sync ?? (async () => unavailable()), operators.loadPolicy ?? loadOperatorPolicy)
     if (request.handler === 'check') return handlers.check?.(request.input) ?? unavailable()
     if (request.handler === 'docs-check') return handlers['docs-check']?.(request.input) ?? unavailable()
     if (request.handler === 'env-keys') return handlers['env-keys']?.(request.input) ?? unavailable()
@@ -1363,14 +1373,11 @@ async function dispatchHandler(
     if (request.handler === 'sleep') return handlers.sleep?.(request.input) ?? unavailable()
     if (request.handler === 'session') return handlers.session?.(request.input) ?? unavailable()
     if (request.handler === 'down') return handlers.down?.(request.input) ?? unavailable()
-    if (request.handler === 'reset') return runResetOperatorApplication(request.input, {
-        ...options,
-        terminal: io.confirmReset !== undefined || io.stdin?.isTTY === true,
-    }, {
+    if (request.handler === 'reset') return runResetOperatorApplication(request.input, { person: confirm !== undefined, apply: options.apply }, {
         policy: operators.loadPolicy ?? loadOperatorPolicy,
         preview: handlers.reset ?? (async () => unavailable()),
-        begin: operators.beginOperatorReset ?? (async () => operatorRefusal('interactive reset is unavailable')),
-        confirm: (preview) => confirmOperatorReset(io, preview),
+        begin: operators.beginOperatorReset ?? (async () => operatorRefusal('a person\'s reset is unavailable')),
+        confirm: async preview => confirm !== undefined && confirm(resetApproval(preview)),
     })
     if (request.handler === 'preflight') return handlers.preflight?.(request.input) ?? unavailable()
     if (request.handler === 'doctor') return handlers.doctor?.(request.input) ?? unavailable()
@@ -1381,18 +1388,12 @@ async function dispatchHandler(
     if (request.handler === 'exec') return handlers.exec?.(request.input) ?? unavailable()
     if (request.handler === 'stacks') {
         if (request.input.operation === 'list') return handlers.stacks?.(request.input) ?? unavailable()
-        return runStacksPruneOperatorApplication({ configPath: request.input.configPath }, {
-            ...options,
-            terminal: io.confirmStacksPrune !== undefined || io.stdin?.isTTY === true,
-        }, {
+        return runStacksPruneOperatorApplication({ configPath: request.input.configPath }, { person: confirm !== undefined, apply: options.apply }, {
             policy: operators.loadPolicy ?? loadOperatorPolicy,
             begin: operators.beginStacksPrune ?? (async () => unavailable()),
-            confirm: async (preview) => {
-                if (io.confirmStacksPrune) return io.confirmStacksPrune(preview)
-                if (!io.stdin) return false
-                io.stderr.write(renderHumanValue(preview.result))
-                return confirmYes(io, 'Remove these stacks?')
-            },
+            confirm: async preview => confirm !== undefined && confirm({ title: 'Remove orphaned stacks',
+                why: 'this removes these stacks and their data, and it cannot be undone',
+                details: humanDetails({ stacks: (preview.result as { stacks?: unknown } | null)?.stacks, stateFolders: (preview.result as { stateFolders?: unknown } | null)?.stateFolders }) }),
         })
     }
     if (request.handler === 'sibling') return handlers.sibling?.(request.input) ?? unavailable()
@@ -1406,16 +1407,101 @@ function operatorRefusal(message: string): CommandOutcome {
     return usageOutcome(ENVIRONMENT_CODES.RESET_CONFIRMATION_MISMATCH, message, 'reset')
 }
 
-async function confirmOperatorReset(io: CliIo, preview: CommandOutcome): Promise<boolean> {
-    if (io.confirmReset) return io.confirmReset(preview)
-    if (!io.stdin) return false
-    io.stderr.write(renderHumanValue(preview.result))
-    const prompt = createInterface({ input: io.stdin, output: io.stderr as NodeJS.WritableStream, terminal: true })
-    try {
-        return (await prompt.question('Approve this exact reset? [y/N] ')).trim().toLowerCase() === 'y'
-    } finally {
-        prompt.close()
+const humanDetails = (value: unknown) => renderHumanValue(value).split('\n').filter(line => line.trim() !== '')
+
+function resetApproval(preview: CommandOutcome): Approval {
+    const result = preview.result as { stackId?: unknown; targets?: unknown } | null
+    const targets = Array.isArray(result?.targets) ? result.targets as readonly { kind?: unknown; identity?: unknown; declaration?: unknown }[] : []
+    return { title: `Reset ${typeof result?.stackId === 'string' ? result.stackId : 'the stack'}`,
+        why: 'this deletes the stack\'s data, and it cannot be undone',
+        details: targets.map(({ kind, identity, declaration }) => `${String(kind)} ${String(identity)}${declaration === undefined || declaration === identity ? '' : ` (${String(declaration)})`}`) }
+}
+
+// What an agent's run leaves for a person: an error that says a person's step waits, a declared MCP
+// server that stays off until one approves it, or other cockpits' orphans only a person's machine-wide
+// prune removes, since their checkouts are gone. Other warnings ask nothing of a person.
+const PERSON_CODES: ReadonlySet<string> = new Set([ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED, ENVIRONMENT_CODES.RESET_CONFIRMATION_REQUIRED,
+    ENVIRONMENT_CODES.WORK_PERSON_REQUIRED])
+const waitsForPerson = (row: Diagnostic) => row.severity === 'error' && PERSON_CODES.has(row.code) || row.code === 'MCP_NOT_APPROVED'
+    || row.code === ENVIRONMENT_CODES.STACKS_PRUNE_UNCONFIRMED
+const PERSON_TITLES: Partial<Record<HandlerIdentifier, string>> = { sync: 'Apply the cockpit.toml change', reset: 'Reset the stack', stacks: 'Remove orphaned stacks' }
+
+// A step is recorded and found under one spelling of its configuration, whatever links led to it.
+async function canonicalConfig(configPath: string): Promise<string> {
+    const resolved = resolve(configPath)
+    try { return join(await realpath(dirname(resolved)), basename(resolved)) }
+    catch (error) {
+        // A missing directory is reported by the command that reads the configuration.
+        if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return resolved
+        throw error
     }
+}
+
+/** Records a step that waits for a person, as the command to run again, with its configuration made canonical. */
+async function recordForPerson(handler: HandlerIdentifier, configured: string, args: readonly string[], outcome: CommandOutcome): Promise<CommandOutcome> {
+    const title = isPersonHandler(handler) ? (outcome.result as { title?: unknown } | null)?.title : PERSON_TITLES[handler]
+    if (typeof title !== 'string' || args.includes('--dry-run') || !outcome.diagnostics.some(waitsForPerson)) return outcome
+    const config = await canonicalConfig(configured)
+    const argv = args.filter((word, index) => word !== '--json' && word !== '--config' && args[index - 1] !== '--config' && !word.startsWith('--config='))
+    const failed = await recordPendingApproval(dirname(config), { argv: [...argv, '--config', config], config, title, at: new Date().toISOString() })
+    return failed === undefined ? outcome : { ...outcome, diagnostics: [...outcome.diagnostics, { severity: 'error', target: 'approve',
+        code: 'APPROVAL_NOT_RECORDED', message: `this step could not be left for a person to approve: ${failed}`,
+        fix: 'make .cockpit/local in the cockpit root a plain directory you can write and the command\'s words shorter, then run it again' }] }
+}
+
+/**
+ * `cockpit approve`: a person, at a terminal outside any agent, answers each step that waits for them.
+ * Each runs again against the current state, so the person reads what it does now, not what was recorded.
+ */
+async function runApprove(configPath: string, io: CliIo, overrides: CliHandlerOverrides, runtime: CliRuntime, json: boolean,
+    loadPolicy: typeof loadOperatorPolicy): Promise<CommandOutcome> {
+    const config = await canonicalConfig(configPath)
+    const root = dirname(config)
+    const refused = (code: string, message: string, fix: string, result: unknown = null): CommandOutcome => ({ artifact: null, destination: null, result, status: 2,
+        diagnostics: [{ severity: 'error', target: 'approve', code, message, fix }], fixContext: { resolvedConfigPath: config, generatedTargets: [] } })
+    // A test answers through io.confirm in place of a terminal; it still must not be an agent, CI or JSON run.
+    const absent = personAbsence(io.confirm ? undefined : io, runtime.env ?? process.env, json)
+    if (absent) return refused('APPROVE_TERMINAL_REQUIRED', `approve asks a person, and this run has none: ${absent}`,
+        'open a terminal outside the agent and, in <the cockpit root>, run: npx --no cockpit approve')
+    const read = readPendingApprovals(root)
+    if (read.kind === 'refusal') return refused('PENDING_APPROVALS_INVALID', read.message,
+        'delete that file; each step an agent runs again that needs a person is recorded again')
+    const policy = await loadPolicy(config)
+    if (!('configSha256' in policy)) return { artifact: null, destination: null, ...policy }
+    // A step recorded under another configuration in this root is that configuration's to approve.
+    const items: PendingApproval[] = read.items.filter(item => item.config === config)
+    // The guard refuses an agent's sync while a widening waits, so an edit nobody synced may have no record.
+    if ((policy.widened.length || policy.unrecorded) && !items.some(item => item.argv[0] === 'sync')) {
+        items.unshift({ argv: ['sync', '--config', config], config, title: PERSON_TITLES.sync!, at: new Date().toISOString() })
+    }
+    if (!items.length) return { artifact: 'Nothing waits for a person.\n', destination: null, status: 0, diagnostics: [], result: { steps: [] } }
+    const steps: { title: string; outcome: 'approved' | 'declined' | 'failed' }[] = []
+    for (const [index, item] of items.entries()) {
+        const approving: Approving = { progress: `${index + 1} of ${items.length}`, stopped: false }
+        let argv: readonly string[] = item.argv
+        let status: number = EXIT_CODES.cancelled
+        if (commandSpelling(argv).name === 'work retry' && !argv.some(word => word === '--note' || word.startsWith('--note='))) {
+            io.stderr.write(`\n${approving.progress}  ${shown(item.title)}\nA retry records why the earlier attempts failed.\n`)
+            const note = await askNote(io)
+            if (note === undefined) approving.stopped = true
+            argv = note ? [...argv, '--note', note] : []
+        }
+        if (argv.length && !approving.stopped) status = await runCli(argv, io, overrides, { ...runtime, approving })
+        // Ctrl-C or the end of input keeps this step and the rest for the next approve.
+        if (approving.stopped) {
+            const left = items.length - index
+            return { artifact: `\nStopped; ${left} ${left === 1 ? 'step still waits' : 'steps still wait'} for npx --no cockpit approve.\n`, destination: null,
+                diagnostics: [], result: { steps, stopped: true }, status: EXIT_CODES.cancelled }
+        }
+        // Answered: a declined step is not asked again until an agent's run records it anew.
+        const removed = read.items.includes(item) ? await removePendingApproval(root, item.argv) : undefined
+        if (removed) return refused('PENDING_APPROVALS_INVALID', `the answered step could not be removed: ${removed}`,
+            'make .cockpit/local in the cockpit root a plain directory you can write, then run npx --no cockpit approve in <the cockpit root> again', { steps })
+        steps.push({ title: item.title, outcome: status === EXIT_CODES.success ? 'approved' : status === EXIT_CODES.cancelled ? 'declined' : 'failed' })
+    }
+    const count = (outcome: string) => steps.filter(step => step.outcome === outcome).length
+    return { artifact: `\nApproved ${count('approved')}, declined ${count('declined')}, failed ${count('failed')}.\n`, destination: null, diagnostics: [],
+        result: { steps }, status: count('failed') ? 2 : 0 }
 }
 
 function defaultOperatorHandlers(runtime: CliRuntime): OperatorHandlers {
@@ -1425,8 +1511,8 @@ function defaultOperatorHandlers(runtime: CliRuntime): OperatorHandlers {
         beginOperatorWorkApplication: async input => {
             const outcome = await configuredWorkApplication(input, runtime)
             if (outcome.kind !== 'human-needed') return workCommandOutcome(outcome, runtime.env ?? process.env)
-            return { digest: outcome.continuation.digest, prompt: outcome.continuation.prompt,
-                decide: async answer => workCommandOutcome(await outcome.continuation.decide(answer), runtime.env ?? process.env) }
+            return { approval: outcome.continuation.approval,
+                approve: async () => workCommandOutcome(await outcome.continuation.approve(), runtime.env ?? process.env) }
         },
         beginStacksPrune: (input) => beginStacksPrune({ configPath: resolve(input.configPath), env: runtime.env ?? process.env }, input.scope, { execute: executeProbe }),
         beginOperatorReset: async (input) => {
@@ -1556,13 +1642,16 @@ export async function runCli(
                 outcome = usageOutcome('CLI_USAGE_INVALID', '--follow requires a cancellation signal', '--follow')
             } else {
                 try {
-                    const invoke = () => invokeHandler(decoded, handlers, operators, {
+                    const invoke = () => decoded.handler === 'approve'
+                        ? runApprove(decoded.input.configPath, io, handlerOverrides, runtime, parsed.values.json === true, operators.loadPolicy ?? loadOperatorPolicy)
+                        : invokeHandler(decoded, handlers, operators, {
                         interactive: parsed.values.interactive === true,
                         apply: parsed.values.apply === true,
                         json: parsed.values.json === true,
                         ci: (runtime.env ?? process.env).CI,
                         env: runtime.env ?? process.env,
                         argv: args,
+                        ...runtime.approving === undefined ? {} : { approving: runtime.approving },
                     }, io)
                     // Every step runs in its own process group, which an interrupted cockpit would leave
                     // running; a stopping stack's interruption ends each step it started and waits for it.
@@ -1574,6 +1663,10 @@ export async function runCli(
                         definition.handler,
                     )
                 }
+            }
+            // The run approve makes for a person never records itself again.
+            if (runtime.approving === undefined && typeof parsed.values.config === 'string') {
+                outcome = await recordForPerson(definition.handler, parsed.values.config, args, outcome!)
             }
             if (!parsed.values.json) {
                 try {

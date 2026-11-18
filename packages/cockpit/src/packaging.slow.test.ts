@@ -887,15 +887,15 @@ it('finishes init across three runs without a terminal and lets a teammate clone
     const teamLock = JSON.parse(readFileSync(join(portable, 'package-lock.json'), 'utf8'))
     teamLock.packages[''].devDependencies['@b00dea/cockpit'] = cockpitPackageVersion
     writeFileSync(join(portable, 'package-lock.json'), `${JSON.stringify(teamLock, null, 2)}\n`)
-    // Moving a sibling's directory widens what agents may do, so the maintainer confirms it at sync, at a
-    // terminal outside CI: the confirmation below stands in for that person, so the runner's CI is not theirs.
+    // Moving a sibling's directory widens what agents may do, so the maintainer approves it at a terminal
+    // outside CI and any agent: the confirmation below stands in for that person, so the runner's CI is not theirs.
     const maintainerEnv: NodeJS.ProcessEnv = { ...env }
-    delete maintainerEnv.CI
+    for (const name of ['CI', 'CLAUDECODE', 'CODEX_THREAD_ID', 'OPENCODE']) delete maintainerEnv[name]
     let prepared = ''
-    const preparedTeam = await installedCli(['sync', '--config', join(portable, 'cockpit.toml'), '--interactive'], {
+    const preparedTeam = await installedCli(['approve', '--config', join(portable, 'cockpit.toml')], {
         stdout: { write: (text: string) => { prepared += text; return true } }, stderr: { write: (text: string) => { prepared += text; return true } },
-        confirmWidening: async (preview: { widens: readonly string[] }) => {
-            expect(preview.widens).toEqual(['sibling.library.dir'])
+        confirm: async (approval: { why: string }) => {
+            expect(approval.why).toBe('these changes widen what agents may do: sibling.library.dir')
             return true
         },
     }, {}, { env: maintainerEnv })

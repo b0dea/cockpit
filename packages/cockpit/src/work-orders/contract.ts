@@ -7,7 +7,7 @@ import { parseDocument } from 'yaml'
 import { z } from 'zod'
 import { REPOSITORY_PATH } from '../repository-path.js'
 
-// Who passed a work-order step: the agent, or a person who typed the digest cockpit showed in a
+// Who passed a work-order step: the agent, or a person who approved it at `cockpit approve` in a
 // terminal. A local person step is best-effort: cockpit cannot tell a person from a program driving one.
 export const DECIDERS = ['agent', 'person'] as const
 export type Decider = typeof DECIDERS[number]

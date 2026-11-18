@@ -1,7 +1,7 @@
 // Owns the work-order lifecycle: draft → accepted → graded → done, with blocked and stale
 // derived from the record and the current file, and partial and abandoned as closures. A step that
 // would let the agent lower the bar its own work is held to returns a continuation the CLI completes
-// only with the digest a person types in a terminal. It also routes the browser and
+// only when a person approves it at `cockpit approve`. It also routes the browser and
 // test-gate operations that share the work composition. Decisions, grading and closure are owned by the
 // application-* modules beside it, on the shared steps application-context.ts binds.
 import { executeBrowserCommand, type BrowserCommandReceipt, type BrowserCommandResult } from '../browser/commands.js'
@@ -32,7 +32,7 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
         const unsynced = await composition.unsyncedWork()
         if (unsynced.length) {
             return refusal(operation, `cockpit.toml changes ${unsynced.join(', ')} since the guards were generated, which widens what agents may do; `
-                + 'a person runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive and answers yes, or the change is reverted')
+                + 'this needs a person: they run npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent, or the change is reverted')
         }
         if (captured.operation === 'browser-drive' || captured.operation === 'browser-screenshot') {
             const kind = captured.operation === 'browser-screenshot' ? 'screenshot' : 'drive'
@@ -98,12 +98,14 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
             const sources = await composition.sourceDigests(order)
             const base = await composition.heads()
             const digest = workOrderDigest(order, sources, base)
-            return gated('accept', 'agent', [`Accept ${order.id} (digest ${digest})`, ...shownOrder], 'accept', async by => store.update(order.id, async existing => {
-                if (existing) throw new RefusalError(`${order.id} was accepted while this prompt was open; rerun work status`)
+            // Accepting a new order is always the agent's step.
+            const by = 'agent' as const
+            return store.update(order.id, async existing => {
+                if (existing) throw new RefusalError(`${order.id} was accepted while this command ran; rerun work status`)
                 const record: WorkRecord = { format: 'cockpit-work-order/v1', id: order.id, state: 'accepted',
                     accepted: { at: now(), by, digest, order, sources, base }, amendments: [], acknowledgements: [], attempts: 0, notes: [] }
                 return { record, value: complete(operation, { id: order.id, state: 'accepted', by, digest, ...await relatedDecisions(context, order) }) }
-            }))
+            })
         }
         const record = row.record
         if (TERMINAL.has(record.state)) return refusal(operation, `${order.id} is closed (${record.state}); write a new order for further work`)
@@ -118,11 +120,11 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         const decider: Decider = weakened.length || unjudgeable.length || failedReview ? 'person' : 'agent'
         const sources = await composition.sourceDigests(order)
         const digest = workOrderDigest(order, sources, record.accepted.base)
-        return gated('amend', decider, [`Amend ${order.id} (digest ${record.accepted.digest} -> ${digest})`,
-            ...weakened.length ? [`This weakens the accepted contract: ${weakened.join('; ')}`] : [],
-            ...failedReview ? [`A grade found the agent's earlier amendments lower the bar: ${failedReview.note}`] : [],
-            ...review.map(row => `Changed ${row.field}: "${row.before}" -> "${row.after}"`), ...shownOrder], 'amend', async by => store.update(order.id, async existing => {
-            if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while this prompt was open; rerun work accept`)
+        const why = weakened.length ? `this amendment lowers the bar the agent's work is held to: ${weakened.join('; ')}`
+            : failedReview ? `a grade found the agent's earlier amendments lower the bar: ${failedReview.note}`
+                : 'under [work] grading = "checks" nothing else judges whether this rewrite keeps the bar'
+        return gated(decider, { title: `Amend ${order.id}`, why, details: review.map(row => `Changed ${row.field}: "${row.before}" -> "${row.after}"`), notes: shownOrder }, async by => store.update(order.id, async existing => {
+            if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while this step waited; rerun work accept`)
             // An amendment the agent accepts keeps the attempt count, or reordering a list in its own contract would undo the cap.
             const next: WorkRecord = { ...existing, state: 'accepted', attempts: by === 'agent' ? existing.attempts : 0, checks: undefined, grade: undefined,
                 ...by === 'agent' ? {} : { amendmentsFailedReview: undefined, evaluatorFailed: undefined },
@@ -161,12 +163,12 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         if (!record || TERMINAL.has(record.state)) return refusal(operation, `${request.workOrderId} has no open record to answer on`)
         const question = record.notes[request.question - 1]
         if (!question || question.kind !== 'question' || !openQuestions(record).includes(request.question)) return refusal(operation, `note ${request.question} on ${request.workOrderId} is not an open question`)
-        return gated('answer', 'agent', [`Open question ${request.question} on ${request.workOrderId}:`, `  ${question.text}`, 'Answer to record:', `  ${request.text}`], 'answer',
-            async by => store.update(request.workOrderId, async existing => {
-                if (!existing || !openQuestions(existing).includes(request.question)) throw new RefusalError(`question ${request.question} was answered while this prompt was open`)
-                return { record: { ...existing, notes: [...existing.notes, { at: now(), by, kind: 'answer', text: request.text, answers: request.question }] },
-                    value: complete(operation, { id: request.workOrderId, answered: request.question, by }) }
-            }))
+        const by = 'agent' as const
+        return store.update(request.workOrderId, async existing => {
+            if (!existing || !openQuestions(existing).includes(request.question)) throw new RefusalError(`question ${request.question} was answered while this command ran`)
+            return { record: { ...existing, notes: [...existing.notes, { at: now(), by, kind: 'answer', text: request.text, answers: request.question }] },
+                value: complete(operation, { id: request.workOrderId, answered: request.question, by }) }
+        })
     }
     if (request.operation === 'work-grade') return gradeOrder(request, context)
     if (request.operation === 'work-acknowledge') {
@@ -177,11 +179,12 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
         const rule = acknowledgeRule(policy)
         if (record.acknowledgements.some(row => row.digest === digest && rule.counts(row))) return refusal(operation, `this weakening of ${order.id} is already acknowledged${isGradeMode(policy.grading) ? '; run work grade' : ''}`)
         const rows = weak.findings.map(describeWeakening)
-        return gated('acknowledge', rule.decider, [`Acknowledge that ${order.id} weakens tests since its base (test files from ${weak.patterns.source}):`,
-            ...rows.map(row => `  ${row}`), 'Reason given:', `  ${request.note}`], 'acknowledge', async by => store.update(order.id, async existing => {
-            if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while this prompt was open; rerun work acknowledge`)
+        return gated(rule.decider, { title: `Accept weakened tests in ${order.id}`,
+            why: 'under [work] grading = "checks" nothing else judges whether these test changes are legitimate',
+            details: [`Test files from ${weak.patterns.source}:`, ...rows], notes: [`Reason given: ${request.note}`] }, async by => store.update(order.id, async existing => {
+            if (!existing || existing.accepted.digest !== record.accepted.digest) throw new RefusalError(`${order.id} changed while this step waited; rerun work acknowledge`)
             if (testWeakeningDigest((await composition.testWeakening(existing.accepted.base, await orderAttribution(composition, existing))).findings) !== digest) {
-                throw new RefusalError(`the test changes of ${order.id} changed while this prompt was open; rerun work acknowledge`)
+                throw new RefusalError(`the test changes of ${order.id} changed while this step waited; rerun work acknowledge`)
             }
             return { record: { ...existing, acknowledgements: [...existing.acknowledgements, { at: now(), by, digest, findings: rows, note: request.note }] },
                 value: complete(operation, { id: order.id, acknowledged: rows, by, digest }) }
@@ -203,11 +206,12 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
             ...record.checks?.digest === record.accepted.digest ? record.checks.results.filter(row => !row.passed).map(row => ({ id: `check ${row.criterion}`, text: row.outcome })) : []]
         const retried = record.retries?.length ?? 0
         if (retried >= MAX_RETRIES) return refusal(operation, `${id} was already granted fresh attempts ${MAX_RETRIES} times; close it with work signoff, or a person or CI amends its contract`)
-        return gated('retry', 'person', [`Grant ${id} ${attemptCap} fresh attempts at its unchanged contract (digest ${record.accepted.digest}) after ${record.attempts} failed`,
-            ...failed.length ? ['Last failed:', ...failed.map(row => `  ${row.id} ${row.text}`)] : ['No failed grade or check is recorded on this contract; an amendment cleared them'],
-            'Root cause given:', `  ${request.note}`], 'retry', async () => store.update(id, async existing => {
+        return gated('person', { title: `Give ${id} ${attemptCap} fresh attempts after ${record.attempts} failed`,
+            why: 'only a person grants fresh attempts after failures, or an agent could retry its own failed work forever',
+            details: [], notes: [`Root cause given: ${request.note}`,
+                ...failed.length ? failed.map(row => `Failed ${row.id}: ${row.text}`) : ['No failed grade or check is recorded on this contract; an amendment cleared them']] }, async () => store.update(id, async existing => {
             if (!existing || existing.accepted.digest !== record.accepted.digest || existing.attempts !== record.attempts || (existing.retries?.length ?? 0) !== retried) {
-                throw new RefusalError(`${id} changed while this prompt was open; rerun work retry`)
+                throw new RefusalError(`${id} changed while this step waited; rerun work retry`)
             }
             return { record: { ...existing, attempts: 0, retries: [...existing.retries ?? [], { at: now(), by: 'person' as const, attempts: existing.attempts, note: request.note,
                 failed: failed.slice(0, MAX_RETRY_FAILURES).map(row => ({ id: row.id.slice(0, 128), text: row.text.slice(0, MAX_RETRY_FAILURE_TEXT) })) }] },

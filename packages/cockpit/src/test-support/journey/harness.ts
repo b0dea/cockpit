@@ -221,7 +221,7 @@ export interface Product {
     readonly docker: FakeDocker
     /**
      * Runs one installed-cockpit command as its own process, with `--config cockpit.toml --json` unless told otherwise.
-     * `answer` runs it on a pseudo-terminal, as a person's shell does, and types that line once it asks `[yes/no]`.
+     * `answer` runs it on a pseudo-terminal, as a person's shell does, and types that line once it asks `Approve?`.
      */
     cockpit(args: readonly string[], options?: { launcher?: readonly string[]; json?: boolean; config?: boolean; answer?: string }): Run
     write(path: string, text: string): void
@@ -259,7 +259,7 @@ answer=$1; shift
 out=$(mktemp); done="$out.done"
 if [ "$(uname)" = Darwin ]; then set -- script -q /dev/null "$@"
 else command=$(for word in "$@"; do printf "'%s' " "$(printf %s "$word" | sed "s/'/'\\\\\\\\''/g")"; done); set -- script -qec "$command" /dev/null; fi
-(until grep -q '\\[yes/no\\]' "$out" || [ -e "$done" ]; do sleep 0.2; done
+(until grep -q 'Approve? \\[y/N' "$out" || [ -e "$done" ]; do sleep 0.2; done
  printf '%s\\n' "$answer"
  until [ -e "$done" ]; do sleep 0.2; done) | { "$@" > "$out"; echo $? > "$done"; }
 cat "$out"; status=$(cat "$done"); rm -f "$out" "$done"; exit "$status"

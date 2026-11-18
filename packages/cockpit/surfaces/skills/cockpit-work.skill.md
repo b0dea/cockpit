@@ -27,5 +27,5 @@ opencode:
 {{tool-equivalence}}
 Read [procedures/work.md](procedures/work.md) beside this skill and follow **Work** from step 0, which resumes an existing order at the step its state names.
 Under independent grading another agent tool grades the order; never grade your own work.
-When a command answers `WORK_PERSON_REQUIRED`, stop and ask the person to run the same command with `--interactive` in a terminal: never type a digest for them.
+When a command answers `WORK_PERSON_REQUIRED`, stop and ask the person to run `npx --no cockpit approve` in a terminal outside the agent: never answer it for them.
 If `check` or the session-start report names drift, follow *On drift* in the cockpit-setup skill's procedure, `../cockpit-setup/procedures/setup.md`, first.

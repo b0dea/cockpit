@@ -27,8 +27,9 @@ budget: uncapped
   from, and clears only when a person acts on its fix in a terminal. Any other edit to `cockpit.toml`
   holds nothing. One that does not widen what agents may do is judged as written, so run
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself; one that widens
-  is judged under the configuration last synced, and each refusal says so, until a person runs that
-  sync with `--interactive` in a terminal and answers its one yes. When the guard refuses a
+  is judged under the configuration last synced, and each refusal says so, until a person approves
+  it: they run `npx --no cockpit approve` in a terminal outside the agent and answer its one yes.
+  Never answer it for them. When the guard refuses a
   command, read the reason. To read a file, use your tool's own file reading instead of the shell. A
   refusal for secrets, writes outside the cockpit, protected branches, declared hosts or the guard
   itself is the person's: hand them the exact command and why. A command refused as an unknown
@@ -173,7 +174,7 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
    run stops at the first field the file leaves out, with `result.interview.outstanding` listing
    only what the file still lacks; add those and rerun. The configuration defaults are written as
    drafted. A different value for an answer already recorded refuses with `INIT_ANSWER_CONFLICT`;
-   `--reset-answer <field>` previews clearing it. A person at a terminal can run `--interactive`
+   `--reset-answer <field>` previews clearing it. A person at a terminal can run `init --interactive`
    instead, which asks the questions and writes; an agent session has no terminal, so there it
    refuses with `INIT_TERMINAL_REQUIRED`. Done when the run has written `cockpit.toml`.
 6. **Work through the expected stops**, rerunning the same command after each:
@@ -210,8 +211,8 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
    - If `cockpit-installed` is reported, clear it first using the repository's package manager
      and reviewed manifest/lockfile delta within the authorized installation scope. An existing
      project-local installation needs no reinstall. Then run
-     `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`; hand it to the
-     person with `--interactive` only when the refusal (`GUARD_CONFIG_WIDENED`) says a widening waits. Done when
+     `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`; hand the person
+     `npx --no cockpit approve` only when the refusal (`GUARD_CONFIG_WIDENED`) says a widening waits. Done when
      `doctor` no longer reports the installation gap.
    - If anyone will run Codex in this cockpit, a person must trust its guard hook on each machine,
      and again whenever sync changes the hook: Codex silently skips a project hook nobody has
@@ -220,7 +221,7 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
      asked, and choose **Trust all and continue** when Codex shows **Hooks need review**. `doctor`
      reports `CODEX_HOOK_UNTRUSTED` until it is done.
    - A declared MCP server stays disabled (`MCP_NOT_APPROVED`) until a person approves it: they run
-     `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a
+     `npx --no cockpit approve` in a
      terminal outside the agent, which shows the servers a yes would enable and the fields that
      widen, and asks once. List the servers and fields in your report, and hand them the command.
    Done when `doctor` reports no required gap and every other gap is cleared or reported. Report
@@ -292,8 +293,8 @@ guesses. So derive each value from what the repository shows, record it as infer
 6. Finish the configuration with the init flow in **Bootstrap**. On an existing cockpit, the guard
    judges calls under an edit to `cockpit.toml` that does not widen what agents may do, so run
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself. While an edit widens it, calls are judged under the configuration last synced, every
-   refusal names the widened fields, and a person runs that sync with `--interactive` in a terminal
-   and answers its one yes. Then run
+   refusal names the widened fields, and a person runs `npx --no cockpit approve` in a terminal
+   outside the agent and answers its one yes. Then run
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json`. Done when the check exits 0.
 7. Where a runtime is declared, start the stack with
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config cockpit.toml`. When Docker is missing
@@ -379,11 +380,11 @@ and every refusal names `surfaces.tools`.
 
 1. Preview with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs tool add <tool> --config cockpit.toml --dry-run` (or
    `tool remove`) and show the person the list it prints. Done when they agree to that list.
-2. Run it without `--dry-run`. Before `tool remove`, tell the person it waits for their sync. Done
+2. Run it without `--dry-run`. Before `tool remove`, tell the person it waits for their `npx --no cockpit approve`. Done
    when the command exits 0.
 3. Sync: after `tool add`, run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` yourself;
-   after `tool remove`, the person runs it with `--interactive` in a terminal and answers its one
-   yes. An added tool's files are written from the same sources as the others, and a removed tool's
+   after `tool remove`, the person runs `npx --no cockpit approve` in a terminal outside the agent and
+   answers its one yes. An added tool's files are written from the same sources as the others, and a removed tool's
    files are deleted by that sync. Done when
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json` exits 0.
 
@@ -414,7 +415,7 @@ person syncs.
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config cockpit.toml`. Done when the command exits 0.
 3. **Sync.** Adding or removing a repository widens what agents may do (a new repository is a new
    directory they may write), so until a person runs
-   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a terminal and confirms it, calls
+   `npx --no cockpit approve` in a terminal outside the agent and confirms it, calls
    are judged under the configuration last synced and every refusal names the sibling. Then run
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json`. Done when the check exits 0.
 4. **Instruction pointer, only on request.** When the person wants the repository's **AGENTS.md**
@@ -469,13 +470,13 @@ never applied silently. Installing a new cockpit also makes the guard hold every
    unless a widening waits for a person. When
    its sync fails (`UPGRADE_SYNC_FAILED`, for example on a change that widens what agents may do), the new
    version is already installed and the guard holds every guarded call: a person acts on what sync
-   reported and runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a
-   terminal. Done when the command exits 0 and its sync wrote the new files.
+   reported and runs `npx --no cockpit approve` in a
+   terminal outside the agent. Done when the command exits 0 and its sync wrote the new files.
 2. **Or by hand.** `npm update` does not move the exact pin, so install the reviewed release by
    version: `npm install --save-dev --save-exact @b00dea/cockpit@<version>`, and confirm the manifest
    and lockfile show that exact version. From then on the guard holds every guarded call, so a person
-   runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --dry-run` and then
-   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --interactive` in a terminal. Done when
+   runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --dry-run`, then
+   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`, then `npx --no cockpit approve` in a terminal outside the agent for any widening it holds. Done when
    that sync exits 0.
 3. **Review the diff.** A hand edit to a skill, agent settings file or cockpit-owned region stops
    sync with `SURFACE_STATE_CONFLICT`: move that change into a `[surfaces].overlays` entry instead of
@@ -519,8 +520,8 @@ gives one to the person.
    previews what would go, and
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs stacks prune --config cockpit.toml --apply` removes this cockpit's
    orphans only. A prune that deletes volumes runs only where `[environment] seed` is declared and no widening
-   is unsynced, and another cockpit's orphans need a person: for either, hand the person
-   `stacks prune --interactive` for a terminal. A stack whose worktree Git still registers, or marks
+   is unsynced; otherwise its refusal records it, so hand the person `npx --no cockpit approve` for a
+   terminal outside the agent. Another cockpit's orphans are pruned from that cockpit. A stack whose worktree Git still registers, or marks
    locked, is kept until `git worktree prune` (after `git worktree unlock` for a locked one) runs in
    its main checkout. Done when `stacks` lists no orphaned stack, or the person has the command.
 
@@ -531,7 +532,7 @@ gives one to the person.
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs preflight --config cockpit.toml --json` when the environment must
    pass the blocking gate.
 2. Follow the fix each diagnostic names, required gaps first. When the fix is a person's step
-   (trusting a Codex hook, signing in to a provider, approving a digest), hand them the exact
+   (trusting a Codex hook, signing in to a provider, approving a change at `npx --no cockpit approve`), hand them the exact
    command it names. A stale or orphaned stack is cleared by **Keep checkouts and stacks
    current**. Done when `doctor` reports each gap cleared, or you have reported the ones only a
    person can clear.

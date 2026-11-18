@@ -1,5 +1,4 @@
-import { agentSessionVariable, confirmYes } from '../operator-confirmation.js'
-import { renderHumanValue } from '../diagnostics.js'
+import type { Approval } from '../operator-confirmation.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { loadOperatorPolicy, runSyncOperatorApplication, type WideningPreview } from '../environment/operator-application.js'
 import { GUARD_LOCAL_PATHS } from '../guards/local-identity.js'
@@ -117,48 +116,28 @@ export type GeneratedEnvironmentSyncHandlerInput = GeneratedEnvironmentSyncInput
 
 type GeneratedEnvironmentSyncHandler = (input: GeneratedEnvironmentSyncHandlerInput) => Promise<GeneratedEnvironmentDispatchOutcome>
 
-export interface GeneratedEnvironmentOperatorIo {
-    readonly stderr: Pick<NodeJS.WriteStream, 'write'>
-    /** The environment the command runs with, which says whether an agent tool started it. */
-    readonly env: Readonly<Record<string, string | undefined>>
-    readonly stdin?: NodeJS.ReadStream
-    readonly confirmWidening?: (preview: WideningPreview) => Promise<boolean>
-}
-
-export interface GeneratedEnvironmentOperatorOptions {
-    readonly interactive: boolean
-    readonly json: boolean
-    readonly ci: string | undefined
-}
-
-/** Writes why a terminal confirmation is refused inside an agent tool's session, and says whether it was. */
-function agentRefusal(io: GeneratedEnvironmentOperatorIo): boolean {
-    const variable = agentSessionVariable(io.env)
-    if (variable) io.stderr.write(`Refusing a terminal confirmation inside an agent session (${variable} is set): a person confirms it in a terminal of their own, outside the agent.\n`)
-    return variable !== undefined
+/** What a person reads before a sync's one yes: each field that widens, and each MCP server it enables. */
+function wideningApproval(preview: WideningPreview): Approval {
+    const fields = [...preview.widens, ...preview.mcpServers.map(row => `mcp.approved.${row.name}`)]
+    return { title: 'Apply the cockpit.toml change',
+        why: preview.unrecorded
+            ? `cockpit cannot show what changed since the last sync, as ${GUARD_LOCAL_PATHS.generatedConfig} is missing or no longer loads; read cockpit.toml before answering`
+            : `these changes widen what agents may do: ${[...new Set(fields)].join(', ')}`,
+        details: [...preview.widens.map(field => `Widens ${field}`), ...preview.mcpServers.flatMap(({ name, runs, environment, headers, sources }) => [
+            `MCP server ${name} runs ${runs}`, ...environment.length ? [`  given ${environment.join(', ')}`] : [],
+            ...headers.length ? [`  sends ${headers.join(', ')}`] : [], `  declared in ${sources.join(', ')}`])] }
 }
 
 export async function runSyncOperatorCommand(
     input: GeneratedEnvironmentSyncHandlerInput,
-    options: GeneratedEnvironmentOperatorOptions,
-    io: GeneratedEnvironmentOperatorIo,
+    // `confirm` is set when a person answers, on a run from `cockpit approve`.
+    confirm: ((approval: Approval) => Promise<boolean>) | undefined,
     handler: GeneratedEnvironmentSyncHandler,
     policy: typeof loadOperatorPolicy = loadOperatorPolicy,
 ): Promise<GeneratedEnvironmentDispatchOutcome> {
-    return runSyncOperatorApplication(input, {
-        ...options,
-        terminal: io.confirmWidening !== undefined || io.stdin?.isTTY === true,
-    }, {
+    return runSyncOperatorApplication(input, { person: confirm !== undefined }, {
         synchronize: handler,
         policy,
-        confirmWidening: async (preview) => {
-            if (io.confirmWidening) return io.confirmWidening(preview)
-            if (!io.stdin || agentRefusal(io)) return false
-            io.stderr.write(renderHumanValue({ ...preview.widens.length ? { widens: preview.widens } : {},
-                ...preview.unrecorded ? { unrecorded: `cockpit cannot show what changed since the last sync, as ${GUARD_LOCAL_PATHS.generatedConfig} is missing or no longer loads; read cockpit.toml before answering` } : {},
-                ...preview.mcpServers.length ? { enablesMcpServers: preview.mcpServers.map(({ name, runs, environment, headers, sources }) => ({ name, runs,
-                    ...environment.length ? { environment } : {}, ...headers.length ? { headers } : {}, declaredIn: sources })) } : {} }))
-            return confirmYes(io, 'Apply this change to what agents may do?')
-        },
+        confirmWidening: async preview => confirm !== undefined && confirm(wideningApproval(preview)),
     })
 }

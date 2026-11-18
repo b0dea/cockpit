@@ -223,7 +223,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | Key | Meaning | Type | Default | Constraints |
 | --- | --- | --- | --- | --- |
 | `allowed_tools` | Exact tool names permitted per declared MCP server. An empty list denies every tool; an absent server has no tool restriction. Review the tool implementation: names and read-only annotations do not establish read-only behavior. Unsupported harnesses receive no restricted server. | table of array of string | `{}` | at most 256 entrys; each key: pattern `^(?=[\s\S]{0,128}$)(?:^[a-zA-Z0-9][a-zA-Z0-9_-]*$)`; each value: at most 256 items, unique items, each item: pattern `^[a-zA-Z0-9_.-]+$`, at most 128 characters |
-| `approved` | Approved MCP servers, each mapped to the sha256 of the declaration a person approved; sync --interactive writes them. Others stay disabled. | table of string | `{}` | each key: pattern `^(?=[\s\S]{0,128}$)(?:^[a-zA-Z0-9][a-zA-Z0-9_-]*$)`; each value: pattern `^[a-f0-9]{64}$` |
+| `approved` | Approved MCP servers, each mapped to the sha256 of the declaration a person approved; cockpit approve writes them when a person answers yes. Others stay disabled. | table of string | `{}` | each key: pattern `^(?=[\s\S]{0,128}$)(?:^[a-zA-Z0-9][a-zA-Z0-9_-]*$)`; each value: pattern `^[a-f0-9]{64}$` |
 
 ### `[work]`
 
@@ -533,6 +533,6 @@ Agent tools load every skill's frontmatter into each session, so cockpit caps it
 | cursor | frontmatter_bytes | 8192 | each skill's procedure |
 | grokcli | frontmatter_bytes | 8192 | each skill's procedure |
 
-Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `79457bf072b4ba90977091034ac39e86e1616a9b33bc1c8b9187948193f6121d`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `87698f4b88fffe83ff1f3b73a0ed990c60d0df34135b485eee37aec6cc33c83b`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `2440a1450af7dd23c7076a80afdaaebf02b3f1b22239c28aeb9d4293af821e25`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `2d87135f6a4d667866531100896d625454ce4080256215b3467995061138b7ac`).
+Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `5bb291d19b972ac03fc0f5414ca3b6ace500ce44addb0dd4dd49565984a8f8c4`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `b3e317c4fad0a83e59672d69ead12b3c94a3261c81d094a640d4915c7aa9bcc7`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `f4cfad8a417c8ba017fcaf3b477abc8c32dced4755835fa9c3bb50b55f546bcb`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `f3dc9579a52e139fb6040b4c213881afc42a3e1ea94d1287eeb948aa7ba9d18d`).
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.
