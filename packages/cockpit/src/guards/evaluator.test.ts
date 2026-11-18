@@ -968,6 +968,27 @@ describe('built-in read-only profile', () => {
         expect(decide('make build -j4', granted('make'))).toMatchObject({ decision: 'allow' })
     })
 
+    it('refuses a secret a command names or would search, through a wrapper, a glob in any component or a glued option', () => {
+        const holdsSecret: PathInspection = request => searches(request.operation)
+            ? { ...inspect(request), sensitive: [`${root}/local/.env`] } : inspect(request)
+        const judged = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command)), policy(), holdsSecret).decision
+        expect(judged('grep -rn sk_ local/')).toBe('deny')
+        for (const command of ['timeout 30 grep -rn sk_ local/', 'nice -n 10 grep -rn sk_ local/', 'nohup grep -rn sk_ local/', 'env FOO=bar grep -rn sk_ local/',
+            'stdbuf -oL grep -rn sk_ local/', 'caffeinate grep -rn sk_ local/', 'sh -c "grep -rn sk_ local/"', `bash -c 'rg --hidden --no-ignore SECRET local/'`,
+            'FOO=bar grep -rn sk_ local/', 'timeout 5 grep -rn sk_ local/*', 'FOO=1 rg sk_ src/*', 'npx rg sk_ src/*',
+            // A glob in any component that can match a protected name.
+            'cat .se*/creds.json', 'cat .s?crets/creds.json', `awk '{print}' .se*/creds.json`, 'cat .[!a]ecrets/creds.json', 'cat .[[:alpha:]]ecrets/creds.json', 'cat .[]s]ecrets/creds.json', 'cat .[!]a]ecrets/creds.json', 'cat .[]e]nv',
+            // A path glued to a short option it is the value of.
+            'base64 -di.env', 'base64 -di.secrets/creds.json', 'head -qn5.env', 'xxd -ps.env', 'grep -rf.env notes.md', 'base64 -dddddddddddddddddi.env']) {
+            expect(judged(command), command).toBe('deny')
+        }
+        // Names that only look like a protected one stay allowed.
+        // A shell glob reaches a leading dot only where it spells one, so these match no protected name.
+        // A pattern glued to an option is a pattern, and a middle folder cannot be a file-only name such as .npmrc.
+        for (const command of ['cat .se/creds.json', 'cat src/*.json', 'cat ?secrets/creds.json', 'cat [.]secrets/creds.json', 'head -n5 notes.md', `find . -name '*.json' -print`,
+            'grep -e.env notes.md', 'git log -S.env --oneline', 'sed -es/a/b/ notes.md', 'grep -oe/api/v1 notes.md', 'cat .v*/settings.json', 'cat .g*/workflows/ci.yml']) expect(judged(command), command).toBe('allow')
+    })
+
     it('judges a spelling that names cockpit as cockpit, whichever Node or launcher starts it', () => {
         const script = './node_modules/@b00dea/cockpit/bin/cockpit.mjs'
         const decideLaunched = (command: string, configured = policy(), cwd = root) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)), configured, inspect)
