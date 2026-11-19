@@ -302,8 +302,13 @@ function jqWords(argv: readonly string[]): Classified {
 }
 
 const GIT_READ_VERBS = set('status', 'diff', 'log', 'show')
-/** `--no-index` as Git accepts it, abbreviated to any unique prefix. */
-export const GIT_NO_INDEX = /^--no-ind(?:ex?)?$/
+// Git takes a long option by any unique prefix.
+const abbreviates = (word: string, option: string, shortest: number) => word.length >= shortest && option.startsWith(word)
+const GIT_GREP_IGNORED = (word: string) => abbreviates(word, '--no-index', 8) || abbreviates(word, '--untracked', 3) || abbreviates(word, '--no-exclude-standard', 8)
+/** Whether git grep reads files Git ignores: `--no-index`, or `--untracked` with `--no-exclude-standard`. */
+export function gitGrepReadsIgnored(args: readonly string[]): boolean {
+    return args.some(arg => abbreviates(arg, '--no-index', 8)) || args.some(arg => abbreviates(arg, '--untracked', 3)) && args.some(arg => abbreviates(arg, '--no-exclude-standard', 8))
+}
 const GIT_GREP: OptionTable = {
     flags: set('--line-number', '--ignore-case', '--word-regexp', '--invert-match', '--count', '--files-with-matches', '--name-only', '--files-without-match',
         '--extended-regexp', '--fixed-strings', '--basic-regexp', '--perl-regexp', '--full-name', '--heading', '--break', '--show-function', '--column', '--only-matching',
@@ -477,10 +482,10 @@ function git(argv: readonly string[], cwd: string): ReadOnlyAccess | undefined {
     // Without `-e` or `-f` the first operand is the pattern. Every other operand names a path, or before
     // `--` a revision it searches, whose `rev:path` names a path in it; each is inspected as a read.
     if (verb === 'grep') {
-        // `--no-index` searches the files below the working directory, ignored ones included, as `grep -r` does,
-        // so its pathspecs are judged as the trees it searches, and the whole directory when one is a pattern.
-        if (args.some(arg => GIT_NO_INDEX.test(arg))) {
-            const parsed = parseOptions(args.filter(arg => !GIT_NO_INDEX.test(arg)), GIT_GREP)
+        // Reading ignored files, it searches below the working directory as `grep -r` does, so its pathspecs are judged
+        // as the trees it searches, and the whole directory when one is a pattern.
+        if (gitGrepReadsIgnored(args)) {
+            const parsed = parseOptions(args.filter(arg => !GIT_GREP_IGNORED(arg)), GIT_GREP)
             if (!parsed) return undefined
             const operands = parsed.positionals.slice(parsed.present.has('-e') || parsed.present.has('-f') ? 0 : 1)
             return { cwd: directory, reads: parsed.files, trees: !operands.length || operands.some(spec => spec.startsWith(':') || /[*?[\\]/.test(spec)) ? ['.'] : operands, listings: [] }

@@ -655,19 +655,19 @@ interface Seen { background: boolean; loop: boolean; fetchedValue?: true }
 // A word that sets a variable before the command it precedes, as `NAME=value cmd`.
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
 /**
- * The literal a shell's list assigned in the command just before the one being read, as `NAME=value` on its own. Only
- * that next command may read it: any command between, a builtin such as `read`, `printf -v` or `declare`, or a hook
- * function, can set the name again under a spelling the guard does not match.
+ * The literal the first command of the whole call assigned, as `NAME=value` on its own, which only the second command may
+ * read. Anything earlier, a builtin such as `typeset -L`, `declare -n` or `read`, or a hook function, can change what the
+ * name holds under a spelling the guard does not match.
  */
-interface Literals { readonly depth: number; held?: { readonly name: string; readonly value: string } }
+interface Literals { commands: number; held?: { readonly name: string; readonly value: string } }
 interface Context { readonly options: GuardParseOptions; readonly definitions: Set<string>; readonly depth: number; readonly seen: Seen; readonly literals?: Literals }
 // Names the shell itself sets as commands run, whatever the list assigned them.
 const SHELL_SET = /^(?:_|REPLY|OPTARG|OPTIND|MAPFILE|BASH_\w*|PWD|OLDPWD|IFS|HOME|RANDOM|SECONDS|LINENO|reply|match|MATCH)$/
 
-/** The path a redirect to a plain `$NAME` writes, when the command before it in the same list assigned NAME a literal. */
+/** The path a redirect to a plain `$NAME` in the call's second command writes, when its first assigned NAME a literal. */
 function heldTarget(target: Token, tokens: readonly Token[], context: Context): string | undefined {
     const name = /^\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)\})$/.exec(target.value)?.slice(1).find(Boolean)
-    const held = context.literals?.depth === context.depth ? context.literals.held : undefined
+    const held = context.depth === 0 && context.literals?.commands === 1 ? context.literals.held : undefined
     // An assignment on the redirecting command itself may run before the redirect, and bash's `{NAME}>` sets NAME to a descriptor.
     if (name === undefined || held?.name !== name || SHELL_SET.test(name)
         || tokens.some(token => token.kind === 'word' && (ASSIGNMENT.test(token.value) || /^\{\w+\}$/.test(token.value)))) return undefined
@@ -1005,7 +1005,7 @@ function parseShell(command: string, cwd: string, context: Context): ParsedInvoc
         const names = (pattern: RegExp) => hidden || pattern.test(command) || tokens.some((token) => token.kind === 'word' && pattern.test(token.value))
         options = { ...options, ...names(NAMES_HOME) ? { home: undefined } : {}, ...names(CHANGES_CD) ? { cdpath: undefined } : {} }
     }
-    return parseTokens(lex(command, options).tokens, cwd, { ...context, options, literals: { depth: context.depth } }, true)
+    return parseTokens(lex(command, options).tokens, cwd, { ...context, options, ...context.depth === 0 ? { literals: { commands: 0 } } : {} }, true)
 }
 
 function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cdAllowed: boolean): ParsedInvocation[] {
@@ -1106,13 +1106,12 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
             }
             states = [...new Map(next.map((state) => [`${state.ok}\0${state.directory}`, state])).values()]
         }
-        // A shell's own `NAME=literal`, run whatever came before it and neither piped nor in the background, holds that
-        // value for the next command alone; any other command forgets it.
-        if (context.literals?.depth === context.depth) {
-            const assignment = current.length === 1 && !compound ? current[0]! : undefined
+        // The call's first command, a `NAME=literal` neither piped nor in the background, holds that value for the second.
+        if (context.depth === 0 && context.literals && (current.length || compound)) {
+            const assignment = !context.literals.commands++ && current.length === 1 && !compound ? current[0]! : undefined
             const at = assignment?.value.indexOf('=') ?? -1
             context.literals.held = assignment?.kind === 'word' && ASSIGNMENT.test(assignment.value) && !assignment.dynamic && !assignment.status && !assignment.braced
-                && gate === undefined && separator !== '|' && separator !== '&' ? { name: assignment.value.slice(0, at), value: assignment.value.slice(at + 1) } : undefined
+                && separator !== '|' && separator !== '&' ? { name: assignment.value.slice(0, at), value: assignment.value.slice(at + 1) } : undefined
         }
         // A group that feeds a pipeline is that pipeline's stage, with any redirect after it.
         const stageItems = [...closed?.piped ?? [], ...result.slice(first)]
@@ -1198,8 +1197,8 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
             if (depth) refuse('Unterminated function definition.')
             i--
             definitions.add(foldGuardSpelling(name))
-            // zsh runs a hook function such as TRAPDEBUG or preexec before the next command, which can set any name.
-            if (context.literals) context.literals.held = undefined
+            // A definition counts as a command: zsh runs a hook such as TRAPDEBUG before the next one, which can set any name.
+            if (context.depth === 0 && context.literals) { context.literals.commands++; context.literals.held = undefined }
             functions.push(commands)
             append({ executable: null, argv: [], cwd: states[0]!.directory, wrapped: false, words: body, redirects: [] })
             needsCommand = false
