@@ -258,6 +258,28 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
             message: expect.stringContaining('a session holds this stack') }))
     })
 
+    // A held stack whose services could not be read never had Docker probed, so with no Docker at all
+    // doctor named no runtime problem.
+    it('names a missing Docker when a session holds a stack whose services could not be read', async () => {
+        const candidate = await fixture({ configuredRuntime: true })
+        const holder = holderId({ stackId: candidate.stack, checkoutId: checkoutId({ checkoutPath: candidate.checkout }), sessionId: 'no-docker-session' })
+        const address = candidate.namespace.paths.coordination(candidate.stack)
+        const held = await transactState(candidate.namespace, address, { ownerId: holder }, () => ({
+            format: 'cockpit-state/v1' as const, kind: 'coordination' as const, cockpitId: address.cockpitId,
+            subjectId: candidate.stack, revision: 0, updatedAt: new Date().toISOString(),
+            value: { holders: [{ holderId: holder, checkoutId: checkoutId({ checkoutPath: candidate.checkout }), claimedAt: new Date().toISOString() }],
+                lastReleasedHolder: null, drain: null,
+                lease: { offset: 0, ports: { APP_PORT: 61230 }, released: false, declaration: { step: 10, count: 1, bases: { APP_PORT: 61230 } } } },
+        }))
+        expect(held.kind).toBe('complete')
+
+        const doctor = await runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
+            configPath: candidate.configPath, env: { PATH: '/usr/bin:/bin', HOME: candidate.home }, timeoutMs: 5_000,
+        }, executeProbe))
+
+        expect(doctor.diagnostics).toContainEqual(expect.objectContaining({ code: 'RUNTIME_UNAVAILABLE', target: candidate.stack }))
+    })
+
     // A row with no evidence says nothing about its prerequisite, yet the readiness summary listed it as
     // missing: a runtime row with none read as the container runtime, whose need names the Compose
     // floor, so a current Compose read as too old.

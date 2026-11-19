@@ -251,10 +251,10 @@ function producers(input: {
     const configuredRuntime = !declaresNothingToRun(input.config.result.config.environment)
     // Before the first `up` there are no runtime rows to observe, but an unusable Docker or a Compose
     // below the floor is still named here rather than first at bring-up.
-    const runtimeCheck = configuredRuntime && !runningStack ? (async () => {
+    const probeRuntime = async (reportMissing: boolean) => {
         const docker = await resolveDockerExecutable(input.env)
         if (docker.state !== 'available') {
-            if (input.stopped) input.notice([runtimeUnavailable(docker.reason, input.stack)])
+            if (reportMissing) input.notice([runtimeUnavailable(docker.reason, input.stack)])
             return
         }
         const observed = await observeDockerRuntime({
@@ -267,7 +267,8 @@ function producers(input: {
             timeoutMs: input.timeoutMs,
         }, execute)
         if (observed.kind !== 'complete') input.notice([runtimeUnavailable(observed.reason, input.stack, observed.fix)])
-    })() : undefined
+    }
+    const runtimeCheck = configuredRuntime && !runningStack ? probeRuntime(input.stopped) : undefined
     const runtimeSession = runningStack ? (async () => {
         const adapters = createLifecycleCommandAdapters({
             configPath: input.config.result.source.path,
@@ -305,6 +306,9 @@ function producers(input: {
             : { severity: 'error', code: ENVIRONMENT_CODES.STACK_NOT_RUNNING, target: input.stack,
                 message: 'a session holds this stack, but its running services could not be read, so the checks that need a running stack have no evidence; run up to resume it, or down to release it if the session that holds it has ended',
                 fix: cockpitCommand('up', { config: input.config.result.source.path }) }])
+        // A held stack that could not be read may have no Docker under it at all, which only the
+        // probe says; without it the rows read as missing evidence and named no runtime problem.
+        if (!session) await probeRuntime(true)
         return session
     }) : undefined
     const stableSession = async () => {

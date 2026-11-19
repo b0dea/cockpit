@@ -17,7 +17,8 @@ import { lstat, readdir, realpath } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { readBoundedFile } from '../bounded-read.js'
 import { cockpitCommand } from '../fix-catalogue.js'
-import { decodeCoordinationRecord, isProcessGone, type CoordinationRecord, type ProcessStartObservation } from './claims.js'
+import { decodeCoordinationRecord, isProcessGone, MAX_CONCURRENT_HOLDER_PROBES, type CoordinationRecord, type ProcessStartObservation } from './claims.js'
+import { mapLimit } from './map-limit.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, type CockpitId, type EnvironmentDiagnostic, type StackId } from './contract.js'
 import { checkoutId as deriveCheckoutId, cockpitId as deriveCockpitId, composeProjectName, stackId as deriveStackId } from './identity.js'
 import type { MachineStackDiscovery, MachineStackResource } from './reclaim.js'
@@ -409,8 +410,8 @@ async function observe(input: Parameters<typeof observeMachineStacks>[0]): Promi
             malformed: malformed !== undefined, registered: registered?.missing })
         const lease = record?.lease && !record.lease.released ? record.lease.ports : null
         const observeProcess = input.observeProcess
-        const ended = observeProcess === undefined ? undefined : (await Promise.all((record?.holders ?? []).map(async ({ pid, processStart }) =>
-            pid !== undefined && isProcessGone(processStart, await observeProcess(pid))))).filter(Boolean).length
+        const ended = observeProcess === undefined ? undefined : (await mapLimit(record?.holders ?? [], MAX_CONCURRENT_HOLDER_PROBES,
+            async ({ pid, processStart }) => pid !== undefined && isProcessGone(processStart, await observeProcess(pid)))).filter(Boolean).length
         stacks.push({
             namespace: stored?.namespace, files: stored?.files ?? [], resources: owned,
             row: {

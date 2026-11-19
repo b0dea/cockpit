@@ -426,7 +426,7 @@ type ReleaseDeadSessionHoldersResult =
     | ClaimMutationRefusal
 
 // Every probe is a child process; a record may name thousands of holders.
-const MAX_CONCURRENT_HOLDER_PROBES = 4
+export const MAX_CONCURRENT_HOLDER_PROBES = 4
 
 /**
  * Remove the holds of `cockpit session` wrappers whose process is gone. A session killed with
@@ -951,8 +951,10 @@ export async function withStackTeardown<T extends object>(
  * others came to join, and every one of them refused. A teardown is bounded by its stop steps, so
  * this gives up after two minutes rather than the hour a cold start may take.
  */
+export const STACK_TEARDOWN_WAIT_MS = 120_000
+
 export async function waitForStackTeardown(namespace: StateNamespace, stackId: StackId, holderId: HolderId): Promise<boolean> {
-    const deadline = Date.now() + 120_000
+    const deadline = Date.now() + STACK_TEARDOWN_WAIT_MS
     while (true) {
         const waited = await withStackTeardown(namespace, stackId, holderId, async () => ({}), 30_000)
         if (!('diagnostics' in waited)) return true

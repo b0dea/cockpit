@@ -249,4 +249,27 @@ describe('machine stack inventory', () => {
         expect(await person.apply()).toMatchObject({ status: 0, diagnostics: [] })
         expect(await removed()).toEqual(['container c-gone', 'network n-gone', 'volume my-app-bbbbbbbbbbbb_data', 'container c-elsewhere', 'volume other-app-ffffffffffff_data'])
     })
+
+    // Each holder's process is a child process to read, and a record may name thousands of holders.
+    it('reads at most four holders\' processes at once, and counts the ended ones', async () => {
+        const { cockpit, stacks, namespace, context } = await machine()
+        const path = join(namespace.root, 'cockpits', segment(cockpit), 'records', 'coordination', `${segment(stacks.live)}.json`)
+        const record = JSON.parse(await readFile(path, 'utf8'))
+        record.value.holders = Array.from({ length: 12 }, (_, index) => ({ holderId: `holder:${sha(`ended-${index}`)}:session`,
+            checkoutId: record.value.holders[0].checkoutId, claimedAt: '2026-11-01T10:00:00.000Z', pid: 100_000 + index }))
+        await writeFile(path, JSON.stringify(record))
+        let reading = 0
+        let most = 0
+
+        const observed = await observeMachineStacks({ namespace, own: context.own, observeProcess: async () => {
+            most = Math.max(most, ++reading)
+            await new Promise((settle) => setTimeout(settle, 10))
+            reading -= 1
+            return { state: 'absent' as const }
+        } })
+
+        if ('kind' in observed) throw new Error(JSON.stringify(observed))
+        expect(observed.inventory.stacks.find(({ stackId }) => stackId === stacks.live)?.state).toMatchObject({ holders: 12, endedHolders: 12 })
+        expect(most).toBe(4)
+    })
 })
