@@ -575,7 +575,9 @@ or a URL; `gh api` is left out, because its `GET` returns any file the repositor
   it elsewhere: write `cd ./name`, or `git -C name`. `cd sub/dir`, a path of several names that starts
   with no dot, is judged as the directory below when it exists there, the call sets no `CDPATH`, and
   no run of its names reaches a credential store from the home directory, where a `CDPATH` entry could
-  send it; otherwise it asks, or is refused when it names a credential store. A `..` after a directory name, as in
+  send it; otherwise it asks, or is refused when it names a credential store, a file that runs programs, such as
+  a launch agent, or the home directory itself. After such a `cd`, a path or later `cd` whose `..` climbs back to
+  the directory it was named from asks, and one whose names reach those locations from home is refused. A `..` after a directory name, as in
   `cd ./a/../b` or `env -C a/..`, is refused too, as are `pushd`, `popd` and zsh's `chdir`. A `cd`
   may fail, and one after `||` may not run, so each later command is judged from every directory it
   may run in: in `pwd || cd ./dir && cat x` the `cat` is judged from both. A newline after `&&`,

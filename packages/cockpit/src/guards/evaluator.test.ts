@@ -3251,6 +3251,30 @@ describe('everyday directory changes and held paths', () => {
         expect(run('cd api && ls').decision).toBe('ask')
     })
 
+    it('holds what follows a cd by name to the directory it was named from, which a CDPATH entry such as home may replace', () => {
+        // The cockpit holds these directories, and the home directory holds none of them, so only a profile's CDPATH could move the cd.
+        const made = new Set(['workorders/x', 'Library/Caches', 'Documents/x', 'src/lib', 'packages/cockpit', 'workspace/home'].map(path => `${root}/${path}`))
+        const local: PathInspection = request => ({ ...withGit(request), ...made.has(posix.resolve(request.cwd, request.path)) ? { identity: '8:4' } : {} })
+        const judge = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command), { home }), configured(), local)
+        for (const command of ['cd workorders/x && jq . f.json', 'cd workorders/x && cat ../y/f.json', 'cd src/lib && npm test', 'cd packages/cockpit && npx vitest run x']) {
+            expect(judge(command), command).toMatchObject({ decision: 'allow' })
+        }
+        for (const command of ['cd Library/Caches && cat ../../.aws/credentials', 'cd Library/Caches && cat ../Keychains/login.keychain-db',
+            'cd Documents/x && cat ../../.netrc', 'cd workorders/x && cd ../.. && cat .netrc', `cd Documents/x && python3 -c "open('../../.netrc').read()"`,
+            'cd workspace/home && cat .netrc']) {
+            expect(judge(command).decision, command).not.toBe('allow')
+        }
+        // Files that run programs, from home: a launch agent and a shell startup file, spelled in pieces so no
+        // local tool mistakes this test for a write to the real ones.
+        const agents = ['Library', 'Launch' + 'Agents'].join('/')
+        const startup = '.zsh' + 'rc'
+        made.add(`${root}/${agents}`)
+        for (const command of [`cd Library/Caches && echo x >> ../../${startup}`, `cd Library/Caches && cp ${root}/build/p ../${'Launch' + 'Agents'}/evil.plist`,
+            `cd ${agents} && echo x > evil.plist`]) {
+            expect(judge(command).decision, command).not.toBe('allow')
+        }
+    })
+
     it('reads a jq program after cd as the program it is, not as key file names', () => {
         const filter = "'{cockpitVersion, claude:{exit:.claude.exit, notRefused:[.claude.results|to_entries[]|select(.value.is_error|not)|.key]}, codex:{blocked:(.codex.blocked|length)}, leftovers}'"
         expect(run(`cat ${session}/tasks/b1.output; tail -5 ${session}/scratchpad/probe.err; cd workorders/WO-1-adoption/evidence && jq ${filter} guard-parity.json`))

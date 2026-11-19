@@ -2877,6 +2877,22 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (inspectRemoval(path, input.cwd)) hold(unavailable('Removal path escapes configured roots.'))
     }
     for (const path of input.paths) inspectPath({ path, cwd: input.cwd, operation: 'write' })
+    // The directories each `cd` by a name without ./ was named from, and what a path below one reaches from home: a
+    // credential store, a file that runs programs, or the home directory itself, through every trailing run of its names.
+    const namedFrom: string[] = []
+    const homeHazard = (run: string): string | undefined => {
+        if (resolved.homeDirectory === undefined || run === '') return undefined
+        // From a CDPATH entry above home, such as `/`, the whole run may spell the way down to home.
+        if (fold(resolved.homeDirectory).endsWith(`/${fold(run)}`)) return 'the home directory itself'
+        const names = run.split('/')
+        for (let at = 0; at < names.length; at++) {
+            const tail = fold(names.slice(at).join('/'))
+            if (namesCredential(fold(posix.join(resolved.homeDirectory, tail)))) return 'a credential store'
+            const configuration = HOME_RUN_CONFIGURATION.find(item => within(tail, item.path) || within(item.path, tail))
+            if (configuration) return configuration.what
+        }
+        return undefined
+    }
     for (const invocation of invocations) {
         // Redirects, heredocs, comments and definitions are not executable host use.
         // A host passed to printf is still an argument and remains a hard denial.
@@ -2891,20 +2907,43 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (resolved.vendorHosts.some((host) => hostUsed(word.value, host))) hold(deny('Refusing executable use of a declared vendor host.'))
         }
         const directory = inspectPath({ path: invocation.cwd, cwd: invocation.cwd, operation: 'cwd' })
-        // A `cd` by a name without `./` may land in a CDPATH entry instead, such as the home directory, and from there
-        // in a directory a later `cd` names, so every trailing run of the names below the root must reach no credential
-        // store from home. Where nothing exists below the root by that name, only a CDPATH entry can hold it.
+        // A `cd` by a name without `./` may land in a CDPATH entry instead, such as the home directory or one above it,
+        // so no trailing run of the names below the root may reach a credential store or a file that runs programs from
+        // home, nor be the home directory itself. Where nothing exists below the root by that name, only a CDPATH entry
+        // can hold it.
         const spelled = invocation.executable === null && invocation.words.length === 1 && invocation.words[0]!.role === 'directory'
             && !/^(?:\/|\.\.?(?:\/|$))/.test(invocation.words[0]!.value) ? invocation.words[0]!.value : undefined
         const below = spelled === undefined ? undefined : resolved.allowedRoots.find(root => within(invocation.cwd, root))
         if (spelled !== undefined && below !== undefined && directory !== undefined) {
-            const names = posix.relative(below, invocation.cwd).split('/')
-            if (resolved.homeDirectory !== undefined && names.some((_, at) => namesCredential(fold(posix.join(resolved.homeDirectory!, ...names.slice(at)))))) {
-                hold(deny(`Refusing cd ${shownGuardWord(spelled)}: a shell with CDPATH set can resolve the name from the home directory, where it reaches a credential store. Write \`cd ./<dir>\` for the directory in the cockpit.`))
-            } else if (directory.identity === null) {
+            const hazard = homeHazard(posix.relative(below, invocation.cwd))
+            if (hazard) hold(deny(`Refusing cd ${shownGuardWord(spelled)}: a shell with CDPATH set can resolve the name from the home directory, where it reaches ${hazard}. Write \`cd ./<dir>\` for the directory in the cockpit.`))
+            else if (directory.identity === null) {
                 holdBoundary(invocation, ask(`cd ${shownGuardWord(spelled)} names nothing below the directory it runs from, so a shell with CDPATH set may find it elsewhere, which the guard cannot see. Write \`cd ./<dir>\` once it exists.`))
             }
         }
+        // Where such a cd really landed, a `..` that climbs back to the directory it was named from leaves for wherever
+        // that is, the home directory included, and one that stays below lands where the names it keeps reach from home.
+        for (const base of namedFrom) {
+            const isCd = invocation.executable === null && invocation.words[0]?.role === 'directory'
+            // A later cd is judged by where its climb tops out, since the directory it left may be any below the base.
+            if (!isCd && (!within(invocation.cwd, base) || invocation.cwd === base)) continue
+            const words = isCd ? [invocation.words[0]!.value] : [...invocation.executable === null ? [] : [invocation.executable], ...invocation.argv,
+                ...invocation.redirects.map(redirect => redirect.target), ...inlineCode(invocation).flatMap(code => code.split(/[^\w./@~+-]+/))]
+            for (const word of new Set(words.flatMap(word => [word, word.slice(word.indexOf('=') + 1)]))) {
+                const normal = posix.normalize(word)
+                const climbs = /^\.\.(?:\/|$)/.test(normal) ? normal.split('/').findIndex(name => name !== '..') : 0
+                if (climbs === 0) continue
+                const steps = climbs < 0 ? normal.split('/').length : climbs
+                // A cd's own word was resolved from where it ran, which its new directory holds less what follows the climb.
+                const target = isCd ? invocation.cwd : posix.resolve(invocation.cwd, word)
+                const top = isCd ? posix.resolve(target, ...normal.split('/').slice(steps).map(() => '..')) : posix.resolve(invocation.cwd, ...Array<string>(steps).fill('..'))
+                const hazard = within(top, base) && top !== base ? homeHazard(posix.relative(base, target)) : undefined
+                if (!within(top, base) || top === base) {
+                    holdBoundary(invocation, ask(`${shownGuardWord(word)} climbs out of a directory a \`cd\` named without ./, which a shell with CDPATH set may have put anywhere, the home directory included. Write that \`cd ./<dir>\`, or name the path from the cockpit.`))
+                } else if (hazard) hold(deny(`Refusing ${shownGuardWord(word)}: after a \`cd\` named without ./, a shell with CDPATH set can resolve it from the home directory, where it reaches ${hazard}.`))
+            }
+        }
+        if (spelled !== undefined && below !== undefined) namedFrom.push(posix.resolve(invocation.cwd, ...posix.normalize(spelled).split('/').filter(Boolean).map(() => '..')))
         // A redirect writes the file it names, whatever the command does to its operands.
         linking = false
         moving = false
