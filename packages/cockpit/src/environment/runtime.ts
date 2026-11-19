@@ -3,7 +3,7 @@ import { dirname, isAbsolute, normalize, relative, resolve, sep } from 'node:pat
 import { realpath } from 'node:fs/promises'
 import { parseDocument } from 'yaml'
 import { readBoundedFile } from '../bounded-read.js'
-import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import { authenticatedExecutionOutcome, failedStepStderr, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { MAX_COLD_START_SECONDS } from '../schema.js'
 import { consumeMachineFloorConfigProjection, type MachineFloorConfigProjection } from '../config/load.js'
 import {
@@ -1639,7 +1639,8 @@ const issuedRuntimeServiceFailures = new WeakMap<object, RuntimeServiceFailureLo
 export type RuntimeServiceOutcome =
     | { readonly kind: 'observed'; readonly observation: RuntimeServiceObservation; readonly stop?: ExecutionStep }
     | { readonly kind: 'stale' }
-    | { readonly kind: 'failure'; readonly logs?: RuntimeServiceFailureEvidence; readonly stop?: ExecutionStep }
+    /** `reason` says what failed, in Docker's words when it gave any. */
+    | { readonly kind: 'failure'; readonly logs?: RuntimeServiceFailureEvidence; readonly stop?: ExecutionStep; readonly reason?: string }
 
 type Execute = (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
 
@@ -2031,7 +2032,7 @@ async function inspectRuntimeService(contract: RuntimeServiceHealthPlanContract,
         ? parseRuntimeServiceInspection(outcome.stdout, contract) : undefined
     if (!value) return runtimeServiceFailure(contract, 'inspect', outcome, contract.identityFinishedAt, contract.containerId)
     if (!receiptWithinWindow(outcome as Extract<ExecuteProbeOutcome, { kind: 'complete' }>, window, Date.now())
-        || Date.parse(contract.identityFinishedAt) > Date.parse(outcome.receipt!.startedAt)) return { kind: 'failure' }
+        || Date.parse(contract.identityFinishedAt) > Date.parse(outcome.receipt!.startedAt)) return { kind: 'failure', reason: OUTSIDE_WINDOW }
     const observation = {
         stackId: contract.topologyContract.stackId,
         configSha256: contract.topologyContract.configSha256,
@@ -2062,11 +2063,33 @@ function runtimeServiceFailure(
 ): RuntimeServiceOutcome {
     const observedAt = failedBoundaryObservedAt(outcome, contract.topologyContract.observationWindow, previousFinishedAt)
     const context = observedAt ? runtimeServiceFailureContext(contract, stage, observedAt, containerId) : undefined
-    if (!context) return { kind: 'failure', ...stop ? { stop } : {} }
+    const reason = failedStageReason(stage, outcome)
+    if (!context) return { kind: 'failure', reason, ...stop ? { stop } : {} }
     const logs = {} as RuntimeServiceFailureEvidence
     issuedRuntimeServiceFailures.set(logs, context)
-    return { kind: 'failure', logs, ...stop ? { stop } : {} }
+    return { kind: 'failure', logs, reason, ...stop ? { stop } : {} }
 }
+
+const STAGE_COMMANDS = {
+    start: '`docker compose up`',
+    status: '`docker compose ps`',
+    identity: '`docker compose ps`',
+    inspect: '`docker container inspect`',
+} as const
+
+// A failed start's own last words are its cause, such as a port another process holds. Without
+// them up reported only that the service did not become healthy and that its logs were empty: a
+// container that never started writes none.
+function failedStageReason(stage: RuntimeServiceFailureLogContext['stage'], outcome: ExecuteProbeOutcome): string {
+    const command = STAGE_COMMANDS[stage]
+    const stderr = failedStepStderr(outcome.stderr)
+    if (stderr !== undefined) return `${command} failed: ${stderr}`
+    if (outcome.kind === 'refusal') return `${command} failed (${outcome.code})`
+    if (outcome.stdout.byteLength > 0) return `${command} printed output cockpit could not read`
+    return stage === 'inspect' ? `${command} printed nothing` : 'Compose listed no container for the service'
+}
+
+const OUTSIDE_WINDOW = 'Docker answered outside the window in which cockpit observes the start'
 
 /**
  * Starts one service with `up --wait`, finds its container through Compose and inspects it. Each
@@ -2092,17 +2115,19 @@ export async function startRuntimeService(input: {
         runtimeServiceFailure(contract, stage, outcome, after, null, steps.stop)
     const start = await input.execute(steps.start)
     if (start.kind === 'refusal' || start.stderr.byteLength !== 0) return failed('start', start)
-    if (!clean(start)) return { kind: 'failure', stop: steps.stop }
+    if (!clean(start)) return { kind: 'failure', stop: steps.stop, reason: OUTSIDE_WINDOW }
     const status = await input.execute(steps.status)
     const shortId = status.kind === 'complete' && status.stderr.byteLength === 0
         ? classifyComposeStatus(status.stdout, projectName, contract.service.id) : { kind: 'empty' as const }
     if (shortId.kind === 'empty') return failed('status', status, start.receipt.finishedAt)
-    if (shortId.kind === 'malformed' || !clean(status, start.receipt.finishedAt)) return { kind: 'failure', stop: steps.stop }
+    if (shortId.kind === 'malformed' || !clean(status, start.receipt.finishedAt)) return { kind: 'failure', stop: steps.stop,
+        reason: shortId.kind === 'malformed' ? `${STAGE_COMMANDS.status} printed output cockpit could not read` : OUTSIDE_WINDOW }
     const identity = await input.execute(steps.identity)
     const containerId = identity.kind === 'complete' && identity.stderr.byteLength === 0
         ? classifyContainerIdentity(identity.stdout, shortId.value) : { kind: 'empty' as const }
     if (containerId.kind === 'empty') return failed('identity', identity, status.receipt.finishedAt)
-    if (containerId.kind === 'malformed' || !clean(identity, status.receipt.finishedAt)) return { kind: 'failure', stop: steps.stop }
+    if (containerId.kind === 'malformed' || !clean(identity, status.receipt.finishedAt)) return { kind: 'failure', stop: steps.stop,
+        reason: containerId.kind === 'malformed' ? `${STAGE_COMMANDS.identity} printed output cockpit could not read` : OUTSIDE_WINDOW }
     const inspected = await inspectRuntimeService({
         ...contract, containerId: containerId.value,
         startStartedAt: start.receipt.startedAt, identityFinishedAt: identity.receipt.finishedAt,
@@ -2255,6 +2280,14 @@ export function admitRuntimeServiceHealth(observation: RuntimeServiceObservation
     }
     issuedRuntimeServiceEvidence.set(evidence, contract)
     return evidence
+}
+
+/** Why `admitRuntimeServiceHealth` refused an observation, in the terms Docker reported. */
+export function runtimeServiceHealthShortfall(observation: RuntimeServiceObservation): string {
+    const expected = issuedRuntimeServiceObservations.get(observation)?.service.healthcheck ? 'healthy' : null
+    if (observation.state === 'running' && observation.health === expected) return OUTSIDE_WINDOW
+    const health = observation.health ?? (expected ? 'no health status yet' : undefined)
+    return `Docker reported its container ${observation.state}${health ? `, ${health}` : ''}`
 }
 
 export function isRuntimeServiceEvidence(value: unknown): value is RuntimeServiceEvidence {

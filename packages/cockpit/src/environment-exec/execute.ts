@@ -578,9 +578,10 @@ export type ExecuteProbeOutcome =
 
 const FAILED_STEP_STDERR_CHARACTERS = 2_048
 
-// Only a step that declares `failureOutput` gets this: for a tool such as git clone, its last words
-// are the only statement of the cause (an unreachable host, a missing repository).
-function failedStepStderr(stderr: Buffer): string | undefined {
+// A failed step's last words, bounded and redacted: for a tool such as git clone they are the only
+// statement of the cause (an unreachable host, a missing repository). A plan's failed step carries
+// them only when it declares `failureOutput`.
+export function failedStepStderr(stderr: Buffer): string | undefined {
     // Redact before cutting, so a cut inside a URL cannot leave its credentials behind the cut, and
     // drop a partial first line.
     const text = new TextDecoder('utf-8').decode(stderr)

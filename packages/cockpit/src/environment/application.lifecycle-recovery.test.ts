@@ -640,6 +640,10 @@ describe('lifecycle application contracts', () => {
         expect(await collectFailureLogs(undefined, 'api', { execute: vi.fn() }, configPath)).toEqual([expect.objectContaining({
             message: 'bounded failure logs are unavailable', target: 'api',
             fix: `./node_modules/@b00dea/cockpit/bin/cockpit.mjs logs --config ${configPath} --service api` })])
+        // A container that never started writes nothing; that is said plainly, of the service.
+        applicationOwners.logs.admitFailureLogs = () => ({ kind: 'complete', records: [] }) as never
+        expect(await collectFailureLogs(failureEvidence as never, 'api', { execute: async () => ({}) as never }, configPath)).toEqual([
+            expect.objectContaining({ message: 'api wrote no log lines before it failed', target: 'api' })])
     })
 
     // A failed up left the failing container restart-looping until down, and turned each of its

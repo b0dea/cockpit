@@ -11,6 +11,7 @@ import {
     observeRuntimeServiceStates,
     planRuntimeServiceExec,
     restartRuntimeService,
+    runtimeServiceHealthShortfall,
     startRuntimeService,
     type RuntimeServiceState,
     type RuntimeTopologyEvidence,
@@ -76,11 +77,13 @@ export async function runServiceRestart(
     const outcome = input.verb === 'rebuild' ? await startRuntimeService({ ...run, rebuild: true }) : await restartRuntimeService(run)
     const evidence = outcome.kind === 'observed' ? admitRuntimeServiceHealth(outcome.observation) : undefined
     if (!evidence) {
+        const reason = outcome.kind === 'observed' ? runtimeServiceHealthShortfall(outcome.observation)
+            : outcome.kind === 'failure' ? outcome.reason : undefined
         const logs = await collectFailureLogs(outcome.kind === 'observed' ? outcome.observation
             : outcome.kind === 'failure' ? outcome.logs : undefined, input.service, adapters, input.configPath)
         return forwardedRefusal([
             { severity: 'error', code: ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID, target: input.service,
-                message: `service ${input.service} did not become healthy after ${input.verb}`,
+                message: `service ${input.service} did not become healthy after ${input.verb}${reason ? `: ${reason}` : ''}`,
                 fix: `fix the error in the log excerpt, then rerun ${input.verb}` },
             ...logs])
     }

@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { createServer } from 'node:net'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, expect, it } from 'vitest'
@@ -47,6 +48,19 @@ it('starts the stack, shows it to every later command, resets only declared data
     shop.docker.stopAll()
     expect(ok(shop, ['up']).json?.result).toMatchObject({ change: 'started', ports: up.json?.result.ports })
     ok(shop, ['preflight'])
+    // A port something else took while the stack was stopped fails its start, and up names the
+    // port Docker could not bind instead of only an unhealthy service with no logs. Once the port
+    // is free, up resumes that start.
+    shop.docker.stopAll()
+    const squatter = createServer().listen(up.json?.result.ports.APP_PORT, '127.0.0.1')
+    await once(squatter, 'listening')
+    const blocked = shop.cockpit(['up'])
+    squatter.close()
+    await once(squatter, 'close')
+    expect(blocked.status, explain(blocked)).toBe(2)
+    expect(blocked.json?.diagnostics).toContainEqual(expect.objectContaining({ target: 'app',
+        message: expect.stringMatching(new RegExp(`^runtime service did not become healthy: \`docker compose up\` failed: .*:${up.json?.result.ports.APP_PORT}\\b`)) }))
+    expect(ok(shop, ['up']).json?.result).toMatchObject({ change: 'resumed', ports: up.json?.result.ports })
     // sleep stops the stack and keeps its containers; down then retires it without an up first.
     expect(ok(shop, ['sleep']).json?.result.change).toBe('stopped')
     expect(shop.docker.state().containers.map((container) => container.State.Status)).toEqual(['exited'])

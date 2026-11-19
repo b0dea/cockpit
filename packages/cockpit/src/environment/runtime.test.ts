@@ -17,6 +17,7 @@ import {
     measureMachineFloor,
     createRuntimeAdapter,
     admitRuntimeServiceHealth,
+    runtimeServiceHealthShortfall,
     observeRuntimeTopology,
     stopRuntime,
     startRuntimeService,
@@ -1778,12 +1779,15 @@ fi
         expect(stages).toEqual(['start'])
         expect(outcome).toMatchObject({ kind: 'failure', stop: { argv: expect.arrayContaining(['stop', 'api']) } })
         expect(failureContext(outcome)).toMatchObject({ stage: 'start', service: 'api', containerId: null })
+        // A start that never ran a container leaves no logs, so the failed command is the only cause up can name.
+        expect(outcome).toMatchObject({ reason: '`docker compose up` failed (EXECUTION_STEP_FAILED)' })
     })
 
     it('rejects start stderr even when quiet progress was requested', async () => {
         const { outcome, stages } = await serviceRun(await admittedTopology({ services: { api: {} } }, [running({ StartStderr: 'unexpected progress' })]))
         expect(stages).toEqual(['start'])
         expect(failureContext(outcome)).toMatchObject({ stage: 'start' })
+        expect(outcome).toMatchObject({ reason: '`docker compose up` failed: unexpected progress' })
     })
 
     it('rejects topology and health receipts completed in the future', async () => {
@@ -1810,6 +1814,7 @@ fi
         if (outcome.kind !== 'observed') throw new Error(outcome.kind)
         expect(admitRuntimeServiceHealth(outcome.observation)).toBeUndefined()
         expect(admitRuntimeServiceHealth({ ...outcome.observation })).toBeUndefined()
+        expect(runtimeServiceHealthShortfall(outcome.observation)).toBe('Docker reported its container running, unhealthy')
     })
 
     describe('service revalidation and early failure evidence', () => {

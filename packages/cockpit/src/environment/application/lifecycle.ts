@@ -43,6 +43,7 @@ import {
     startRuntimeService,
     observeRuntimeServiceColdStart,
     resolveRuntimeServiceOrder,
+    runtimeServiceHealthShortfall,
     stopRuntime,
     type RuntimeServiceEvidence,
     type RuntimeServiceFailureEvidence,
@@ -168,7 +169,7 @@ export { decodeLifecycleRecord } from '../lifecycle-stage.js'
 type ServiceAdmission =
     | { readonly kind: 'complete'; readonly evidence: RuntimeServiceEvidence }
     | { readonly kind: 'stale' }
-    | { readonly kind: 'failure'; readonly logs?: RuntimeServiceFailureEvidence | RuntimeServiceObservation }
+    | { readonly kind: 'failure'; readonly logs?: RuntimeServiceFailureEvidence | RuntimeServiceObservation; readonly reason?: string }
 
 type ServiceStart = Exclude<ServiceAdmission, { readonly kind: 'failure' }>
     /** `stop` is present once Compose was asked to start the service. */
@@ -178,7 +179,8 @@ function serviceAdmission(outcome: RuntimeServiceOutcome): ServiceStart {
     if (outcome.kind !== 'observed') return outcome
     const evidence = admitRuntimeServiceHealth(outcome.observation)
     return evidence ? { kind: 'complete', evidence }
-        : { kind: 'failure', logs: outcome.observation, ...outcome.stop ? { stop: outcome.stop } : {} }
+        : { kind: 'failure', logs: outcome.observation, reason: runtimeServiceHealthShortfall(outcome.observation),
+            ...outcome.stop ? { stop: outcome.stop } : {} }
 }
 
 export async function revalidateService(
@@ -251,7 +253,7 @@ export async function collectFailureLogs(
         const { records } = admitted
         if (records.length === 0) return [ownerDiagnostic(
             ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
-            'bounded failure logs contained no records',
+            `${service} wrote no log lines before it failed`,
             service,
             readLogs,
         )]
@@ -567,7 +569,7 @@ async function executeUpRound(
                 )
                 const primary = lifecycleRefusal(
                     ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
-                    'runtime service did not become healthy',
+                    `runtime service did not become healthy${admitted.kind === 'failure' && admitted.reason ? `: ${admitted.reason}` : ''}`,
                     service.id,
                 )
                 return { kind: 'complete' as const, result: {
