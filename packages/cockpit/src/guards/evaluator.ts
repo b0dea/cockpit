@@ -2949,6 +2949,17 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         }
         return undefined
     }
+    // Where a run of names stands in home's own path, short of home, as the directory holding every user's home does: a CDPATH entry
+    // above home, such as `/`, puts a cd by that name there, and a word after it can descend into home.
+    const homeAncestor = (run: string): string | undefined => {
+        if (resolved.homeDirectory === undefined || run === '') return undefined
+        const names = resolved.homeDirectory.split('/')
+        const wanted = fold(run).split('/')
+        for (let at = 1; at + wanted.length < names.length; at++) {
+            if (wanted.every((name, offset) => fold(names[at + offset]!) === name)) return names.slice(0, at + wanted.length).join('/')
+        }
+        return undefined
+    }
     // After a `cd` by a name without ./, the shell may stand wherever a CDPATH entry put that name, the home directory
     // included, and only the call's text shows every way back out: here-strings, heredocs, loop lists, glued options
     // and inline code. So the text after the cd is read whole. An expansion hides how far it climbs, a value held for
@@ -2979,6 +2990,17 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 || program === 'zip' && item.argv.some(arg => /^-[^-]*@/.test(arg))
         })
         if (namesFromFile) leaves(`${named(namesFromFile)} reads the paths it acts on from a file or standard input, which may climb out of it`)
+        const ancestor = homeAncestor(posix.relative(base, cd.cwd))
+        if (ancestor !== undefined) {
+            leaves('its name is part of the home directory\'s own path, so a word after it can descend into home')
+            for (const word of new Set([after, unquoted(after)].flatMap(text => text.split(/[^\w./@~+-]+/)))) {
+                if (word === '' || /^[/~-]/.test(word)) continue
+                const reached = posix.join(ancestor, word)
+                if (!within(reached, resolved.homeDirectory!)) continue
+                const hazard = reached === resolved.homeDirectory ? 'the home directory itself' : homeHazard(posix.relative(resolved.homeDirectory!, reached))
+                if (hazard) hold(deny(`Refusing ${shownGuardWord(word)} after cd ${shownGuardWord(spelled)}: a shell with CDPATH set can resolve that name above the home directory, where the path reaches ${hazard}.`))
+            }
+        }
         for (const [, climb, rest] of [after, unquoted(after)].flatMap(text => [...text.matchAll(/(?<!\.)((?:\.\.(?:\/+|(?![\w.])))+)([^\s'"`;&|<>()]*)/g)])) {
             const steps = climb!.split('..').length - 1
             if (steps >= depth) { leaves(`${shownGuardWord(climb! + rest!)} climbs back out of it`); continue }

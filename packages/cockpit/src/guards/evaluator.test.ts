@@ -3293,6 +3293,21 @@ describe('everyday directory changes and held paths', () => {
         expect(run(consumer).reason).not.toContain('credential store')
     })
 
+    // A CDPATH entry above home, such as `/`, puts `cd workspace` where home's own path runs through, as `cd Users`
+    // does on a Mac, so a word after it can descend into home.
+    it('judges the words after a cd whose name runs through the home directory\'s own path from there', () => {
+        const made = new Set(['workspace', 'workorders', 'workorders/WO-1/evidence', 'src'].map(path => `${root}/${path}`))
+        const local: PathInspection = request => ({ ...withGit(request), ...made.has(posix.resolve(request.cwd, request.path)) ? { identity: '8:6' } : {} })
+        const judge = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command), { home }), configured(), local)
+        const startup = '.zsh' + 'rc'
+        for (const command of ['cd workspace && cat home/.aws/credentials', 'cd workspace && cat home/.netrc', `cd workspace && echo x >> home/${startup}`]) {
+            expect(judge(command).decision, command).not.toBe('allow')
+        }
+        for (const command of ['cd workorders && jq . WO-1/evidence/x.json', 'cd src && npm test']) {
+            expect(judge(command), command).toMatchObject({ decision: 'allow' })
+        }
+    })
+
     it('judges cd into an existing directory by a single name as it does a name with a slash', () => {
         const made = new Set(['workorders', 'workorders/WO-1/evidence', 'Library'].map(path => `${root}/${path}`))
         const local: PathInspection = request => ({ ...withGit(request), ...made.has(posix.resolve(request.cwd, request.path)) ? { identity: '8:5' } : {} })
