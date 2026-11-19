@@ -377,10 +377,10 @@ async function executable(directories: readonly string[], name: string): Promise
 type BoundedExecutionMode = (Readonly<{ kind: 'probe' }>
     | Readonly<{ kind: 'declared'; env: Readonly<Record<string, string>>; timeoutField: string }>) & Readonly<{ stdoutLimitBytes?: number; lenientText?: true }>
 
-// A check the product stops from running fails: by running too long or printing too much, or by a command file in the
-// tree, which the work can remove or break. Anything else that keeps it from running (a command not on cockpit's search
-// path, an executor failure) is cockpit's or the machine's, decided by the executor's code and the argv the contract
-// holds, never by output the product writes, so the work cannot pass a failure of its own off as cockpit's.
+// A check or gate stage the product stops from running fails: by running too long or printing too much, or by a command
+// file in the tree, which the work can remove or break. Anything else that keeps it from running (a command not on
+// cockpit's search path, an executor failure) is cockpit's or the machine's, decided by the executor's code and the argv
+// the contract or [testing] holds, never by output the product writes, so the work cannot pass a failure of its own off as cockpit's.
 const PRODUCT_STOPS: ReadonlySet<string> = new Set([ENVIRONMENT_CODES.EXECUTION_TIMEOUT, ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT])
 const productFailure = (argv: readonly string[], observed: Extract<VerificationObservation, { kind: 'error' | 'unavailable' }>) =>
     observed.code !== undefined && PRODUCT_STOPS.has(observed.code) || observed.kind === 'unavailable' && argv[0]!.includes('/')
@@ -822,7 +822,8 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             const prepared = await gate({ operation: 'test-run', gate: check.gate, mode: 'canonical',
                 ...check.select ? { select: { kind: check.select.slice(0, check.select.indexOf(':')) as 'spec', value: check.select.slice(check.select.indexOf(':') + 1) } } : {} })
             const run = await runGate(prepared.registry, prepared.request, prepared.dependencies)
-            return { criterion, kind: 'gate', passed: run.satisfiesGate, outcome: `gate ${check.gate}: ${run.verdict}`.slice(0, 256), output: outputTail(run.reasons.join('\n') || run.verdict) }
+            return { criterion, kind: 'gate', passed: run.satisfiesGate, outcome: `gate ${check.gate}: ${run.verdict}`.slice(0, 256), output: outputTail(run.reasons.join('\n') || run.verdict),
+                ...run.environmental ? { cockpitError: true as const } : {} }
         } catch (error) {
             return { criterion, kind: 'gate', passed: false, outcome: `gate ${check.gate} did not run`, output: outputTail(errorCause(error)), cockpitError: true }
         }
@@ -1111,7 +1112,7 @@ function productGateDependencies(root: string, source: SourceProvenance,
         runProductTool: async (invocation: ProductGateInvocation) => {
             const observed = await executeBounded(root, invocation.command, executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES,
                 invocation.timeoutSeconds * 1_000, { kind: 'declared', env: { ...stageEnvironment, ...await leaseEnvironment() }, timeoutField: 'testing.stages[].timeout_seconds' })
-            if (observed.kind !== 'executed') return { kind: 'unavailable' as const, reason: observed.reason }
+            if (observed.kind !== 'executed') return { kind: 'unavailable' as const, reason: observed.reason, ...productFailure(invocation.command, observed) ? {} : { stop: 'command-unavailable' as const } }
             const output = await saveStageOutput(root, invocation, `${observed.stdout}${observed.stderr}`, observed.truncated, observed.exitCode !== 0)
             return { kind: 'executed' as const, exitCode: observed.exitCode, signal: null, outputBytes: observed.observedBytes ?? 0,
                 assertion: observed.exitCode === 0 ? 'passed' as const : 'failed' as const, ...output ? { output } : {} }

@@ -171,6 +171,15 @@ function submissionProblem(grading: WorkGrading, request: Extract<WorkRequest, {
 
 type Interruption = Readonly<{ code: string; message: string; fix: string }>
 const RERUN = 'then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work grade --config <your cockpit.toml> --work-order <id>'
+const interrupted = (operation: Operation, cause: Interruption, unrecorded?: string): WorkApplicationOutcome =>
+    ({ kind: 'interrupted', operation, reason: `${cause.code}: ${cause.message}; ${cause.fix}. No attempt was spent${unrecorded ? `, and the interruption is not recorded: ${unrecorded}` : ''}` })
+// The checks cockpit or the machine kept from running, which judged nothing, so no evaluator is shown them as failures.
+function unrunChecks(checks: readonly CheckResult[], rerun: string): Interruption | undefined {
+    const unrun = checks.filter(row => row.cockpitError)
+    return unrun.length ? { code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
+        message: unrun.map(row => `check ${row.criterion} ${row.outcome}${row.kind === 'gate' ? `: ${row.output}` : ''}`).join('; '),
+        fix: `install a check's command where the PATH cockpit runs checks with finds it, start the stack with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml> for a gate stage that needs it, or fix the cause a gate names, ${rerun}` } : undefined
+}
 // A grade reaches a verdict on the product only when every check ran and, where a model grades, cockpit read a well-formed
 // answer. One a cockpit or machine error ended first judged nothing, so it spends no attempt: the record keeps the error
 // beside the order's attempts, and the outcome names it with its fix.
@@ -185,7 +194,7 @@ async function interrupt(operation: Operation, context: WorkContext, record: Wor
         if (!(error instanceof WorkOrderLockedError)) throw error
         unrecorded = error.message
     }
-    return { kind: 'interrupted', operation, reason: `${cause.code}: ${cause.message}; ${cause.fix}. No attempt was spent${unrecorded ? `, and the interruption is not recorded: ${unrecorded}` : ''}` }
+    return interrupted(operation, cause, unrecorded)
 }
 
 export async function gradeOrder(request: Extract<WorkRequest, { operation: 'work-grade' }>, context: WorkContext): Promise<WorkApplicationOutcome> {
@@ -210,13 +219,10 @@ export async function gradeOrder(request: Extract<WorkRequest, { operation: 'wor
     // Checks bind in every mode, so an agent's own `met` never covers a failed check. Changes are read
     // after the checks, so files a check writes count too.
     const checks = await runChecks(order)
-    const unrun = checks.filter(row => row.cockpitError)
+    const unrun = unrunChecks(checks, RERUN.replace('<id>', order.id))
     // An evaluator that cannot run here blocks every grade, so it is named before a check that did not run.
-    const blocked = unrun.length && mode === 'independent' ? await composition.evaluatorUnavailable() : undefined
-    if (blocked) return interrupt(operation, context, record, blocked, checks)
-    if (unrun.length) return interrupt(operation, context, record, { code: ENVIRONMENT_CODES.EVIDENCE_UNAVAILABLE,
-        message: unrun.map(row => `check ${row.criterion} ${row.outcome}${row.kind === 'gate' ? `: ${row.output}` : ''}`).join('; '),
-        fix: `install a check's command where the PATH cockpit runs checks with finds it, or fix the cause a gate names, ${RERUN.replace('<id>', order.id)}` }, checks)
+    const blocked = unrun && mode === 'independent' ? await composition.evaluatorUnavailable() : undefined
+    if (blocked ?? unrun) return interrupt(operation, context, record, (blocked ?? unrun)!, checks)
     let reviewed: Awaited<ReturnType<WorkApplicationComposition['review']>>
     try { reviewed = await composition.review(record.accepted.base, order.scope, await orderAttribution(composition, record)) }
     catch (error) {
@@ -293,6 +299,12 @@ export async function gradeCriteriaFile(request: Extract<WorkRequest, { operatio
     const taken = file.criteria.filter(criterion => RESERVED.has(criterion.id)).map(criterion => criterion.id)
     if (taken.length) return refusal(operation, `${request.criteriaFile} names a criterion ${taken.join(', ')}, which cockpit adds to grades itself; rename it`)
     const checks = await runChecks(file)
+    const unrun = unrunChecks(checks, `then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs grade --config <your cockpit.toml> --criteria ${request.criteriaFile}`)
+    if (unrun) {
+        // As an evaluator refusal below would be, one that cannot run here is named first.
+        const blocked = await composition.evaluatorUnavailable()
+        return blocked ? refusal(operation, `${blocked.code}: ${blocked.message}; ${blocked.fix}`) : interrupted(operation, unrun)
+    }
     // The criteria file is the request, not part of the change it grades.
     // With no order there is no recorded base, so the change since HEAD is compared, and the evaluator judges any test weakening.
     // A scope says which part of the change is graded, so what an open order holds outside it is left to that order; without

@@ -794,6 +794,45 @@ describe('work-order lifecycle', () => {
         expect(record(root, 'WO-51').interrupted).toBeUndefined()
     }, 120_000)
 
+    it('spends no attempt on a gate the environment kept from running, but one on a stage that timed out or checkouts changed under the gate', async () => {
+        const stage = (id: string, command: string, extra: readonly string[] = []) => ['[[testing.stages]]', `id = "${id}"`, `command = ${command}`, ...extra, '',
+            '[[testing.gates]]', `id = "${id}"`, 'tier = "targeted"', `stages = ["${id}"]`, 'changes = "any change"', '']
+        const root = await cockpit(['[work]', 'evaluators = ["claudecode"]', 'attempt_cap = 1', '', '[testing]', '',
+            ...stage('stacked', '["node", "--version"]', ['requires_stack = true']),
+            ...stage('absent', '["cockpit-absent-tool"]', ['requires_stack = false']),
+            ...stage('unit', '["node", "--version"]', ['requires_stack = false']),
+            ...stage('slow', '["node", "-e", "setTimeout(() => {}, 5000)"]', ['requires_stack = false', 'timeout_seconds = 1']),
+            ...stage('touch', '["node", "-e", "require(\'fs\').writeFileSync(\'src/touched.mjs\', String(Date.now()))"]', ['requires_stack = false'])].join('\n'))
+        const tools = syntheticEvaluator()
+        const env = { ...process.env, CLAUDECODE: undefined, CODEX_THREAD_ID: undefined, PATH: [tools, ...(process.env.PATH ?? '').split(':')].join(':') }
+        const gated = (check: string) => `  - id: AC1\n    text: add(2, 3) returns 5.\n    check: ${check}`
+        const interrupted = (cause: RegExp) => ({ status: 2, result: null, diagnostics: [{ code: 'WORK_GRADE_INTERRUPTED', message: expect.stringMatching(cause) }] })
+        // A grade with no order sends no check cockpit could not run to the evaluator either.
+        writeFileSync(join(root, 'criteria.md'), `---\ncriteria:\n${gated('{ gate: absent }')}\n---\n`)
+        expect(await work(root, ['grade', '--criteria', 'criteria.md'], env)).toMatchObject(interrupted(/^EVIDENCE_UNAVAILABLE: check AC1 gate absent: DEGRADED[\s\S]*cockpit-absent-tool[\s\S]*No attempt was spent/))
+        expect(existsSync(join(tools, 'request.json'))).toBe(false)
+        const accept = async (orders: Readonly<Record<string, string>>) => { for (const [id, check] of Object.entries(orders)) {
+            writeFileSync(join(root, `workorders/${id}.md`), order(id, gated(check)))
+            expect((await work(root, ['work', 'accept', '--work-order', id], env)).status).toBe(0)
+        } }
+        await accept({ 'WO-60': '{ gate: stacked }', 'WO-61': '{ gate: absent }', 'WO-62': '{ gate: unit, select: "spec:add" }' })
+        const grade = (id: string) => work(root, ['work', 'grade', '--work-order', id], env)
+        // No running stack, a command not on cockpit's search path and an undeclared selection are the environment's.
+        expect(await grade('WO-60')).toMatchObject(interrupted(/^EVIDENCE_UNAVAILABLE: check AC1 gate stacked: DEGRADED[\s\S]*stack unavailable/))
+        expect(await grade('WO-61')).toMatchObject(interrupted(/^EVIDENCE_UNAVAILABLE: check AC1 gate absent: DEGRADED[\s\S]*cockpit-absent-tool/))
+        expect(await grade('WO-62')).toMatchObject(interrupted(/^EVIDENCE_UNAVAILABLE: check AC1 gate unit: DEGRADED[\s\S]*declares no spec selection/))
+        for (const id of ['WO-60', 'WO-61', 'WO-62']) expect(record(root, id)).toMatchObject({ attempts: 0, interrupted: { code: 'EVIDENCE_UNAVAILABLE' } })
+        expect(existsSync(join(tools, 'request.json'))).toBe(false)
+        for (const id of ['WO-60', 'WO-61', 'WO-62']) expect((await work(root, ['work', 'signoff', '--work-order', id, '--abandon', '--note', 'environment'], env)).status).toBe(0)
+        await accept({ 'WO-63': '{ gate: slow }', 'WO-64': '{ gate: touch }' })
+        // A slow product, and checkouts changed while the gate ran, are the work's: each spends the attempt.
+        expect(await grade('WO-63')).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_GRADE_UNSATISFIED' }] })
+        expect(await grade('WO-64')).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_GRADE_UNSATISFIED' }] })
+        expect(record(root, 'WO-63').checks.results).toEqual([expect.objectContaining({ outcome: 'gate slow: DEGRADED' })])
+        expect(record(root, 'WO-64').checks.results).toEqual([expect.objectContaining({ outcome: 'gate touch: VOID' })])
+        for (const id of ['WO-63', 'WO-64']) expect(record(root, id)).toMatchObject({ attempts: 1 })
+    }, 120_000)
+
     it('grants a capped order fresh attempts only on a person\'s word, keeping what failed, and an agent\'s amendment keeps the count', async () => {
         const root = await cockpit('[work]\ngrading = "self"\nattempt_cap = 1')
         const run = (args: readonly string[]) => work(root, args)
