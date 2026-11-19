@@ -3090,9 +3090,13 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // `f=.env; nl "$f"` and `for f in .env; do nl "$f"; done` read the names they hold.
         const held = invocation.words.filter((word) => word.role === 'environment-assignment-value' || invocation.executable === null && word.role === 'argument')
         // An unexpanded glob in a command's own words names whatever it matches.
-        const globs = !access ? invocation.words.filter((word) => word.dynamic && word.role === 'argument' && /[*?[]/.test(word.value) && !word.value.includes('$')) : []
+        const globs = !access ? invocation.words.filter((word) => word.dynamic && word.role === 'argument' && /[*?[]/.test(word.value)) : []
         for (const word of [...held, ...held.flatMap(item => defaultWords(item.value).map(value => ({ role: item.role, value }))), ...globs]) {
-            const lexical = posix.resolve(invocation.cwd, word.value)
+            // An expansion hides where a path starts, never what its later components can match: `"$PWD"/.se*`
+            // still reaches `.secrets`, so only the components after the last expanded one are judged.
+            const expanded = globs.includes(word) && word.value.includes('$')
+            const parts = word.value.split('/')
+            const lexical = expanded ? parts.slice(parts.findLastIndex(part => part.includes('$')) + 1).join('/') : posix.resolve(invocation.cwd, word.value)
             const folded = fold(lexical)
             const glob = globs.includes(word) || held.includes(word) && plainGlob(word)
             // A shell glob matches a leading dot only when it spells one, so `*` reaches no `.env`, in any component:
@@ -3101,8 +3105,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const components = folded.split('/')
             const secret = glob ? components.some((component, at) => component.startsWith('.') && /[*?[]/.test(component)
                 && SECRET_SAMPLES.some((name) => name.startsWith('.') && (at === components.length - 1 || name === '.secrets') && globPattern(component).test(name)))
-                || credential(posix.dirname(folded))
-                || plainGlob(word) && globReachesProtected(word.value, invocation.cwd) || globNamesProtected(word.value, invocation.cwd)
+                || !expanded && (credential(posix.dirname(folded))
+                || plainGlob(word) && globReachesProtected(word.value, invocation.cwd) || globNamesProtected(word.value, invocation.cwd))
                 : secretNameDenial(folded) !== undefined
             if (secret) hold(deny(`Refusing ${invocation.executable === null ? 'this command' : named(invocation)}: it holds ${shownGuardWord(word.value)}, which names or can match an environment file, secrets directory, declared instance or credential store. Name the files it needs.`))
         }
