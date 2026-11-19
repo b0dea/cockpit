@@ -314,7 +314,8 @@ const NativeHttpServer = z.object({
 }).strict()
 // Absence is inferred only from cockpit's neutral shape; other source forms retain generator validation.
 const GeneratedServer = z.union([
-    NativeServer.extend({ cwd: WorkingDirectory.optional(), disabled: z.boolean().optional(), enabled_tools: z.array(z.string()).max(256).optional() }),
+    NativeServer.extend({ cwd: WorkingDirectory.optional(), disabled: z.boolean().optional(), enabled_tools: z.array(z.string()).max(256).optional(),
+        startup_timeout_sec: z.number().int().positive().optional() }),
     NativeHttpServer.extend({ http_headers_helper: z.string().min(1).max(4096).optional(), disabled: z.boolean().optional(), enabled_tools: z.array(z.string()).max(256).optional() }),
 ])
 const GeneratedServers = z.record(ServerName, GeneratedServer)

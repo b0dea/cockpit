@@ -151,4 +151,11 @@ describe('diagnostic envelope', () => {
         expect(unbound.guidance).toEqual([{ code: diagnostic.code, target: diagnostic.target, text: diagnostic.fix }])
         expect(diagnostic.fix).toBe('run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>')
     })
+
+    // A sleep that held none of the stack said no session held it, while sessions kept it running.
+    it('says a sleep released nothing while another holder keeps the stack running', () => {
+        const stackId = `stack:${'b'.repeat(64)}`
+        expect(renderHumanDiagnostics([], { command: 'sleep', outcome: { status: 0, result: { stackId, change: 'not-held' } } }))
+            .toBe(`Nothing released: this command held none of the stack, and another holder keeps it running (${stackId}).\n`)
+    })
 })

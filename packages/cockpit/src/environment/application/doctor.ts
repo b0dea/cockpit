@@ -318,8 +318,13 @@ export async function runDoctor(
         // which only reports, it is the choice this cockpit made, information as init reports it.
         const diagnostics = state === 'runtime' ? reported.diagnostics : reported.diagnostics.map(row =>
             row.code === ENVIRONMENT_CODES.ENVIRONMENT_NOT_DECLARED ? { ...row, severity: 'info' as const } : row)
+        // A check with no evidence observed nothing about its prerequisite; listing it as missing put
+        // a stack that could not be read down to the container runtime and its Compose floor.
+        const unobserved = new Set(reported.result.checks.filter(({ verdict }) => verdict === 'unavailable')
+            .map(({ code, source }) => `${code}\0${source}`))
         return { ...reported, diagnostics, result: { ...reported.result,
-            readiness: readinessReport(state, diagnostics, loaded.result.config.surfaces.tools) } }
+            readiness: readinessReport(state, diagnostics.filter(({ code, target }) => !unobserved.has(`${code}\0${target}`)),
+                loaded.result.config.surfaces.tools) } }
     }
     const forwarded = new Set(reported.diagnostics.map(({ code, target }) => `${code}\0${target}`))
     return {

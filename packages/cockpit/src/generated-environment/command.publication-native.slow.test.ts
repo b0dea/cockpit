@@ -71,6 +71,51 @@ describe('public surface publication transaction', () => {
                 permissionDecisionReason: expect.stringContaining('has an unapproved edit that widens what agents may do') })
         })
 
+        // A server wrapped as `cockpit session` answers Codex only after up has started the stack, and
+        // Codex gives up on a server after 10 s by default, well inside a cold start.
+        it('gives Codex the declared cold start to start a server that runs cockpit session, and only that server', async () => {
+            const fixture = await surfaceConsumer('session-mcp', { mcp: { command: '/usr/bin/true' } })
+            const declared = {
+                'approved-server': { command: 'npx', args: ['--no', 'cockpit', 'session', '--config', '../cockpit.toml', '--', 'node', 'server.js'] },
+                'plain-server': { command: '/usr/bin/true', args: [] },
+            }
+            await writeFile(join(fixture.siblingDirectory, '.mcp.json'), JSON.stringify({ mcpServers: declared }))
+            const config = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
+            config.mcp.approved = Object.fromEntries(Object.entries(declared).map(([name, server]) => [name,
+                mcpApprovalDigest({ ...server, cwd: fixture.siblingDirectory, envNames: [] }, fixture.root)]))
+            config.environment.machine = { runtime_memory_mb: 1024, runtime_cpus: 1, free_disk_mb: 1024, cold_start_seconds: 90 }
+            await writeFile(fixture.configPath, stringifyToml(config))
+
+            const result = await syncGeneratedEnvironment({ configPath: fixture.configPath })
+
+            expect(result, JSON.stringify(result.diagnostics)).toMatchObject({ kind: 'complete' })
+            const codex = parseToml(await readFile(join(fixture.root, '.codex/config.toml'), 'utf8')) as { mcp_servers: Record<string, Record<string, unknown>> }
+            expect(codex.mcp_servers['approved-server']).toMatchObject({ startup_timeout_sec: 240 })
+            expect(codex.mcp_servers['plain-server']).not.toHaveProperty('startup_timeout_sec')
+        })
+
+        // npm exec, a pinned package version and a shell line all run the same session wrapper.
+        it('recognises every way a server spells its cockpit session launch', async () => {
+            const fixture = await surfaceConsumer('session-spellings', { mcp: { command: '/usr/bin/true' } })
+            const declared = {
+                'approved-server': { command: 'npm', args: ['exec', '--', 'cockpit', 'session', '--', 'node', 'server.js'] },
+                'pinned-server': { command: 'npx', args: ['--yes', '@b00dea/cockpit@0.1.31', 'session', '--', 'node', 'server.js'] },
+                'shell-server': { command: '/bin/sh', args: ['-c', './node_modules/.bin/cockpit --config ../cockpit.toml session -- node server.js'] },
+            }
+            await writeFile(join(fixture.siblingDirectory, '.mcp.json'), JSON.stringify({ mcpServers: declared }))
+            const config = CockpitConfig.parse(parseToml(await readFile(fixture.configPath, 'utf8')))
+            config.mcp.approved = Object.fromEntries(Object.entries(declared).map(([name, server]) => [name,
+                mcpApprovalDigest({ ...server, cwd: fixture.siblingDirectory, envNames: [] }, fixture.root)]))
+            config.environment.machine = { runtime_memory_mb: 1024, runtime_cpus: 1, free_disk_mb: 1024, cold_start_seconds: 90 }
+            await writeFile(fixture.configPath, stringifyToml(config))
+
+            const result = await syncGeneratedEnvironment({ configPath: fixture.configPath })
+
+            expect(result, JSON.stringify(result.diagnostics)).toMatchObject({ kind: 'complete' })
+            const codex = parseToml(await readFile(join(fixture.root, '.codex/config.toml'), 'utf8')) as { mcp_servers: Record<string, Record<string, unknown>> }
+            for (const name of Object.keys(declared)) expect(codex.mcp_servers[name], name).toMatchObject({ startup_timeout_sec: 240 })
+        })
+
         it('refuses an MCP approval no source declares in every sync, so a yes never covers a server it did not show', async () => {
             const fixture = await surfaceConsumer('undeclared-approval', { mcp: { command: '/usr/bin/true' } })
             await writeFile(join(fixture.siblingDirectory, '.mcp.json'), JSON.stringify({ mcpServers: { 'approved-server': { command: '/usr/bin/true' } } }))

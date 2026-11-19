@@ -43,6 +43,7 @@ import { syncGeneratedEnvironment } from './generated-application/sync.js'
 import {
     observeDockerRuntime,
     observeRuntimeMountMaterialization,
+    observeRuntimeServiceStates,
     observeRuntimePortFamily,
     type RuntimeServiceEvidence,
 } from './runtime.js'
@@ -163,6 +164,37 @@ async function heldOnlyByEndedSessions(
     return true
 }
 
+// A session killed during a cold start, as an agent tool does to a server it gave up waiting for,
+// leaves its hold and a stack only partly started. Read as running, every check reported missing
+// evidence, and the missing runtime row read as an unusable Docker.
+async function unfinishedStart(
+    namespace: Extract<Awaited<ReturnType<typeof selectStateRoot>>, { readonly kind: 'complete' }>['value'],
+    stack: ReturnType<typeof stackId>,
+    input: Readonly<{ configPath: string; env: Readonly<Record<string, string | undefined>>; timeoutMs: number }>,
+    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
+): Promise<EnvironmentDiagnostic | undefined> {
+    if (!await heldOnlyByEndedSessions(namespace, stack, execute)) return undefined
+    const adapters = createLifecycleCommandAdapters({ ...input, sessionId: 'cockpit-health-read-only' }, execute)
+    const loaded = await adapters.load({ configPath: input.configPath })
+    if (loaded.kind !== 'complete' || loaded.result.stackId !== stack) return undefined
+    const stored = await readState(namespace.paths.lifecycle(stack))
+    const progress = stored.kind === 'complete' ? decodeLifecycleRecord(stored.value, loaded.result)?.value : undefined
+    if (!progress || progress.teardownComplete) return undefined
+    const started = new Set(progress.completedServices.map(({ service }) => service))
+    // Only containers Docker reports running make the stack partly started; a start that ended before
+    // any ran left a stack that is asleep.
+    const states = await adapters.withRuntimeReadiness(loaded.result, async (runtime) =>
+        runtime.topology.services.every(({ id }) => started.has(id)) ? undefined
+            : observeRuntimeServiceStates({ topology: runtime.topology, execute }))
+    const running = states?.kind === 'complete' ? states.services.filter(({ state }) => state === 'running').length : 0
+    if (!states || states.kind !== 'complete' || running === 0) return undefined
+    return {
+        severity: 'error' as const, code: ENVIRONMENT_CODES.STACK_NOT_RUNNING, target: stack,
+        message: `the session that was starting this stack ended before it finished (${running} of ${states.services.length} services running), so the stack is only partly running; run up to finish starting it, or down to remove it`,
+        fix: cockpitCommand('up', { config: input.configPath }),
+    }
+}
+
 // Before the first `up` doctor still measures the machine, so a missing runtime is named there
 // rather than first at bring-up.
 function runtimeUnavailable(reason: string, target: string, fix = 'install or start Docker so that docker info succeeds, then rerun this command'): EnvironmentDiagnostic {
@@ -219,10 +251,10 @@ function producers(input: {
     const configuredRuntime = !declaresNothingToRun(input.config.result.config.environment)
     // Before the first `up` there are no runtime rows to observe, but an unusable Docker or a Compose
     // below the floor is still named here rather than first at bring-up.
-    const runtimeCheck = configuredRuntime && !runningStack ? (async () => {
+    const probeRuntime = async (reportMissing: boolean) => {
         const docker = await resolveDockerExecutable(input.env)
         if (docker.state !== 'available') {
-            if (input.stopped) input.notice([runtimeUnavailable(docker.reason, input.stack)])
+            if (reportMissing) input.notice([runtimeUnavailable(docker.reason, input.stack)])
             return
         }
         const observed = await observeDockerRuntime({
@@ -235,7 +267,8 @@ function producers(input: {
             timeoutMs: input.timeoutMs,
         }, execute)
         if (observed.kind !== 'complete') input.notice([runtimeUnavailable(observed.reason, input.stack, observed.fix)])
-    })() : undefined
+    }
+    const runtimeCheck = configuredRuntime && !runningStack ? probeRuntime(input.stopped) : undefined
     const runtimeSession = runningStack ? (async () => {
         const adapters = createLifecycleCommandAdapters({
             configPath: input.config.result.source.path,
@@ -273,6 +306,9 @@ function producers(input: {
             : { severity: 'error', code: ENVIRONMENT_CODES.STACK_NOT_RUNNING, target: input.stack,
                 message: 'a session holds this stack, but its running services could not be read, so the checks that need a running stack have no evidence; run up to resume it, or down to release it if the session that holds it has ended',
                 fix: cockpitCommand('up', { config: input.config.result.source.path }) }])
+        // A held stack that could not be read may have no Docker under it at all, which only the
+        // probe says; without it the rows read as missing evidence and named no runtime problem.
+        if (!session) await probeRuntime(true)
         return session
     }) : undefined
     const stableSession = async () => {
@@ -598,7 +634,9 @@ export function createHealthCommandAdapters(
                             message: `no completed bring-up is recorded for this stack (a stack started by an earlier cockpit release counts as not yet up), so only the checks that need no running stack ran; fix: ${fix}; then retry the command that stopped`,
                             fix,
                         }
-                    } else stopped = await sleepingStack(namespace.value, currentStack, loaded.result.source.path) ?? null
+                    } else stopped = await sleepingStack(namespace.value, currentStack, loaded.result.source.path)
+                        ?? await unfinishedStart(namespace.value, currentStack,
+                            { configPath: loaded.result.source.path, env: input.env, timeoutMs: input.timeoutMs }, execute) ?? null
                 }
                 return {
                 authorities: [authority],

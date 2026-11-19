@@ -258,6 +258,62 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
             message: expect.stringContaining('a session holds this stack') }))
     })
 
+    // A held stack whose services could not be read never had Docker probed, so with an unusable Docker
+    // doctor named no runtime problem. A failing docker first on PATH stands in for it on any machine;
+    // removing docker from PATH does not, since a CI runner keeps one in /usr/bin.
+    it('names an unusable Docker when a session holds a stack whose services could not be read', async () => {
+        const candidate = await fixture({ configuredRuntime: true })
+        const holder = holderId({ stackId: candidate.stack, checkoutId: checkoutId({ checkoutPath: candidate.checkout }), sessionId: 'no-docker-session' })
+        const address = candidate.namespace.paths.coordination(candidate.stack)
+        const held = await transactState(candidate.namespace, address, { ownerId: holder }, () => ({
+            format: 'cockpit-state/v1' as const, kind: 'coordination' as const, cockpitId: address.cockpitId,
+            subjectId: candidate.stack, revision: 0, updatedAt: new Date().toISOString(),
+            value: { holders: [{ holderId: holder, checkoutId: checkoutId({ checkoutPath: candidate.checkout }), claimedAt: new Date().toISOString() }],
+                lastReleasedHolder: null, drain: null,
+                lease: { offset: 0, ports: { APP_PORT: 61230 }, released: false, declaration: { step: 10, count: 1, bases: { APP_PORT: 61230 } } } },
+        }))
+        expect(held.kind).toBe('complete')
+
+        const broken = join(candidate.root, 'broken-docker')
+        await mkdir(broken)
+        await writeFile(join(broken, 'docker'), '#!/bin/sh\necho "Cannot connect to the Docker daemon" >&2\nexit 1\n')
+        await chmod(join(broken, 'docker'), 0o755)
+        const doctor = await runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
+            configPath: candidate.configPath, env: { PATH: `${broken}:/usr/bin:/bin`, HOME: candidate.home }, timeoutMs: 5_000,
+        }, executeProbe))
+
+        expect(doctor.diagnostics).toContainEqual(expect.objectContaining({ code: 'RUNTIME_UNAVAILABLE', target: candidate.stack }))
+    })
+
+    // A row with no evidence says nothing about its prerequisite, yet the readiness summary listed it as
+    // missing: a runtime row with none read as the container runtime, whose need names the Compose
+    // floor, so a current Compose read as too old.
+    it('lists no readiness gap for a check that had no evidence because the running stack could not be read', async () => {
+        const candidate = await fixture({ configuredRuntime: true })
+        const holder = holderId({ stackId: candidate.stack, checkoutId: checkoutId({ checkoutPath: candidate.checkout }), sessionId: 'unread-session' })
+        const address = candidate.namespace.paths.coordination(candidate.stack)
+        const held = await transactState(candidate.namespace, address, { ownerId: holder }, () => ({
+            format: 'cockpit-state/v1' as const, kind: 'coordination' as const, cockpitId: address.cockpitId,
+            subjectId: candidate.stack, revision: 0, updatedAt: new Date().toISOString(),
+            value: { holders: [{ holderId: holder, checkoutId: checkoutId({ checkoutPath: candidate.checkout }), claimedAt: new Date().toISOString() }],
+                lastReleasedHolder: null, drain: null,
+                lease: { offset: 0, ports: { APP_PORT: 61230 }, released: false, declaration: { step: 10, count: 1, bases: { APP_PORT: 61230 } } } },
+        }))
+        expect(held.kind).toBe('complete')
+
+        const doctor = await runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:${process.env.PATH}`, HOME: candidate.home },
+            timeoutMs: 5_000,
+        }, executeProbe))
+
+        // The rows a running stack answers had no evidence, and none of them is a missing prerequisite.
+        expect(doctor.diagnostics).toContainEqual(expect.objectContaining({ code: 'GIT_STATE_UNHEALTHY', message: 'git-working-tree evidence is missing' }))
+        const gaps = (doctor.result as { readiness: { gaps: readonly { id: string; findings: readonly { message: string }[] }[] } }).readiness.gaps
+        expect(gaps.flatMap(({ findings }) => findings.map(({ message }) => message))).not.toContainEqual(expect.stringContaining('evidence is missing'))
+        expect(gaps.map(({ id }) => id)).not.toContain('cockpit-committed')
+    })
+
     // A session whose up refused exits without its closing sleep, and its hold stays behind with
     // nothing running; doctor read that stack as held by a session that no longer exists.
     it('says a stack is asleep when every session holding it has ended, and not while one runs or cannot be confirmed gone', async () => {

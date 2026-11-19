@@ -349,10 +349,16 @@ The command gets the stack's addresses in its environment:
   hyphens as underscores, as in `COCKPIT_ENTRYPOINT_API_HOST_PORT=http://127.0.0.1:4210/`.
 
 These replace a value of the same name in the calling shell, are read once at start, and do not
-follow a later `down` and `up`. When the command ends, the session releases only its own hold: a
-stack an earlier `up` from this checkout still holds keeps running, and the session says so with
-`SESSION_STACK_RETAINED`, which names the `sleep` that releases it. A stack another checkout holds is
-not this checkout's to release, so the session adds no such guidance.
+follow a later `down` and `up`. When the command ends, the session releases only its own hold, and
+`SESSION_STACK_RETAINED` says what keeps the stack running: another session, by process ID, which
+stops it when it ends; or an `up` run outside any session from this checkout, with the `sleep` that
+releases it. A stack another checkout holds is not this checkout's to release, so the session adds no
+such guidance. A session whose `up` refused gives its hold back, except the last hold on a stack whose
+services may be running, which its closing `sleep` then stops, so the stack does not keep running with no
+holder. An `up` or `sleep` that meets a `sleep`, `down` or `reset` of the stack waits for it, up to
+two minutes, then acts on the stack it leaves. A `sleep` run where this checkout's command holds none
+of the stack releases nothing, reports `not-held`, and names the sessions that hold it. If a running stack has no holder anyway, the next `up` takes it over on
+the ports it runs on.
 
 A wrapper that dies without its closing `sleep`, from SIGKILL, a crash or a closed terminal, leaves
 its hold behind. A session records its wrapper's process ID and start identity (on Linux the start
@@ -363,6 +369,11 @@ the command's own hold takes the running stack over. A hold whose process still 
 is one whose start could not be read while its process ID is in use: the `CLAIM_CO_TENANT` refusal
 names each holder and process ID, so you can confirm with `ps -o pid,ppid,command -p <pid>` that it
 is that session and not one your own agent started, such as an MCP server, then end it and retry. A process ID can be reused, so a hold standing on one alone may name another process.
+
+A session killed while it was starting the stack, as an agent tool does to an MCP server it stopped
+waiting for, leaves the stack partly started. Doctor reports that with `STACK_NOT_RUNNING`, saying
+how many of its services run; `up` finishes starting it and `down` removes it. `stacks` counts such
+holds under `state.endedHolders`.
 
 The wrapper passes this identity to its command in `COCKPIT_SESSION_PROCESS`, so a hold that a
 `sleep` and then an `up` inside the session re-add stays tied to the wrapper. `up` refuses with

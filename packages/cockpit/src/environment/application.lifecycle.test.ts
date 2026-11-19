@@ -198,6 +198,26 @@ describe('lifecycle application contracts', () => {
         })] : [])
     })
 
+    // A session whose up refused gave its hold back already, so its closing sleep finds others holding
+    // the stack and releases nothing; the session reports only why its up refused.
+    it('reports only the refusal of a session whose up gave its hold back while others hold the stack', async () => {
+        const stack = `stack:${'7'.repeat(64)}` as StackId
+        const env = { PATH: '/usr/bin:/bin' }
+        const up = { kind: 'refusal' as const, status: 2 as const, result: null, diagnostics: [{ severity: 'error' as const,
+            code: 'LIFECYCLE_EVIDENCE_INVALID' as const, message: 'synthetic refusal', target: stack }] }
+        const outcome = await runSession({
+            configPath: '/synthetic/cockpit.toml', argv: ['sh', '-c', 'exit 0'], cwd: tmpdir(), env,
+        }, {
+            up: async () => up,
+            resolveExecutable: (name) => resolveExecutable(name, env),
+            executeForeground: executeForegroundProcess,
+            sleep: async () => ({ kind: 'complete', status: 0, result: { stackId: stack, change: 'not-held' },
+                diagnostics: [{ severity: 'warning', code: 'CLAIM_CO_TENANT', message: 'another cockpit session holds this stack', target: stack }] }) as never,
+        })
+
+        expect(outcome).toEqual(up)
+    })
+
     it('hands the supervised command the leased ports and entrypoints, over values its caller set', async () => {
         const stack = `stack:${'9'.repeat(64)}` as StackId
         const children: Readonly<Record<string, string>>[] = []
