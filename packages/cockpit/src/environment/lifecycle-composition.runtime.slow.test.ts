@@ -890,6 +890,137 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
 
     // Sessions whose up refused on a torn-down stack exit without their closing sleep, and their
     // holds stay behind with nothing running.
+    // An agent tool starts every MCP server at once, and each server a `cockpit session` wraps runs
+    // its own up. On a stack that was asleep or removed they all refused, and each refusal left its
+    // hold behind, so the servers that needed the stack never started.
+    it.each(['asleep', 'removed'] as const)('starts a %s stack once for sessions that begin together, and leaves no hold after they end', async (state) => {
+        const first = await runStackScenario()
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const configPath = first.candidate.configPath
+        const env = { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home }
+        const stopped = state === 'asleep'
+            ? await runSleep({ configPath }, first.adapters)
+            : await runDown({ configPath }, createDestructiveCommandAdapters({ configPath, env, sessionId: 'stack-production', timeoutMs: 5_000, dockerContext: 'default' }, executeProbe))
+        expect(stopped, JSON.stringify(stopped)).toMatchObject({ kind: 'complete', status: 0 })
+        const holders = async () => {
+            const stored = await readState(first.context.namespace.paths.coordination(first.context.stackId))
+            if (stored.kind !== 'complete') throw new Error(JSON.stringify(stored))
+            return decodeCoordinationRecord(stored.value, first.context.stackId)!.holders.length
+        }
+        expect(await holders()).toBe(0)
+        const sessionIds = ['mcp-logs', 'mcp-product', 'mcp-browser']
+        const adapters = sessionIds.map((sessionId) => createLifecycleCommandAdapters({ configPath, env, sessionId, timeoutMs: 5_000 }, executeProbe))
+        const loaded = await adapters[0]!.load({ configPath })
+        if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
+        await configureStackDocker(first.candidate, loaded.result)
+        // Each server runs until every bring-up has answered, as servers an agent tool started together do.
+        let settled = 0
+        let everyUpSettled!: () => void
+        const allSettled = new Promise<void>((resolve) => { everyUpSettled = resolve })
+        const heldWhileRunning: number[] = []
+
+        const sessions = await Promise.all(adapters.map((sessionAdapters) => runSession({
+            configPath, argv: ['synthetic-mcp-server'], cwd: first.candidate.checkout, env,
+        }, {
+            up: async (input) => {
+                const up = await runUp(input, sessionAdapters)
+                if (++settled === sessionIds.length) everyUpSettled()
+                return up
+            },
+            sleep: (input) => runSleep(input, sessionAdapters),
+            resolveExecutable: async () => ({ state: 'available', value: {
+                canonicalPath: process.execPath, invocationPath: process.execPath,
+                sha256: '1'.repeat(64), executionMode: 'verified-path',
+            } }),
+            executeForeground: async () => {
+                await allSettled
+                heldWhileRunning.push(await holders())
+                return { kind: 'complete', exitCode: 0, signal: null, terminationConfirmed: true }
+            },
+        })))
+
+        for (const session of sessions) expect(session, JSON.stringify(session)).toMatchObject({ kind: 'complete', status: 0 })
+        expect(heldWhileRunning[0]).toBe(sessionIds.length)
+        expect(sessions.map((session) => session.kind === 'complete' ? session.result.sleep.change : undefined).sort())
+            .toEqual(['retained', 'retained', 'stopped'])
+        expect(await holders()).toBe(0)
+    })
+
+    // Giving back a refused up's hold required the record exactly as its acquisition wrote it, so a
+    // holder that joined in between kept the refused one's hold in place for good.
+    it('gives back the hold of an up that refused after another holder joined', async () => {
+        const first = await runStackScenario()
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const input = { configPath: first.candidate.configPath,
+            env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
+            sessionId: 'stack-production', timeoutMs: 5_000 }
+        expect(await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, executeProbe)))
+            .toMatchObject({ kind: 'complete', result: { change: 'removed' } })
+        const coTenant = holderId({ stackId: first.context.stackId, checkoutId: first.context.checkoutId, sessionId: 'co-tenant' })
+        let joined = false
+        // The co-tenant joins once this up holds the stack and reads its runtime, so this up is no
+        // longer the stopped stack's only holder and refuses before starting anything.
+        const adapters = createLifecycleCommandAdapters(input, async (step) => {
+            if (!joined && step.id.startsWith('runtime:')) {
+                const stored = await readState(first.context.namespace.paths.coordination(first.context.stackId))
+                const lease = stored.kind === 'complete' ? decodeCoordinationRecord(stored.value, first.context.stackId)?.lease : undefined
+                if (lease && !lease.released) {
+                    joined = true
+                    const observedAt = new Date().toISOString()
+                    expect(await leasePortFamily({ namespace: first.context.namespace, stackId: first.context.stackId, holderId: coTenant,
+                        checkoutId: first.context.checkoutId, config: first.context.ports, now: observedAt, listenerTimeoutMs: 5_000,
+                        listenerEvidence: [{ ports: Object.values(lease.ports), observation: {
+                            state: 'available', value: [], observedAt, producer: 'controlled-test-probe' } }] })).toMatchObject({ kind: 'complete' })
+                }
+            }
+            return executeProbe(step)
+        })
+        const loaded = await adapters.load({ configPath: input.configPath })
+        if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
+        await configureStackDocker(first.candidate, loaded.result)
+
+        const refused = await runUp({ configPath: input.configPath }, adapters)
+
+        expect(joined).toBe(true)
+        expect(refused, JSON.stringify(refused)).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'EXECUTION_PRECONDITION_CHANGED' }] })
+        expect(refused.diagnostics.map(({ code }) => code)).not.toContain('CLAIM_CO_TENANT')
+        const stored = await readState(first.context.namespace.paths.coordination(first.context.stackId))
+        if (stored.kind !== 'complete') throw new Error(JSON.stringify(stored))
+        expect(decodeCoordinationRecord(stored.value, first.context.stackId)?.holders.map(({ holderId }) => holderId)).toEqual([coTenant])
+    })
+
+    // A session ended on its up's refusal without the closing sleep, so an up that had started a
+    // service left the session's hold, and the service, behind.
+    it('releases a session whose up refused after starting a service', async () => {
+        const candidate = await stackFixture()
+        const configPath = candidate.configPath
+        const env = { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home }
+        const adapters = createLifecycleCommandAdapters({ configPath, env, sessionId: 'mcp-product', timeoutMs: 5_000 }, executeProbe)
+        const loaded = await adapters.load({ configPath })
+        if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
+        await configureStackDocker(candidate, loaded.result)
+        listenerProbeControl.enabled = true
+        await writeFile(join(candidate.root, 'docker-failure-needle'), 'up --detach\n')
+        const steps: string[] = []
+
+        const session = await runSession({ configPath, argv: ['synthetic-mcp-server'], cwd: candidate.checkout, env }, {
+            up: (input) => runUp(input, adapters),
+            sleep: (input) => runSleep(input, createLifecycleCommandAdapters({ configPath, env, sessionId: 'mcp-product', timeoutMs: 5_000 },
+                async (step) => { steps.push(step.id); return executeProbe(step) })),
+            resolveExecutable: async () => ({ state: 'available', value: {
+                canonicalPath: process.execPath, invocationPath: process.execPath,
+                sha256: '1'.repeat(64), executionMode: 'verified-path',
+            } }),
+            executeForeground: async () => { throw new Error('the server must not start on a stack that did not come up') },
+        })
+
+        expect(session, JSON.stringify(session)).toMatchObject({ kind: 'refusal', status: 2 })
+        expect(steps.some((id) => id.includes(':stop:'))).toBe(true)
+        const stored = await readState(loaded.result.namespace.paths.coordination(loaded.result.stackId))
+        if (stored.kind !== 'complete') throw new Error(JSON.stringify(stored))
+        expect(decodeCoordinationRecord(stored.value, loaded.result.stackId)).toMatchObject({ holders: [], lease: { released: true } })
+    })
+
     it.each(['down', 'up'] as const)('%s releases the holds of sessions that ended, never of one running or unconfirmed', async (verb) => {
         const first = await runStackScenario()
         expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
