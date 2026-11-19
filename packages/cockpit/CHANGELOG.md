@@ -13,6 +13,13 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.29
+
+### Patch Changes
+
+- 7f7dcb0: Doctor no longer refuses everything when a session still holds the stack but nothing runs, as happens when a session ends without `sleep` or `down`. It reports what it could check, and says that a session holds the stack and that `up` resumes it or `down` releases it.
+- 7fa6d3c: A stack held only by sessions that have ended is no longer treated as running. Doctor now says such a stack is asleep, and `up` after `down` starts it instead of refusing with a claim left by an earlier command and sending you to `down` again. A session still counts as holding the stack while its process runs, or while cockpit cannot confirm it is gone, for example when a sandbox blocks `ps`.
+
 ## 0.1.28
 
 ### Patch Changes
