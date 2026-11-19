@@ -3339,6 +3339,14 @@ describe('everyday directory changes and held paths', () => {
         expect(run(parsed).decision, parsed).not.toBe('deny')
     })
 
+    // tar reads each source from the directory the -C before it names, so a source there is judged as that path.
+    it('judges tar sources from the directory each -C names', () => {
+        for (const command of ['tar -C ~ -cf build/c.tar .codex', `tar -C ${home} -cf build/c.tar .aws`, `tar -cf build/c.tar -C ${home} .netrc`]) {
+            expect(run(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('credential store') })
+        }
+        expect(run('tar -C build -cf out.tar dist')).toMatchObject({ decision: 'allow' })
+    })
+
     // An expansion can name the home directory however it likes; the literal rest after it still names the file.
     it('refuses a path whose literal rest after an expansion names a credential', () => {
         for (const command of ['cat "$(getent passwd $USER | cut -d: -f6)/.netrc"', 'cat "$X/.aws/credentials"', 'cat "$X/.codex/auth.json"', 'cat "${X}/.ssh/id_ed25519"']) {

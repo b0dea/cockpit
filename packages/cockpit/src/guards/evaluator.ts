@@ -999,7 +999,9 @@ function tarWrites(args: readonly string[]): VisibleWrites & { readonly mode: st
     let archive: string | undefined
     let uncertain = false
     let options = true
+    // A creation reads each source from the directory the -C before it names, so `tar -C ~ -cf x .codex` reads ~/.codex.
     const sources: string[] = []
+    const source = (arg: string) => sources.push(destination === '.' || posix.isAbsolute(arg) ? arg : posix.join(destination, arg))
     const modes: Readonly<Record<string, string>> = { '--extract': 'x', '--get': 'x', '--create': 'c', '--list': 't', '--append': 'r', '--update': 'u' }
     for (let index = 0; index < args.length; index++) {
         const arg = args[index]!
@@ -1015,7 +1017,7 @@ function tarWrites(args: readonly string[]): VisibleWrites & { readonly mode: st
             }
             continue
         }
-        if (!options || !arg.startsWith('--')) { sources.push(arg); continue }
+        if (!options || !arg.startsWith('--')) { source(arg); continue }
         const [option, value] = arg.split(/=(.*)/s)
         if (modes[option!] !== undefined && value === undefined) { if (mode && mode !== modes[option!]) uncertain = true; mode = modes[option!] }
         else if (option === '--file' || option === '--directory') {
