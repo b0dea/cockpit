@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { cockpitCommand } from '../fix-catalogue.js'
 import { once } from 'node:events'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
@@ -23,6 +24,7 @@ import { createReadCommandAdapters } from './read-composition.js'
 import { runServiceExec, runServicePs, runServiceRestart } from './application/services.js'
 import { readState } from './state.js'
 import { decodeCoordinationRecord, readActiveStackInventory } from './claims.js'
+import { observeProcessStart, processHost } from './claims.js'
 import { checkGeneratedEnvironment } from './generated-application/check.js'
 import { syncGeneratedEnvironment } from './generated-application/sync.js'
 import { checkoutId, composeProjectName, holderId } from './identity.js'
@@ -884,6 +886,62 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         if (saved.kind !== 'complete') throw new Error(JSON.stringify(saved))
         expect(decodeLifecycleRecord(saved.value, first.context)?.value.runtimeInputs).toEqual(first.inputs)
         expect(saved.value.value).not.toHaveProperty('teardownComplete')
+    })
+
+    // Sessions whose up refused on a torn-down stack exit without their closing sleep, and their
+    // holds stay behind with nothing running.
+    it.each(['down', 'up'] as const)('%s releases the holds of sessions that ended, never of one running or unconfirmed', async (verb) => {
+        const first = await runStackScenario()
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const input = { configPath: first.candidate.configPath,
+            env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
+            sessionId: 'stack-production', timeoutMs: 5_000 }
+        const destructive = (execute: typeof executeProbe) => createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, execute)
+        expect(await runDown({ configPath: input.configPath }, destructive(executeProbe))).toMatchObject({ kind: 'complete', result: { change: 'removed' } })
+        const session = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+        const exited = once(session, 'exit')
+        try {
+            const started = await observeProcessStart(session.pid!, processHost(executeProbe))
+            if (started.state !== 'present') throw new Error(JSON.stringify(started))
+            for (const sessionId of ['ended-session', 'other-ended-session']) {
+                const held = createLifecycleCommandAdapters({ ...input, sessionId, holderProcess: { pid: session.pid!, processStart: started.start } }, executeProbe)
+                const loaded = await held.load({ configPath: input.configPath })
+                if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
+                expect(await held.withAcquiredPorts(loaded.result, async () => true)).toBe(true)
+            }
+            const holders = async () => {
+                const stored = await readState(first.context.namespace.paths.coordination(first.context.stackId))
+                if (stored.kind !== 'complete') throw new Error(JSON.stringify(stored))
+                return decodeCoordinationRecord(stored.value, first.context.stackId)?.holders.map(({ pid }) => pid)
+            }
+            expect(await holders()).toEqual([session.pid, session.pid])
+            // A presence probe that answers nothing, as under a sandbox, leaves the session unconfirmed.
+            const unconfirmed: typeof executeProbe = async (step) => step.id.startsWith('process:presence:')
+                ? { kind: 'refusal' } as unknown as Awaited<ReturnType<typeof executeProbe>> : executeProbe(step)
+            const act = async (execute: typeof executeProbe) => {
+                if (verb === 'down') return runDown({ configPath: input.configPath }, destructive(execute))
+                const adapters = createLifecycleCommandAdapters(input, execute)
+                const loaded = await adapters.load({ configPath: input.configPath })
+                if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
+                await configureStackDocker(first.candidate, loaded.result)
+                return runUp({ configPath: input.configPath }, adapters)
+            }
+
+            for (const execute of [executeProbe, unconfirmed]) {
+                if (execute === unconfirmed) {
+                    session.kill('SIGKILL')
+                    await exited
+                }
+                expect(await act(execute)).toMatchObject({ kind: 'refusal' })
+                expect(await holders()).toEqual([session.pid, session.pid])
+            }
+
+            const released = await act(executeProbe)
+            expect(released, JSON.stringify(released)).toMatchObject({ kind: 'complete', status: 0 })
+            expect(await holders()).toEqual(verb === 'down' ? [] : [undefined])
+        } finally {
+            session.kill('SIGKILL')
+        }
     })
 
     // A stack keeps the profiles it started with, so a later command run without --profile, the
