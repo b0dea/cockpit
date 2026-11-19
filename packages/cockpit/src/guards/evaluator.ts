@@ -2294,6 +2294,12 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (resolved.hostedDatabaseHosts.some(host => hostUsed(text, host))) return deny('Refusing executable use of a declared hosted database host.')
         if (resolved.vendorHosts.some(host => hostUsed(text, host))) return deny('Refusing executable use of a declared vendor host.')
         const tokens = text.split(/[^\w./@~+-]+/).filter(Boolean)
+        // CDPATH moves only a shell's cd (and pushd, and zsh's chdir), so only its target and the words after it can
+        // stand in the home directory; elsewhere `.codex` is a jq field or a string in code. Quotes and backslashes
+        // still spell the command, as `\cd` and `c''d` do, so the text is read without them.
+        const bare = text.replace(/['"\\]/g, '')
+        const cd = /(?:^|[^\w.-])(?:cd|pushd|chdir)(?![\w.-])/.exec(bare)
+        const afterCd = cd ? bare.slice(cd.index + cd[0].length).split(/[^\w./@~+-]+/).filter(Boolean) : []
         for (const token of tokens) {
             // In shell text the guard does not read, a bare `.key` or `.pem` is a jq field or a file extension, as in
             // `jq '.[] | .key'`, far more often than a file; such text asks anyway, so only a named key file refuses it.
@@ -2304,11 +2310,12 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (token.includes('/') && !inRoots(lexical)) outside = true
             const secret = secretNameDenial(folded)
             if (secret) return secret
-            // A bare name may be reached from the home directory, as `cd .aws && cat credentials` reaches it through CDPATH.
-            if (home !== undefined && !/^[/~.]\./.test(token) && !token.startsWith('/') && namesCredential(fold(posix.join(home, token)))) return credentialDenial
             const control = controlNameDenial(folded)
             if (control) return control
         }
+        // A bare name may be reached from the home directory, as `cd .aws && cat credentials` reaches it through CDPATH.
+        if (home !== undefined && afterCd.some(token => (code || !/^\.(?:pem|p12|pfx|key)$/i.test(token)) && !/^[/~.]\./.test(token) && !token.startsWith('/')
+            && namesCredential(fold(posix.join(home, token))))) return credentialDenial
         if (fold(text).split(/[^\w./@~+-]+/).some(token => /^(?:sudo|doas|pkexec)$/.test(posix.basename(token)))) return deny('Refusing privilege escalation: it is a person\'s action. Ask them to run it in their own terminal.')
         if (/\b(?:curl|wget)\b[^|;&]*\|\s*(?:\S*\/)?(?:sh|bash|zsh|dash|source|\.|python[\d.]*|node|perl|ruby)(?![\w.-])/.test(fold(text))) return deny('Refusing to run downloaded text as code. Download the file into the cockpit, read it, then run it by path.')
         // Words keep `:` and `-`, so `HEAD:main`, `:topic` and `-uf` reach Git's push rules; an assignment's value, `cmd=git`, is a word.

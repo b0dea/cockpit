@@ -3256,6 +3256,20 @@ describe('everyday directory changes and held paths', () => {
         expect(run('cd api && ls').decision).toBe('ask')
     })
 
+    // CDPATH moves only a shell's cd, so a bare name reaches home only as a cd target or a word after one; in inline
+    // code, or in unread shell text with no cd, `.codex` is a jq field or a string.
+    it('reads a bare name as reached from home only after a cd', () => {
+        for (const command of ["python3 - <<'EOF'\nprint('.claude, .codex')\nEOF", "S=/x; echo 1 > $S/h.json; jq -c '.claude, .codex' h.json"]) {
+            expect(run(command).reason, command).not.toContain('credential store')
+        }
+        for (const command of ['cat ~/.codex/auth.json', `python3 -c "open('$HOME/.codex/auth.json')"`, `python3 -c "import os; open(os.path.expanduser('~/.codex/auth.json'))"`,
+            'cd ~ && cat .codex/auth.json', 'cd .aws && cat credentials', 'S=/x; echo 1 > $S/h.json; cd .aws && cat credentials',
+            // pushd and zsh's chdir search CDPATH too, and quotes or a backslash still spell cd.
+            'pushd .aws && cat credentials', 'chdir .aws && cat credentials', '\\cd .aws && cat credentials', "c''d .aws && cat credentials"]) {
+            expect(run(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('credential store') })
+        }
+    })
+
     it('judges cd into an existing directory by a single name as it does a name with a slash', () => {
         const made = new Set(['workorders', 'workorders/WO-1/evidence', 'Library'].map(path => `${root}/${path}`))
         const local: PathInspection = request => ({ ...withGit(request), ...made.has(posix.resolve(request.cwd, request.path)) ? { identity: '8:5' } : {} })
