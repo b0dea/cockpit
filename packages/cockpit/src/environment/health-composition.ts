@@ -246,7 +246,13 @@ function producers(input: {
             (diagnostics) => input.refuse?.(diagnostics))
         return readiness ? { adapters, context: loaded.result, readiness, lifecycle, ports,
             lifecycleSnapshot: JSON.stringify(stored.value) } : undefined
-    })() : undefined
+    })().then((session) => {
+        // A session that ended without sleep or down still holds the stack, so it reads as running.
+        if (!session) input.notice([{ severity: 'error', code: ENVIRONMENT_CODES.STACK_NOT_RUNNING, target: input.stack,
+            message: 'a session holds this stack, but its running services could not be read, so the checks that need a running stack have no evidence; run up to resume it, or down to release it if the session that holds it has ended',
+            fix: cockpitCommand('up', { config: input.config.result.source.path }) }])
+        return session
+    }) : undefined
     const stableSession = async () => {
         const session = await runtimeSession
         if (!session) return undefined
@@ -415,7 +421,9 @@ function producers(input: {
             siblings: input.config.result.config.sibling,
         }),
     }
-    return { observations, revalidate: async () => !runningStack || await stableSession() !== undefined }
+    // A running stack that could never be read, as one a session holds after it ended, gave no check its evidence;
+    // those checks already say so, and there is nothing that could have moved under the rest.
+    return { observations, revalidate: async () => !runningStack || await runtimeSession === undefined || await stableSession() !== undefined }
 }
 
 async function checkoutProjection(

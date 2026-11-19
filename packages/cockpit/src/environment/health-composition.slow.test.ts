@@ -230,6 +230,31 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         }
     })
 
+    it('still reports when a session holds a stack whose runtime cannot be read, instead of refusing the whole doctor', async () => {
+        const candidate = await fixture({ configuredRuntime: true })
+        const holder = holderId({ stackId: candidate.stack, checkoutId: checkoutId({ checkoutPath: candidate.checkout }), sessionId: 'gone-session' })
+        // A holder left by a session that ended without releasing the stack, with nothing running.
+        const address = candidate.namespace.paths.coordination(candidate.stack)
+        const held = await transactState(candidate.namespace, address, { ownerId: holder }, () => ({
+            format: 'cockpit-state/v1' as const, kind: 'coordination' as const, cockpitId: address.cockpitId,
+            subjectId: candidate.stack, revision: 0, updatedAt: new Date().toISOString(),
+            value: { holders: [{ holderId: holder, checkoutId: checkoutId({ checkoutPath: candidate.checkout }), claimedAt: new Date().toISOString() }],
+                lastReleasedHolder: null, drain: null,
+                lease: { offset: 0, ports: { APP_PORT: 61230 }, released: false, declaration: { step: 10, count: 1, bases: { APP_PORT: 61230 } } } },
+        }))
+        expect(held.kind).toBe('complete')
+
+        const doctor = await runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:${process.env.PATH}`, HOME: candidate.home },
+            timeoutMs: 5_000,
+        }, executeProbe))
+
+        expect(doctor.diagnostics.map(({ code }) => code)).not.toContain('LIFECYCLE_EVIDENCE_INVALID')
+        expect(doctor.diagnostics).toContainEqual(expect.objectContaining({ code: 'STACK_NOT_RUNNING', target: candidate.stack,
+            message: expect.stringContaining('a session holds this stack') }))
+    })
+
     it('names a runtime probe that ran out of time on a busy machine instead of telling the reader to start Docker', async () => {
         const candidate = await fixture({ configuredRuntime: true, unseeded: true })
         const docker = join(candidate.root, 'docker')
