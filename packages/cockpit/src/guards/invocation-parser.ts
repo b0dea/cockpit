@@ -654,7 +654,24 @@ function gitShellRefusal(argv: readonly string[]): string | undefined {
 interface Seen { background: boolean; loop: boolean; fetchedValue?: true }
 // A word that sets a variable before the command it precedes, as `NAME=value cmd`.
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
-interface Context { readonly options: GuardParseOptions; readonly definitions: Set<string>; readonly depth: number; readonly seen: Seen }
+/** One shell's text and the literal values its commands assign on their own, unconditionally, where its list runs. */
+interface Literals { readonly text: string; readonly depth: number; readonly values: Map<string, string> }
+interface Context { readonly options: GuardParseOptions; readonly definitions: Set<string>; readonly depth: number; readonly seen: Seen; readonly literals?: Literals }
+
+/**
+ * The path a redirect to a plain `$NAME` writes: the one literal a shell's own `NAME=value` holds, when its text names
+ * NAME nowhere else but in plain references after it. Any other mention can set it again: `read`, `for`, `+=`, `${NAME:=…}`.
+ */
+function heldTarget(target: Token, literals: Literals | undefined): string | undefined {
+    const name = /^\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)\})$/.exec(target.value)?.slice(1).find(Boolean)
+    const value = name === undefined ? undefined : literals?.values.get(name)
+    if (!value || !target.quoted && /[\s*?[\]{}~]/.test(value)) return undefined
+    const text = literals!.text
+    const mentions = [...text.matchAll(new RegExp(`(?<![\\w])${name}(?![\\w])`, 'g'))].map(match => match.index)
+    const assigned = mentions.filter(at => text[at + name!.length] === '=' && text[at - 1] !== '$')
+    return assigned.length === 1 && mentions.every(at => at === assigned[0] || at > assigned[0]! && (text[at - 1] === '$'
+        || text.slice(at - 2, at) === '${' && text[at + name!.length] === '}')) ? value : undefined
+}
 
 function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvocation[] {
     const { definitions, options } = context
@@ -673,12 +690,16 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
             if (tokens[i + 1]?.kind !== 'op' || !redirects.has(tokens[i + 1].value)) refuse('Descriptor lacks a redirect.')
         } else if (token.kind === 'op' && redirects.has(token.value)) {
             const target = tokens[++i]
-            if (!target || target.kind !== 'word' || target.dynamic || target.status || target.braced) refuse('Missing or dynamic redirect target. Write the path out: the guard does not follow a variable into a redirect.')
-            words.push({ role: 'redirect-target', value: target.value })
+            const held = target?.kind === 'word' && target.dynamic && !target.status && !target.braced ? heldTarget(target, context.literals) : undefined
+            if (!target || target.kind !== 'word' || target.dynamic && held === undefined || target.status || target.braced) {
+                refuse('Missing or dynamic redirect target. Write the path out, or assign it once as `NAME=path` on its own before the redirect: the guard does not follow any other variable into a redirect.')
+            }
+            const value = held ?? target.value
+            words.push({ role: 'redirect-target', value })
             if (!token.value.startsWith('<<') && !['>&', '<&'].includes(token.value)
-                && !(token.value === '<' ? target.value === '/dev/null' : DEVICE_SINKS.has(target.value))) {
-                redirectPaths.push({ target: path(target.value), write: token.value !== '<', truncate: token.value === '>' || token.value === '>|' })
-            } else if (['>&', '<&'].includes(token.value) && !/^(?:\d+|-)$/.test(target.value)) refuse('Unsupported descriptor redirect.')
+                && !(token.value === '<' ? value === '/dev/null' : DEVICE_SINKS.has(value))) {
+                redirectPaths.push({ target: path(value), write: token.value !== '<', truncate: token.value === '>' || token.value === '>|' })
+            } else if (['>&', '<&'].includes(token.value) && !/^(?:\d+|-)$/.test(value)) refuse('Unsupported descriptor redirect.')
         } else if (token.kind !== 'word') refuse('Unsupported shell operator.')
         else args.push(token)
     }
@@ -983,7 +1004,7 @@ function parseShell(command: string, cwd: string, context: Context): ParsedInvoc
         const names = (pattern: RegExp) => hidden || pattern.test(command) || tokens.some((token) => token.kind === 'word' && pattern.test(token.value))
         options = { ...options, ...names(NAMES_HOME) ? { home: undefined } : {}, ...names(CHANGES_CD) ? { cdpath: undefined } : {} }
     }
-    return parseTokens(lex(command, options).tokens, cwd, { ...context, options }, true)
+    return parseTokens(lex(command, options).tokens, cwd, { ...context, options, literals: { text: command, depth: context.depth, values: new Map() } }, true)
 }
 
 function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cdAllowed: boolean): ParsedInvocation[] {
@@ -1084,6 +1105,13 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
             }
             states = [...new Map(next.map((state) => [`${state.ok}\0${state.directory}`, state])).values()]
         }
+        // A shell's own `NAME=literal`, run whatever came before it and neither piped nor in the background, holds that value after it.
+        const assignment = current.length === 1 && !compound ? current[0]! : undefined
+        if (assignment?.kind === 'word' && ASSIGNMENT.test(assignment.value) && !assignment.dynamic && !assignment.status && !assignment.braced
+            && gate === undefined && separator !== '|' && separator !== '&' && context.literals?.depth === context.depth) {
+            const at = assignment.value.indexOf('=')
+            context.literals.values.set(assignment.value.slice(0, at), assignment.value.slice(at + 1))
+        }
         // A group that feeds a pipeline is that pipeline's stage, with any redirect after it.
         const stageItems = [...closed?.piped ?? [], ...result.slice(first)]
         if (gate === '|' && fetched && stageItems.some(interprets)) forbid(FETCHED_CODE)
@@ -1125,6 +1153,12 @@ function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cd
         }
         // `!` inverts a pipeline's status and runs it as it is.
         if (!current.length && !compound && token.kind === 'word' && !token.quoted && token.value === '!') { negated = true; continue }
+        // `time [-p]` where a pipeline starts is a reserved word that times what follows and runs it as it is; before a
+        // command it is read as a wrapper, and before a subshell or group it is dropped so the body is read as written.
+        if (!current.length && !compound && gate !== '|' && token.kind === 'word' && !token.quoted && token.value === 'time') {
+            const after = tokens[i + 1]?.kind === 'word' && tokens[i + 1]!.value === '-p' && !tokens[i + 1]!.quoted ? i + 2 : i + 1
+            if (tokens[after]?.kind === 'op' && ['(', '{'].includes(tokens[after]!.value)) { i = after - 1; continue }
+        }
         if (!current.length && !compound && token.kind === 'word' && !token.quoted && token.value === 'if') {
             ({ compound, end: i } = readIf(tokens, i))
             needsCommand = false

@@ -1271,6 +1271,18 @@ function removedOperands(invocation: ParsedInvocation, git: GitInvocation | unde
  */
 interface BranchFacts { readonly head: string | null; readonly push: string | null; readonly pushDefault: string | null; readonly pushRefspecs: boolean; readonly pullRebase: boolean }
 
+// The operands after `push` that text the guard does not run is read for: a remote and a few refspecs. Options do
+// not count, so a run of flags cannot push a protected branch out of reach.
+const TEXT_PUSH_OPERANDS = 6
+/** The words after a `push` that text spells, up to its last operand the guard reads. */
+function textPushWords(after: readonly string[]): readonly string[] {
+    let operands = 0
+    let at = 0
+    for (; at < after.length && operands < TEXT_PUSH_OPERANDS; at++) {
+        if (!after[at]!.startsWith('-') && !['-o', '--push-option', '--repo'].includes(after[at - 1] ?? '')) operands++
+    }
+    return after.slice(0, at)
+}
 const PUSH_FORCE = /^(?:-f|--force|--force-with-lease(?:=.*)?|--force-if-includes)$/
 const PUSH_DELETE = /^(?:-d|--delete|--prune|--mirror)$/
 // Git accepts any unambiguous prefix of a long option: `--for` and `--forc` can only be a force option.
@@ -1666,6 +1678,9 @@ function decompressedWrites(invocation: ParsedInvocation): readonly string[] {
 const GIT_CONTENT_VERBS = new Set(['grep', 'blame', 'annotate', 'show', 'diff', 'log', 'cat-file', 'archive', 'format-patch', 'whatchanged', 'range-diff',
     'diff-tree', 'diff-index', 'diff-files', 'merge-tree'])
 
+// Git verbs that list names or history matching their pathspecs and write nothing there.
+const GIT_PATHSPEC_LISTERS = new Set(['status', 'ls-files', 'ls-tree', 'shortlog', 'rev-list', 'check-ignore', 'check-attr'])
+
 function gitPrintsContent(git: GitInvocation | undefined): boolean {
     return git !== undefined && (GIT_CONTENT_VERBS.has(git.verb) || git.verb === 'stash' && git.args[0] === 'show')
 }
@@ -1751,7 +1766,9 @@ function printsCredential(invocation: ParsedInvocation, git: GitInvocation | und
 // A live payment secret or restricted key, as the payment processor issues it: a pasted one lands in shell
 // history and transcripts. Test keys of the same shape reach only test data.
 const liveKeyDenial: GuardDecision = Object.freeze({ decision: 'deny', reason: 'Refusing a live secret key written into the command: a command line lands in shell history and agent transcripts. Read the key from the environment the process runs with, for example through `varlock run -- <command>`, and never paste it.' })
-const LIVE_SECRET_KEY = /(?<![A-Za-z0-9])[sr]k_live_[A-Za-z0-9]{24,}/
+const LIVE_SECRET_KEY = /(?<![A-Za-z0-9])[sr]k_live_([A-Za-z0-9]{24,})/g
+// A body of one repeated character, such as all zeros, is a placeholder in docs and fixtures, never an issued key.
+const holdsLiveKey = (text: string) => [...text.matchAll(LIVE_SECRET_KEY)].some(match => !/^(.)\1*$/.test(match[1]!))
 
 // Names a glob is tried against: a pattern that can match one of them may reach a secret.
 // Programs whose arguments or standard-input heredoc can be code.
@@ -2203,15 +2220,15 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const push = after.indexOf('push')
         return push < 0 ? undefined : pushDecision(after.slice(push + 1), resolved.protectedBranches, undefined)
     }
-    const gitWordsDenial = (words: readonly string[]): GuardDecision | undefined => {
-        if (gitWords(words).includes('--no-verify')) return deny('Refusing --no-verify: it skips the hooks a commit or push runs.')
-        return spelledPush(words)?.decision === 'deny' ? deny('Refusing a forced push, a remote branch deletion or a push that names a protected branch.') : undefined
-    }
+    const noVerifyDenial = deny('Refusing --no-verify: it skips the hooks a commit or push runs.')
+    const spelledPushDenial = deny('Refusing a forced push, a remote branch deletion or a push that names a protected branch.')
+    const gitWordsDenial = (words: readonly string[]): GuardDecision | undefined => gitWords(words).includes('--no-verify') ? noVerifyDenial
+        : spelledPush(words)?.decision === 'deny' ? spelledPushDenial : undefined
     // Text the guard does not read as commands, an unreadable shell form or inline interpreter code, is judged by the
     // names it spells: a secret, a credential, a declared host, a guard control or agent setting, the installed cockpit,
     // a forced or protected-branch push, skipped hooks, privilege, and downloaded code piped into an interpreter.
     const textDenial = (text: string, cwd: string): GuardDecision | undefined => {
-        if (LIVE_SECRET_KEY.test(text)) return liveKeyDenial
+        if (holdsLiveKey(text)) return liveKeyDenial
         if (resolved.hostedDatabaseHosts.some(host => hostUsed(text, host))) return deny('Refusing executable use of a declared hosted database host.')
         if (resolved.vendorHosts.some(host => hostUsed(text, host))) return deny('Refusing executable use of a declared vendor host.')
         const tokens = text.split(/[^\w./@~+-]+/).filter(Boolean)
@@ -2231,7 +2248,15 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (fold(text).split(/[^\w./@~+-]+/).some(token => /^(?:sudo|doas|pkexec)$/.test(posix.basename(token)))) return deny('Refusing privilege escalation: it is a person\'s action. Ask them to run it in their own terminal.')
         if (/\b(?:curl|wget)\b[^|;&]*\|\s*(?:\S*\/)?(?:sh|bash|zsh|dash|source|\.|python[\d.]*|node|perl|ruby)(?![\w.-])/.test(fold(text))) return deny('Refusing to run downloaded text as code. Download the file into the cockpit, read it, then run it by path.')
         // Words keep `:` and `-`, so `HEAD:main`, `:topic` and `-uf` reach Git's push rules; an assignment's value, `cmd=git`, is a word.
-        return gitWordsDenial(text.split(/[\s'"`(),[\]=;&|]+/).filter(Boolean))
+        const words = (line: string) => line.split(/[\s'"`(),[\]=;&|]+/).filter(Boolean)
+        if (gitWords(words(text)).includes('--no-verify')) return noVerifyDenial
+        // A push counts in a command's shape: on one line, its force, deletion or protected branch among the few words
+        // after it. Prose that mentions a push and, later in the sentence, a branch is no push.
+        const pushes = text.replace(/\\\n/g, ' ').split('\n').some(line => {
+            const after = gitWords(words(line))
+            return after.some((word, at) => word === 'push' && pushDecision(textPushWords(after.slice(at + 1)), resolved.protectedBranches, undefined)?.decision === 'deny')
+        })
+        return pushes ? spelledPushDenial : undefined
     }
     // Shell the parser does not read is judged by the words its text spells: a refused name, host or push, or a person's
     // declared deny. Nothing else about it is known, so it otherwise asks; Codex and OpenCode refuse an ask.
@@ -2832,7 +2857,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // A host passed to printf is still an argument and remains a hard denial.
         // `curl -K -` and `wget -i -` read their URLs from a heredoc.
         const fetcher = ['curl', 'wget'].includes(posix.basename(invocation.executable ?? ''))
-        if (invocation.words.some(word => ['executable', 'argument', 'environment-assignment-value', 'wrapper-option-value'].includes(word.role) && LIVE_SECRET_KEY.test(word.value))) hold(liveKeyDenial)
+        if (invocation.words.some(word => ['executable', 'argument', 'environment-assignment-value', 'wrapper-option-value'].includes(word.role) && holdsLiveKey(word.value))) hold(liveKeyDenial)
         // Inline interpreter code can do anything a command can, so its text meets the whole deny list.
         for (const code of inlineCode(invocation)) { const refusal = textDenial(code, invocation.cwd); if (refusal) hold(refusal) }
         for (const word of invocation.words) {
@@ -3365,7 +3390,12 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const cached = git.args.flatMap((arg, at) => arg === '--cacheinfo' ? [git.args[at + 1]?.includes(',') ? git.args[at + 1]!.split(',')[2] ?? '' : git.args[at + 3] ?? '']
             : arg.startsWith('--cacheinfo=') ? [arg.split(',')[2] ?? ''] : [])
         const pathspecs = [...git.args.filter(arg => !arg.startsWith('-') && (/[*?[]/.test(arg) || arg.startsWith(':'))), ...cached]
-        for (const spec of pathspecs) if (controlPathspec(spec, git.cwd)) hold(controlDenial)
+        // A verb that prints or lists only selects with its pathspecs, an exclusion included, and writes nothing they
+        // match. `git grep -O` opens what it selects in a program the agent names, and a variable set on the command,
+        // such as GIT_EXTERNAL_DIFF, can name one too.
+        const selectsOnly = (gitPrintsContent(git) || GIT_PATHSPEC_LISTERS.has(git.verb)) && !(git.verb === 'grep' && git.args.some(arg => /^(?:-[a-zA-Z]*O|--op)/.test(arg)))
+            && !invocation.words.some(word => word.role === 'environment-assignment-value')
+        if (!selectsOnly) for (const spec of pathspecs) if (controlPathspec(spec, git.cwd)) hold(controlDenial)
         // An index entry is checked out by a later command that names only its directory, or none.
         for (const path of cached) if (plantedAgentControl(fold(posix.resolve(git.cwd, path)))) hold(guardScriptLocation(fold(posix.resolve(git.cwd, path))) ? guardScriptDenial : nestedConfigurationDenial)
         if (git.verb === 'checkout-index' && git.args.some(arg => arg === '-a' || arg === '--all' || /^-[a-zA-Z]*a/.test(arg))

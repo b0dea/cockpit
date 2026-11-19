@@ -1517,6 +1517,75 @@ describe('allow by default', () => {
         expect(run('case x in a) git push origin feat;; esac; echo main').decision).toBe('deny')
     })
 
+    it('reads a pathspec of a Git verb that only prints or lists as a selection, and keeps judging one that writes', () => {
+        for (const command of ["git grep -n -- '--interactive' -- ':!workorders/evidence' ':!.cockpit'", "git grep -n x -- ':^.cockpit'", "git log --oneline -- ':(exclude).cockpit'",
+            "git diff --stat -- '.cockpit/*'", "git ls-files -- '.cockpit/*'", "git status -- ':/.cockpit'"]) {
+            expect(run(command).decision, command).toBe('allow')
+        }
+        // `git grep -O` and GIT_EXTERNAL_DIFF run a program the agent names on what the pathspec selects, so it still reaches a control.
+        for (const command of ["git rm -r -- ':!.cockpit'", 'git rm .cockpit/guards/bash-guard.sh', "git checkout -- '.cockpit/*'", "git grep -Ovim x -- ':(glob).cockpit/**'",
+            "GIT_EXTERNAL_DIFF=rm git diff -- '.cockpit/*'"]) {
+            expect(run(command).decision, command).toBe('deny')
+        }
+    })
+
+    it('lets a live key placeholder of one repeated character through, and refuses a varied key body wherever it is spelled', () => {
+        const key = (body: string) => ['sk', 'live', body].join('_')
+        for (const command of [`grep -c "${key('0'.repeat(24))}" some/file.json`, `python3 -c "print('${key('x'.repeat(30))}')"`]) {
+            expect(run(command).decision, command).toBe('allow')
+        }
+        for (const command of [`grep -c "${key('q8Rk2LmZ7vXw4TnB9cYd3HsJ')}" some/file.json`, `python3 -c "print('${key('q8Rk2LmZ7vXw4TnB9cYd3HsJ')}')"`,
+            `case x in a) echo ${key('q8Rk2LmZ7vXw4TnB9cYd3HsJ')};; esac`, `grep -c "${key(`${'0'.repeat(23)}1`)}" some/file.json`]) {
+            expect(run(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('live secret key') })
+        }
+    })
+
+    it('reads a timed subshell or group as the commands it runs', () => {
+        for (const command of ['time (./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml >/dev/null 2>&1)', 'time -p { npm test; }']) {
+            expect(run(command).decision, command).toBe('allow')
+        }
+        for (const command of ['time (cat .env)', 'time -p { cat .env; }', 'time git push --force origin main', 'time (echo x > .cockpit/guards/bash-guard.sh)']) {
+            expect(run(command).decision, command).toBe('deny')
+        }
+    })
+
+    it('reads a push in inline code only in a command\'s shape, so prose naming a push and a branch runs', () => {
+        expect(run("python3 - <<'EOF'\ns = \"A bare `git push` is allowed on a branch whose upstream is not `main`.\"\nopen(\"notes.md\", \"w\").write(s)\nEOF").decision).toBe('allow')
+        for (const command of [`python3 -c 'import subprocess; subprocess.run(["git","push","origin","main"])'`, `python3 -c "import os; os.system('git push --force origin feature')"`,
+            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run(['git', 'push', '-f', 'origin', 'topic'])\nEOF", 'sh -c "git push origin :main"',
+            `python3 -c "import os; os.system('git push -v -v -v -v -v -v -q -q origin main')"`]) {
+            expect(run(command).decision, command).toBe('deny')
+        }
+    })
+
+    it('reads find running a read-only program on what it finds as a read of every path below its roots', () => {
+        for (const command of ["find .cockpit/local -type f -exec stat -f '%m %N' {} + | sort | wc -l", "find src -name '*.ts' -exec wc -l {} +"]) {
+            expect(run(command).decision, command).toBe('allow')
+        }
+        for (const command of ['find .cockpit/local -delete', 'find . -name .env -exec cat {} +']) expect(run(command).decision, command).toBe('deny')
+        // A program the profile does not classify, a write of find's own, or a path -execdir resolves in each found directory.
+        for (const command of ['find .cockpit/local -exec rm {} +', "find .cockpit/local -exec sh -c 'echo x > {}' \\;", 'find .cockpit/local -exec unknowntool {} +',
+            'find src -fprint .cockpit/local/x', 'find .cockpit/local -execdir cat notes.txt \\;']) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+        // What it reads is searched for secrets as a recursive grep's tree is.
+        expect(run('find src -exec cat {} +', open(), onBranch('refs/heads/topic', undefined, { sourceSecret: true })).decision)
+            .toBe(run('grep -r x src', open(), onBranch('refs/heads/topic', undefined, { sourceSecret: true })).decision)
+        expect(run('find src -exec cat {} +', open(), onBranch('refs/heads/topic', undefined, { sourceSecret: true })).decision).not.toBe('allow')
+    })
+
+    it('follows a redirect to a variable only into the one literal its shell assigns it on its own before', () => {
+        for (const command of ['out=workorders/evidence/tmp.json; python3 workorders/evidence/replay.py > "$out"', 'out=build/a.json; echo y > "${out}"']) {
+            expect(run(command).decision, command).toBe('allow')
+        }
+        expect(run('out=.cockpit/guards/bash-guard.sh; echo x > "$out"').decision).toBe('deny')
+        // Not a literal, assigned twice or only when an earlier command succeeds, set again by read, never assigned, or globbed unquoted.
+        for (const command of ['out=$(mktemp); python3 x.py > "$out"', 'out=build/a.json; out=build/b.json; echo y > "$out"', 'true && out=build/a.json; echo y > "$out"',
+            'out=build/a.json; read out; echo y > "$out"', 'echo y > "$out"', "out='*.json'; echo y > $out"]) {
+            expect(run(command), command).toEqual({ decision: 'ask', reason: expect.stringContaining('Missing or dynamic redirect target') })
+        }
+    })
+
     it('judges forced checkouts, aborts and new worktrees against the files on disk, and asks for plumbing that moves HEAD under them', () => {
         // HEAD moved onto a crafted commit (`reset --soft`), then a forced checkout, wrote agent settings over the
         // ones on disk while every comparison with HEAD found nothing.
