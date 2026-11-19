@@ -2829,7 +2829,7 @@ describe('installed code, search path and secret links', () => {
             'C=./node_modules/@b00dea/cockpit/bin/cockpit.mjs; $C check --config cockpit.toml']) {
             const judged = evaluateGuard(parseGuardInput(shellPayload(command)), configured(), inspect)
             expect(judged.decision, command).toBe('deny')
-            expect(judged.reason, command).toContain('npx --no cockpit --version')
+            expect(judged.reason, command).toContain('npx --no -- cockpit --version')
         }
     })
 

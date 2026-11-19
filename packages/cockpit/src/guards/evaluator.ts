@@ -2146,7 +2146,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const installedDirectories = resolved.executionDirectories.map(fold)
     // Code the guard does not read may write as well as read what it names, so naming installed code there is refused
     // with the plain spellings that do the same reads.
-    const unreadInstalledCodeDenial = deny('Refusing code the guard does not read, such as a command held in a variable or inline script, that names the installed cockpit, a node_modules/.bin directory or a command search path directory: the guard cannot tell whether it changes code there. Run cockpit as a plain command (npx --no cockpit <command>), get its version with npx --no cockpit --version, and read a file there with cat.')
+    const unreadInstalledCodeDenial = deny('Refusing code the guard does not read, such as a command held in a variable or inline script, that names the installed cockpit, a node_modules/.bin directory or a command search path directory: the guard cannot tell whether it changes code there. Run cockpit as a plain command (npx --no cockpit <command>), get its version with npx --no -- cockpit --version, and read a file there with cat.')
     const installedCode = (folded: string, covering: boolean) => installedDirectories.some((directory) => within(folded, directory) || covering && within(directory, folded))
     const binDirectories = resolved.allowedRoots.map((root) => fold(`${root}/node_modules/.bin`))
     const searchDirectories = resolved.searchDirectories.map(fold)
