@@ -258,9 +258,10 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
             message: expect.stringContaining('a session holds this stack') }))
     })
 
-    // A held stack whose services could not be read never had Docker probed, so with no Docker at all
-    // doctor named no runtime problem.
-    it('names a missing Docker when a session holds a stack whose services could not be read', async () => {
+    // A held stack whose services could not be read never had Docker probed, so with an unusable Docker
+    // doctor named no runtime problem. A failing docker first on PATH stands in for it on any machine;
+    // removing docker from PATH does not, since a CI runner keeps one in /usr/bin.
+    it('names an unusable Docker when a session holds a stack whose services could not be read', async () => {
         const candidate = await fixture({ configuredRuntime: true })
         const holder = holderId({ stackId: candidate.stack, checkoutId: checkoutId({ checkoutPath: candidate.checkout }), sessionId: 'no-docker-session' })
         const address = candidate.namespace.paths.coordination(candidate.stack)
@@ -273,8 +274,12 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         }))
         expect(held.kind).toBe('complete')
 
+        const broken = join(candidate.root, 'broken-docker')
+        await mkdir(broken)
+        await writeFile(join(broken, 'docker'), '#!/bin/sh\necho "Cannot connect to the Docker daemon" >&2\nexit 1\n')
+        await chmod(join(broken, 'docker'), 0o755)
         const doctor = await runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
-            configPath: candidate.configPath, env: { PATH: '/usr/bin:/bin', HOME: candidate.home }, timeoutMs: 5_000,
+            configPath: candidate.configPath, env: { PATH: `${broken}:/usr/bin:/bin`, HOME: candidate.home }, timeoutMs: 5_000,
         }, executeProbe))
 
         expect(doctor.diagnostics).toContainEqual(expect.objectContaining({ code: 'RUNTIME_UNAVAILABLE', target: candidate.stack }))
