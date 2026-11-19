@@ -210,25 +210,32 @@ function stageMatches(context: PreflightContext, expected: 'steady' | 'bootstrap
 
 // The preflight context of one stack must still describe the configuration and stage the health
 // observation was prepared for, with its windows in order.
-function boundPreflightContext(
+// It names the first thing that no longer holds, so a refusal says what moved.
+function preflightMismatch(
     context: PreflightContext | undefined,
     expected: { readonly stackId: StackId; readonly source: string; readonly revision: string; readonly stage: 'bootstrap' | 'steady' },
-): PreflightContext | undefined {
+): string | undefined {
     const authority = context?.authorities.length === 1 ? context.authorities[0] : undefined
     const stage = context?.stages.length === 1 ? context.stages[0] : undefined
-    if (!context || !authority || !stage
-        || authority.stackId !== expected.stackId || stage.stackId !== expected.stackId
-        || authority.source !== expected.source || authority.revision !== expected.revision
-        || stage.stage !== expected.stage
-        || typeof authority.evaluatedAt !== 'string' || !isCanonicalTimestamp(authority.evaluatedAt)
-        || typeof authority.validThrough !== 'string' || !isCanonicalTimestamp(authority.validThrough)
-        || typeof stage.observedAt !== 'string' || !isCanonicalTimestamp(stage.observedAt)
-        || typeof stage.validThrough !== 'string' || !isCanonicalTimestamp(stage.validThrough)
-        || Date.parse(authority.evaluatedAt) > Date.parse(authority.validThrough)
-        || Date.parse(stage.observedAt) < Date.parse(authority.evaluatedAt)
-        || Date.parse(stage.observedAt) > Date.parse(authority.validThrough)
-        || Date.parse(authority.evaluatedAt) > Date.parse(stage.validThrough)) return undefined
-    return context
+    if (!context || !authority || !stage) return 'no single configuration and lifecycle stage was read'
+    if (authority.stackId !== expected.stackId || stage.stackId !== expected.stackId) return 'it describes another stack'
+    if (authority.source !== expected.source || authority.revision !== expected.revision) return `${expected.source} changed`
+    if (stage.stage !== expected.stage) return `the lifecycle stage changed from ${expected.stage} to ${stage.stage}`
+    if (![authority.evaluatedAt, authority.validThrough, stage.observedAt, stage.validThrough].every(value => typeof value === 'string' && isCanonicalTimestamp(value))) {
+        return 'a timestamp is malformed'
+    }
+    if (Date.parse(authority.evaluatedAt) > Date.parse(authority.validThrough)) return `the configuration reading expired at ${authority.validThrough}`
+    if (Date.parse(stage.observedAt) < Date.parse(authority.evaluatedAt)) return `the lifecycle stage was read at ${stage.observedAt}, before the configuration at ${authority.evaluatedAt}`
+    if (Date.parse(stage.observedAt) > Date.parse(authority.validThrough)) return `the lifecycle stage was read at ${stage.observedAt}, after the configuration reading expired at ${authority.validThrough}`
+    if (Date.parse(authority.evaluatedAt) > Date.parse(stage.validThrough)) return `the lifecycle stage reading expired at ${stage.validThrough}`
+    return undefined
+}
+
+function boundPreflightContext(
+    context: PreflightContext | undefined,
+    expected: Parameters<typeof preflightMismatch>[1],
+): PreflightContext | undefined {
+    return preflightMismatch(context, expected) === undefined ? context : undefined
 }
 
 export function issueHealthObservationSource(
@@ -377,20 +384,24 @@ export async function evaluateApplicationHealth(
         ? result.value
         : [] as readonly EnvironmentObservation[])
     // Reject unauthenticated observations before comparison probes cross the process boundary.
-    const initial = boundPreflightContext(await input.refreshPreflight(input.preflight), input.expectedPreflight)
-    if (!initial || initial.authorities[0]?.evaluatedAt !== input.preflight.authorities[0]?.evaluatedAt) {
-        throw new RefusalError('health preflight authority could not preserve its observation window')
+    // Configuration and lifecycle stage are read again around the checks; the checks only count if both still hold.
+    const reread = async (previous: PreflightContext): Promise<PreflightContext> => {
+        const context = await input.refreshPreflight(previous)
+        const mismatch = preflightMismatch(context, input.expectedPreflight)
+            ?? (context!.authorities[0]!.evaluatedAt !== input.preflight.authorities[0]?.evaluatedAt ? 'the configuration was read afresh instead of extended' : undefined)
+        if (mismatch) {
+            throw new RefusalError(`the configuration and lifecycle stage read before the checks no longer held after them: ${mismatch}. Run the command again; if this repeats, send this message to the cockpit maintainers`)
+        }
+        return context!
     }
+    const initial = await reread(input.preflight)
     aggregateObservations(observations, initial, input.unobservable)
     const comparisons: ComparisonRemoteEvaluation[] = []
     for (const comparisonInput of input.comparisons) {
         const result = await observeComparisonRemote(comparisonInput, adapters)
         comparisons.push({ sibling: comparisonInput.sibling, result })
     }
-    const refreshed = boundPreflightContext(await input.refreshPreflight(initial), input.expectedPreflight)
-    if (!refreshed || refreshed.authorities[0]?.evaluatedAt !== input.preflight.authorities[0]?.evaluatedAt) {
-        throw new RefusalError('health preflight authority could not preserve its observation window')
-    }
+    const refreshed = await reread(initial)
     const preflight = aggregateObservations(observations, refreshed, input.unobservable)
     const frozenComparisons = comparisons
     const observedVerdict = combinedVerdict(preflight.verdict, frozenComparisons)

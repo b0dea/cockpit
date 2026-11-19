@@ -2144,6 +2144,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     // The guard authenticates only its entry point, so every module it loads is as much a control as
     // its hook registration; an edited adapter once turned every hard denial into an allow.
     const installedDirectories = resolved.executionDirectories.map(fold)
+    // Code the guard does not read may write as well as read what it names, so naming installed code there is refused
+    // with the plain spellings that do the same reads.
+    const unreadInstalledCodeDenial = deny('Refusing code the guard does not read, such as a command held in a variable or inline script, that names the installed cockpit, a node_modules/.bin directory or a command search path directory: the guard cannot tell whether it changes code there. Run cockpit as a plain command (npx --no cockpit <command>), get its version with npx --no cockpit --version, and read a file there with cat.')
     const installedCode = (folded: string, covering: boolean) => installedDirectories.some((directory) => within(folded, directory) || covering && within(directory, folded))
     const binDirectories = resolved.allowedRoots.map((root) => fold(`${root}/node_modules/.bin`))
     const searchDirectories = resolved.searchDirectories.map(fold)
@@ -2223,7 +2226,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (home !== undefined && !/^[/~.]\./.test(token) && !token.startsWith('/') && namesCredential(fold(posix.join(home, token)))) return credentialDenial
             if (controlFiles.some(path => folded === fold(path)) || controlDirectories.some(path => within(folded, fold(path))) || guardScriptLocation(folded)) return controlDenial
             if (nestedAgentConfiguration(folded, false)) return nestedConfigurationDenial
-            if (installedCode(folded, false)) return executionDenial
+            if (installedCode(folded, false)) return unreadInstalledCodeDenial
         }
         if (fold(text).split(/[^\w./@~+-]+/).some(token => /^(?:sudo|doas|pkexec)$/.test(posix.basename(token)))) return deny('Refusing privilege escalation: it is a person\'s action. Ask them to run it in their own terminal.')
         if (/\b(?:curl|wget)\b[^|;&]*\|\s*(?:\S*\/)?(?:sh|bash|zsh|dash|source|\.|python[\d.]*|node|perl|ruby)(?![\w.-])/.test(fold(text))) return deny('Refusing to run downloaded text as code. Download the file into the cockpit, read it, then run it by path.')
