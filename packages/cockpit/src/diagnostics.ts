@@ -294,7 +294,40 @@ function doctorSummary(
     } else if (release?.kind === 'unknown') lines.push(`Release: unknown (${String(release.reason)}).`)
     lines.push(`Full report: ${bindConfigPath(cockpitCommand('doctor', { args: '--json' }), fixContext)}`)
     lines.push(`Generated file detail: ${bindConfigPath(cockpitCommand('check'), fixContext)}`)
-    return `${lines.map(escapeForTerminal).join('\n')}\n`
+    return `${lines.map(escapeForTerminal).join('\n')}\n${renderDiagnosticList(diagnostics, fixContext)}`
+}
+
+// Doctor exits 0 with a report whatever it finds, so its findings are the report: they print under
+// its summary, where "listed below" points. On stderr, a reader of stdout alone (a pipe, or a tool
+// that captures the streams apart) saw the count and only the findings a readiness gap names.
+export function reportListsDiagnostics(command: string | undefined, outcome: Readonly<{ status: number; result: unknown }>): boolean {
+    const result = outcome.result as Readonly<Record<string, unknown>> | null
+    return command === 'doctor' && outcome.status === 0 && result !== null && typeof result === 'object'
+        && typeof result.verdict === 'string' && Array.isArray(result.checks)
+}
+
+function renderDiagnosticList(diagnostics: readonly Diagnostic[], fixContext?: FixContext): string {
+    if (diagnostics.length === 0) return ''
+    const projected = projectDiagnostics(diagnostics, fixContext)
+    return `${projected.diagnostics
+        .map((diagnostic) => {
+            const target = diagnostic.target ? ` [${escapeForTerminal(diagnostic.target)}]` : ''
+            const guidance = projected.guidance.filter(row => row.code === diagnostic.code && row.target === diagnostic.target)
+            const common = Object.prototype.hasOwnProperty.call(COMMON_REFUSAL_GUIDANCE, diagnostic.code)
+                ? COMMON_REFUSAL_GUIDANCE[diagnostic.code]
+                : undefined
+            if (common) {
+                const fix = diagnostic.fix ?? guidance[0]?.text ?? bindConfigPath(common.fix, fixContext)
+                return `${diagnostic.severity.toUpperCase()} ${escapeForTerminal(diagnostic.code)}${target}\n`
+                    + `What failed: ${escapeForTerminal(diagnostic.message)}\n`
+                    + `Why it matters: ${escapeForTerminal(common.why)}\n`
+                    + `Fix: ${escapeForTerminal(fix)}`
+            }
+            const fix = diagnostic.fix ? ` Fix: ${escapeForTerminal(diagnostic.fix)}` : ''
+            const renderedGuidance = guidance.map(row => ` Guidance: ${escapeForTerminal(row.text)}`).join('')
+            return `${diagnostic.severity.toUpperCase()} ${escapeForTerminal(diagnostic.code)}${target}: ${escapeForTerminal(diagnostic.message)}${fix}${renderedGuidance}`
+        })
+        .join('\n')}\n`
 }
 
 export function renderHumanDiagnostics(
@@ -361,27 +394,8 @@ export function renderHumanDiagnostics(
         return command === undefined ? '' : lifecycleSummary(command, outcome.result as Readonly<Record<string, unknown>>)
     }
     if (diagnostics.length === 0) return ''
-    const projected = projectDiagnostics(diagnostics, fixContext)
     const hint = usageHint !== undefined && diagnostics.some(({ code }) => USAGE_ERROR_CODE.test(code)) ? usageHint : ''
-    return `${projected.diagnostics
-        .map((diagnostic) => {
-            const target = diagnostic.target ? ` [${escapeForTerminal(diagnostic.target)}]` : ''
-            const guidance = projected.guidance.filter(row => row.code === diagnostic.code && row.target === diagnostic.target)
-            const common = Object.prototype.hasOwnProperty.call(COMMON_REFUSAL_GUIDANCE, diagnostic.code)
-                ? COMMON_REFUSAL_GUIDANCE[diagnostic.code]
-                : undefined
-            if (common) {
-                const fix = diagnostic.fix ?? guidance[0]?.text ?? bindConfigPath(common.fix, fixContext)
-                return `${diagnostic.severity.toUpperCase()} ${escapeForTerminal(diagnostic.code)}${target}\n`
-                    + `What failed: ${escapeForTerminal(diagnostic.message)}\n`
-                    + `Why it matters: ${escapeForTerminal(common.why)}\n`
-                    + `Fix: ${escapeForTerminal(fix)}`
-            }
-            const fix = diagnostic.fix ? ` Fix: ${escapeForTerminal(diagnostic.fix)}` : ''
-            const renderedGuidance = guidance.map(row => ` Guidance: ${escapeForTerminal(row.text)}`).join('')
-            return `${diagnostic.severity.toUpperCase()} ${escapeForTerminal(diagnostic.code)}${target}: ${escapeForTerminal(diagnostic.message)}${fix}${renderedGuidance}`
-        })
-        .join('\n')}\n${hint}`
+    return `${renderDiagnosticList(diagnostics, fixContext)}${hint}`
 }
 
 export function renderJsonResponse(outcome: {

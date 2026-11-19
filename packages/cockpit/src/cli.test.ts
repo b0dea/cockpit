@@ -611,9 +611,10 @@ describe('generated environment process contract', () => {
             'Release: 1.2.3 is published; 1.0.0 is installed.',
             `Full report: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config ${config} --json`,
             `Generated file detail: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config ${config}`,
+            'WARNING GUARD_HOSTS_UNDECLARED [guards]: synthetic warning',
             '',
         ].join('\n'))
-        expect(capture.output().stderr).toContain('WARNING GUARD_HOSTS_UNDECLARED')
+        expect(capture.output().stderr).toBe('')
     })
 
     it('reports a state lock a command took over from a dead holder, and nothing for a command that took none', async () => {
