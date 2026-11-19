@@ -65,6 +65,8 @@ export type GuardParseResult = {
      * was captured from it: the evaluator judges the text by the names it spells.
      */
     readonly unreadable?: Readonly<{ text: string; reason: string }>
+    /** The shell text of a call that changes directory by a name without `./`, judged as text after that cd. */
+    readonly cdByName?: string
 } | { readonly status: 'unavailable'; readonly reason: string }
 
 const parsedInputs = new WeakSet<object>()
@@ -651,7 +653,7 @@ function gitShellRefusal(argv: readonly string[]): string | undefined {
 }
 
 // What the whole command does beside its invocations: a job in the background, or a loop.
-interface Seen { background: boolean; loop: boolean; fetchedValue?: true }
+interface Seen { background: boolean; loop: boolean; fetchedValue?: true; cdByName?: true }
 // A word that sets a variable before the command it precedes, as `NAME=value cmd`.
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
 /**
@@ -660,18 +662,26 @@ const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
  * name holds under a spelling the guard does not match.
  */
 interface Literals { commands: number; held?: { readonly name: string; readonly value: string } }
-interface Context { readonly options: GuardParseOptions; readonly definitions: Set<string>; readonly depth: number; readonly seen: Seen; readonly literals?: Literals }
+interface Context { readonly options: GuardParseOptions; readonly definitions: Set<string>; readonly depth: number; readonly seen: Seen; readonly literals?: Literals
+    /** The call sets or names CDPATH, or a shell option that changes cd, so a cd by name may go anywhere. */
+    readonly cdSteered?: true }
 // Names the shell itself sets as commands run, whatever the list assigned them.
 const SHELL_SET = /^(?:_|REPLY|OPTARG|OPTIND|MAPFILE|BASH_\w*|PWD|OLDPWD|IFS|HOME|RANDOM|SECONDS|LINENO|reply|match|MATCH)$/
 
-/** The value a plain `$NAME` in the call's second command stands for, when its first command assigned NAME a literal. */
-function heldTarget(target: Token, tokens: readonly Token[], context: Context): string | undefined {
-    const name = /^\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)\})$/.exec(target.value)?.slice(1).find(Boolean)
+/**
+ * The value a plain `$NAME` in the call's second command stands for, when its first command assigned NAME a literal, and
+ * as an operand also `$NAME/rest` with a literal rest: the path is then judged as if it were written out. A redirect
+ * follows only the plain name.
+ */
+function heldTarget(target: Token, tokens: readonly Token[], context: Context, operand: boolean): string | undefined {
+    const [, plain, braced, rest = ''] = /^\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)\})((?:\/[\w.@+%,:=-]*)*)$/.exec(target.value) ?? []
+    if (rest && !operand) return undefined
+    const name = plain ?? braced
     const held = context.depth === 0 && context.literals?.commands === 1 ? context.literals.held : undefined
     // An assignment on the redirecting command itself may run before the redirect, and bash's `{NAME}>` sets NAME to a descriptor.
     if (name === undefined || held?.name !== name || SHELL_SET.test(name)
         || tokens.some(token => token.kind === 'word' && (ASSIGNMENT.test(token.value) || /^\{\w+\}$/.test(token.value)))) return undefined
-    return held.value && (target.quoted || !/[\s*?[\]{}~]/.test(held.value)) ? held.value : undefined
+    return held.value && (target.quoted || !/[\s*?[\]{}~]/.test(held.value)) ? held.value + rest : undefined
 }
 
 function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvocation[] {
@@ -691,7 +701,7 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
             if (tokens[i + 1]?.kind !== 'op' || !redirects.has(tokens[i + 1].value)) refuse('Descriptor lacks a redirect.')
         } else if (token.kind === 'op' && redirects.has(token.value)) {
             const target = tokens[++i]
-            const held = target?.kind === 'word' && target.dynamic && !target.status && !target.braced ? heldTarget(target, tokens, context) : undefined
+            const held = target?.kind === 'word' && target.dynamic && !target.status && !target.braced ? heldTarget(target, tokens, context, false) : undefined
             if (!target || target.kind !== 'word' || target.dynamic && held === undefined || target.status || target.braced) {
                 refuse('Missing or dynamic redirect target. Write the path out, or assign it once as `NAME=path` on its own before the redirect: the guard does not follow any other variable into a redirect.')
             }
@@ -704,7 +714,7 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
         } else if (token.kind !== 'word') refuse('Unsupported shell operator.')
         else {
             // An operand that is the call's first-command literal is that literal; the program's own name stays as spelled.
-            const held = token.dynamic && !token.status && !token.braced && args.some(item => !ASSIGNMENT.test(item.value)) ? heldTarget(token, tokens, context) : undefined
+            const held = token.dynamic && !token.status && !token.braced && args.some(item => !ASSIGNMENT.test(item.value)) ? heldTarget(token, tokens, context, true) : undefined
             args.push(held === undefined ? token : { ...token, value: held, dynamic: false })
         }
     }
@@ -877,7 +887,14 @@ function changedDirectory(tokens: readonly Token[], context: Context): string | 
     const target = operands.length === 1 && operands[0]!.kind === 'word' && !operands[0]!.dynamic && !operands[0]!.status && !operands[0]!.substitutions ? operands[0]!.value : undefined
     // Both shells search CDPATH before the working directory for any other relative spelling; an empty one leaves only the working directory.
     // `cd -` goes to OLDPWD, and `-P`, `-L` and zsh's `+N` and `-N` are options or stack entries, never a directory.
-    if (target === undefined || /^[-+]/.test(target) || context.options.cdpath !== '' && !/^(?:\/|\.\.?(?:\/|$))/.test(target)) refuse(CD_REFUSAL)
+    if (target === undefined || /^[-+]/.test(target)) refuse(CD_REFUSAL)
+    // Agents write `cd sub/dir` constantly. With CDPATH unseen but not set by the call, a path of several names that
+    // starts with no dot is judged as the directory below; the evaluator holds it to one that exists there and whose
+    // names reach no credential store from the home directory, which is where a CDPATH entry could send it instead.
+    const byName = context.options.cdpath === undefined && !context.cdSteered && target.includes('/') && !target.startsWith('.')
+    const explicit = /^(?:\/|\.\.?(?:\/|$))/.test(target)
+    if (context.options.cdpath !== '' && !explicit && !byName) refuse(CD_REFUSAL)
+    if (!explicit) context.seen.cdByName = true
     // Both shells resolve `cd` by spelling unless set to follow links (`set -P`, zsh's chase_links),
     // which the guard cannot see, as it cannot see CDPATH.
     if (climbsOutOfName(target)) refuse(`${CD_REFUSAL} A .. after a directory name is not: a shell set to follow links resolves it from wherever a link there leads.`)
@@ -1001,15 +1018,15 @@ function setsHiddenName(tokens: readonly Token[]): boolean {
 
 function parseShell(command: string, cwd: string, context: Context): ParsedInvocation[] {
     let { options } = context
-    if (options.home !== undefined || options.cdpath !== undefined) {
-        // A command that sets or names HOME or CDPATH, or a shell option that changes cd, makes the hook's values wrong for it.
-        // The shell reads a name after quote removal, so `export HO''ME=x` sets HOME too, as may a setter handed a variable.
-        const tokens = lex(command, { ...options, home: undefined }).tokens
-        const hidden = setsHiddenName(tokens)
-        const names = (pattern: RegExp) => hidden || pattern.test(command) || tokens.some((token) => token.kind === 'word' && pattern.test(token.value))
-        options = { ...options, ...names(NAMES_HOME) ? { home: undefined } : {}, ...names(CHANGES_CD) ? { cdpath: undefined } : {} }
-    }
-    return parseTokens(lex(command, options).tokens, cwd, { ...context, options, ...context.depth === 0 ? { literals: { commands: 0 } } : {} }, true)
+    // A command that sets or names HOME or CDPATH, or a shell option that changes cd, makes the hook's values wrong for it.
+    // The shell reads a name after quote removal, so `export HO''ME=x` sets HOME too, as may a setter handed a variable.
+    const tokens = lex(command, { ...options, home: undefined }).tokens
+    const hidden = setsHiddenName(tokens)
+    const names = (pattern: RegExp) => hidden || pattern.test(command) || tokens.some((token) => token.kind === 'word' && pattern.test(token.value))
+    const cdSteered = context.cdSteered || names(CHANGES_CD)
+    options = { ...options, ...names(NAMES_HOME) ? { home: undefined } : {}, ...cdSteered ? { cdpath: undefined } : {} }
+    return parseTokens(lex(command, options).tokens, cwd, { ...context, options, ...cdSteered ? { cdSteered: true as const } : {},
+        ...context.depth === 0 ? { literals: { commands: 0 } } : {} }, true)
 }
 
 function parseTokens(tokens: readonly Token[], cwd: string, context: Context, cdAllowed: boolean): ParsedInvocation[] {
@@ -1401,7 +1418,7 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
             Object.freeze(item)
         }
         const result: GuardParseResult = { status: 'parsed', tool, cwd, paths, removed, invocations,
-            ...content ? { content } : {}, ...seen.background ? { background: true as const } : {}, ...seen.loop ? { loop: true as const } : {}, ...unreadable ? { unreadable } : {} }
+            ...content ? { content } : {}, ...seen.cdByName && typeof fields.command === 'string' ? { cdByName: fields.command } : {}, ...seen.background ? { background: true as const } : {}, ...seen.loop ? { loop: true as const } : {}, ...unreadable ? { unreadable } : {} }
         parsedInputs.add(result)
         return result
     } catch (error) {

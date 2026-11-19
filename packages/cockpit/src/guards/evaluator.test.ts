@@ -1707,6 +1707,29 @@ describe('allow by default', () => {
         expect(run('find src -exec unknowntool {} +').decision).toBe('allow')
     })
 
+    it('skips the secret search for find handing its paths to a program that prints only their names, sizes, counts or types', () => {
+        const secret = onBranch('refs/heads/topic', undefined, { sourceSecret: true })
+        for (const command of ["find . -name '*.md' -exec wc -l {} +", 'find . -name .github -type d -exec ls {} +', "find . -exec stat -f '%m %N' {} +",
+            'find . -type d -exec du -sh {} +', "find . -path '*/docs/*' -name '*.md' -exec file -b {} +", 'find . -type l -exec readlink {} \\;', 'find . -execdir basename {} \\;']) {
+            expect(run(command, open(), secret).decision, command).toBe('allow')
+        }
+        // A program that prints what it reads keeps the search, and so do options that print a found file's text:
+        // `--files0-from` and `file -f` read it as a list of names and echo the ones they cannot open.
+        for (const command of ['find . -exec cat {} +', 'find . -exec head -1 {} +', 'find . -exec grep -h KEY {} +', 'find . -exec file -z {} +',
+            'find . -exec file -f {} +', 'find . -exec wc --files0-from {} +', 'find . -exec du --files0-from {} +', 'find . -exec ls {} + -exec cat {} +']) {
+            expect(run(command, open(), secret).decision, command).not.toBe('allow')
+        }
+        // GNU reads any unique prefix of `--files0-from` as the option itself.
+        for (const command of ['find . -exec du --files0-fr {} \\;', 'find . -exec du --files0 {} \\;', 'find . -type f -exec du --files0-f {} \\;',
+            'find . -exec ls {} \\; -o -exec du --fi {} \\;']) {
+            expect(run(command, open(), secret).decision, command).not.toBe('allow')
+        }
+        // find's own test naming a secret keeps the search, whatever the program prints.
+        for (const command of ["find . -name '.env*' -exec wc -c {} +", "find . -iname '*.KEY' -exec ls {} +", "find . -path '*/.secrets/*' -exec stat {} +"]) {
+            expect(run(command, open(), secret).decision, command).toBe('deny')
+        }
+    })
+
     it('judges forced checkouts, aborts and new worktrees against the files on disk, and asks for plumbing that moves HEAD under them', () => {
         // HEAD moved onto a crafted commit (`reset --soft`), then a forced checkout, wrote agent settings over the
         // ones on disk while every comparison with HEAD found nothing.
@@ -3205,6 +3228,124 @@ describe('installed code, search path and secret links', () => {
         for (const change of [{ executionDirectories: ['/outside/node_modules/x'] }, { executionDirectories: ['relative/dir'] }, { searchDirectories: [`${root}/bin/`] },
             { secretFileIdentities: ['inode'] }, { secretFileIdentities: undefined }, { protectedFilesLinked: 'yes' }]) {
             expect(evaluateGuard(parseGuardInput(shellPayload('ls')), { ...configured(), ...change }, inspect).decision, JSON.stringify(change)).toBe('unavailable')
+        }
+    })
+})
+
+describe('everyday directory changes and held paths', () => {
+    const home = '/workspace/home'
+    const session = '/workspace/tmp/claude-1000/-workspace-project/session-one'
+    const cockpit = './node_modules/@b00dea/cockpit/bin/cockpit.mjs'
+    // The directories this synthetic cockpit holds; every other path below the root names nothing yet.
+    const present = new Set(['workorders/x', 'workorders/WO-1-adoption/evidence', 'Library/Keychains', 'vendor/Library'].map(path => `${root}/${path}`))
+    const facts: PathInspection = request => ({ ...withGit(request), ...present.has(posix.resolve(request.cwd, request.path)) ? { identity: '8:3' } : {} })
+    const configured = () => ({ ...policy(), homeDirectory: home, agentReadAreas: [session],
+        cockpitInvocations: [candidate(cockpit, ['down', '--config', 'cockpit.toml'])] })
+    const run = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command), { home }), configured(), facts)
+
+    it('judges cd into an existing directory by a name with a slash as that directory, unless the name can reach a credential store', () => {
+        expect(run('cd workorders/x && jq . f.json')).toMatchObject({ decision: 'allow' })
+        // A name with nothing below the root can only be a CDPATH entry's.
+        expect(run('cd workorders/missing && jq . f.json')).toMatchObject({ decision: 'ask', reason: expect.stringContaining('CDPATH') })
+        // From the home directory these names reach the keychain, whatever a directory of the same name in the cockpit holds.
+        expect(run('cd Library/Keychains && cat login.keychain-db')).toMatchObject({ decision: 'deny', reason: expect.stringContaining('credential store') })
+        expect(run('cd vendor/Library && ls')).toMatchObject({ decision: 'deny' })
+        expect(run('cd .aws && cat credentials')).toMatchObject({ decision: 'deny' })
+        // A call that sets CDPATH chooses where the name leads.
+        expect(run('CDPATH=/workspace/home; cd workorders/x && jq . f.json').decision).toBe('ask')
+        expect(run('cd api && ls').decision).toBe('ask')
+    })
+
+    it('holds what follows a cd by name to the directory it was named from, which a CDPATH entry such as home may replace', () => {
+        // The cockpit holds these directories, and the home directory holds none of them, so only a profile's CDPATH could move the cd.
+        const made = new Set(['workorders/x', 'Library/Caches', 'Documents/x', 'src/lib', 'packages/cockpit', 'workspace/home'].map(path => `${root}/${path}`))
+        const local: PathInspection = request => ({ ...withGit(request), ...made.has(posix.resolve(request.cwd, request.path)) ? { identity: '8:4' } : {} })
+        const judge = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command), { home }), configured(), local)
+        for (const command of ['cd workorders/x && jq . f.json', 'cd workorders/x && cat ../y/f.json', 'cd src/lib && npm test', 'cd packages/cockpit && npx vitest run x']) {
+            expect(judge(command), command).toMatchObject({ decision: 'allow' })
+        }
+        for (const command of ['cd Library/Caches && cat ../../.aws/credentials', 'cd Library/Caches && cat ../Keychains/login.keychain-db',
+            'cd Documents/x && cat ../../.netrc', 'cd workorders/x && cd ../.. && cat .netrc', `cd Documents/x && python3 -c "open('../../.netrc').read()"`,
+            'cd workspace/home && cat .netrc']) {
+            expect(judge(command).decision, command).not.toBe('allow')
+        }
+        // Files that run programs, from home: a launch agent and a shell startup file, spelled in pieces so no
+        // local tool mistakes this test for a write to the real ones.
+        const agents = ['Library', 'Launch' + 'Agents'].join('/')
+        const startup = '.zsh' + 'rc'
+        made.add(`${root}/${agents}`)
+        for (const command of [`cd Library/Caches && echo x >> ../../${startup}`, `cd Library/Caches && cp ${root}/build/p ../${'Launch' + 'Agents'}/evil.plist`,
+            `cd ${agents} && echo x > evil.plist`]) {
+            expect(judge(command).decision, command).not.toBe('allow')
+        }
+    })
+
+    it('reads the whole text after a cd by name for a way back out of it: an expansion, a held value or a long enough run of ..', () => {
+        const made = new Set(['workorders/x', 'workorders/x/evidence', 'Library/Caches', 'src/lib', 'packages/cockpit', 'Documents/x', 'a/b/Documents/x']
+            .map(path => `${root}/${path}`))
+        const local: PathInspection = request => ({ ...withGit(request), ...made.has(posix.resolve(request.cwd, request.path)) ? { identity: '8:4' } : {} })
+        const judge = (command: string, cwd = root) => evaluateGuard(parseGuardInput(shellPayload(command, cwd), { home }), configured(), local)
+        for (const command of ['cd workorders/x && cat ../y/f.json', 'cd src/lib && npm test', 'cd src/lib && cd ../util && npm test',
+            'cd workorders/x/evidence && cat ../../y/notes.md', 'cd workorders/x && jq . f.json']) {
+            expect(judge(command), command).toMatchObject({ decision: 'allow' })
+        }
+        const startup = '.zsh' + 'rc'
+        for (const command of ['S=../..; cd Library/Caches && cat "$S/.aws/credentials"', 'S=../../.aws/credentials; cd Library/Caches && cat "$S"',
+            'cd Library/Caches && S=../..; cat "$S/.aws/credentials"', `cd Library/Caches && sort -o../../${startup} build/a`,
+            'cd Library/Caches && curl -o../../x http://example.invalid', `cd Library/Caches && tar -C../.. -cf ${root}/build/h.tar .aws`,
+            'cd Library/Caches && for f in ../../.netrc; do cat "$f"; done', 'cd Library/Caches && xargs cat <<< ../../.netrc',
+            'cd Documents/x && cd .. && cat ../.netrc', 'cd Documents/x && cd .. && cat ../notes.txt']) {
+            expect(judge(command).decision, command).not.toBe('allow')
+        }
+        // An expansion can build the climb out of short runs, and a value held in the environment reaches a program that
+        // reads it, from a session started deeper in the cockpit, where that value names a directory inside it.
+        expect(judge('cd Documents/x && cat "$(printf %s/%s .. ..)/.netrc"')).toMatchObject({ decision: 'ask', reason: expect.stringContaining('an expansion') })
+        expect(judge(`export S=../..; cd Documents/x && node -e "require('fs').readFileSync(process.env.S + '/.netrc')"`, `${root}/a/b`))
+            .toMatchObject({ decision: 'ask', reason: expect.stringContaining('a value the call holds') })
+        // Two names down and two back up reaches where the cd started, wherever a CDPATH entry put it; `cd ./` names the cockpit's own.
+        expect(judge('cd packages/cockpit && cat ../../package.json').decision).toBe('ask')
+        expect(judge('cd ./packages/cockpit && cat ../../package.json').decision).toBe('allow')
+    })
+
+    it('reads a climb after a cd by name however it is quoted or globbed, and asks for path names read from a file', () => {
+        const made = new Set(['workorders/x', 'Library/Caches', 'src/lib'].map(path => `${root}/${path}`))
+        const local: PathInspection = request => ({ ...withGit(request), ...made.has(posix.resolve(request.cwd, request.path)) ? { identity: '8:4' } : {} })
+        const judge = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command), { home }), configured(), local)
+        for (const command of ['cd workorders/x && jq . f.json', 'cd src/lib && npm test', 'cd workorders/x && cat ../y/f.json',
+            "cd src/lib && npm test -- --grep 'a..b'", 'cd src/lib && git log main..HEAD', "cd workorders/x && jq '.[0]' f.json"]) {
+            expect(judge(command), command).toMatchObject({ decision: 'allow' })
+        }
+        for (const command of ['cd Library/Caches && cat .\\./.\\./.netrc', "cd Library/Caches && cat '.''.'/'.''.'/.netrc", 'cd Library/Caches && cat ".""."/".""."/.netrc',
+            'cd Library/Caches && cat .[.]/.[.]/.netrc', 'cd Library/Caches && cat .?/.?/.netrc',
+            'cd Library/Caches && xargs cat < build/paths.txt', 'cd Library/Caches && wc --files0-from=build/paths.txt', 'cd Library/Caches && wc --files0=build/paths.txt',
+            `cd Library/Caches && rsync -a --files-from=build/paths.txt . ${root}/build/copy`, `cd Library/Caches && zip ${root}/build/a.zip -@ < build/paths.txt`,
+            `cd Library/Caches && tar -cf ${root}/build/a.tar -T build/paths.txt`, `cd Library/Caches && cpio -o < build/paths.txt > ${root}/build/a.cpio`]) {
+            expect(judge(command).decision, command).not.toBe('allow')
+        }
+    })
+
+    it('reads a jq program after cd as the program it is, not as key file names', () => {
+        const filter = "'{cockpitVersion, claude:{exit:.claude.exit, notRefused:[.claude.results|to_entries[]|select(.value.is_error|not)|.key]}, codex:{blocked:(.codex.blocked|length)}, leftovers}'"
+        expect(run(`cat ${session}/tasks/b1.output; tail -5 ${session}/scratchpad/probe.err; cd workorders/WO-1-adoption/evidence && jq ${filter} guard-parity.json`))
+            .toMatchObject({ decision: 'allow' })
+        expect(run("cd workorders/x && jq '.key' f.json")).toMatchObject({ decision: 'allow' })
+        // Shell the guard does not read asks about what it cannot read, rather than refusing a jq field as a key file.
+        expect(run("cd api && jq '{a:.key}' f.json")).toMatchObject({ decision: 'ask', reason: expect.stringContaining('CDPATH') })
+        for (const command of ['cd ~ && cat .codex/auth.json', 'cd && cat .aws/credentials', 'cat ~/.codex/auth.json', 'cd api && cat server.key', 'cat .key']) {
+            expect(run(command).decision, command).toBe('deny')
+        }
+    })
+
+    it('judges a path the first command holds, with a literal rest after it, as written out, beside a cockpit command', () => {
+        for (const command of [`S=build/out; cp build/a "$S/x"; ${cockpit} down --config cockpit.toml`, 'S=build/out; cp build/a "${S}/x/y.txt"']) {
+            expect(run(command), command).toMatchObject({ decision: 'allow' })
+        }
+        for (const command of [`S=.cockpit; cp build/a "$S/guards/bash-guard.sh"; ${cockpit} down --config cockpit.toml`, 'S=build; cp build/a "$S/../.claude/settings.json"']) {
+            expect(run(command), command).toMatchObject({ decision: 'deny' })
+        }
+        // Only a literal rest is followed: another expansion, a glob or a later command leaves the path unseen.
+        for (const command of ['S=build; cp build/a "$S/$T"', 'S=build; cp build/a $S/*.txt', 'S=build; true; cp build/a "$S/x"']) {
+            expect(run(command).decision, command).toBe('ask')
         }
     })
 })

@@ -22,8 +22,8 @@ and the option values of a Git read are text, not names, so `git commit -m "Load
 `rg '\.env' docs` run. The guard reads `if`/`elif`/`else`, `for`, `while` and `until`, subshells and
 brace groups, `time` before either, judging every command inside as it would on its own. It also reads here-strings,
 `source FILE`, `${NAME:-word}` (its default word is name-checked wherever a word is) and arithmetic
-over numbers and operators. A plain `"$NAME"`, as a redirect or an operand, in a call's second command is read as the literal its
-first command, a plain `NAME=path`, assigns; any other variable in a redirect asks. Shell it does not read, such as `case`, `[[ … ]]`, `eval`, `watch`,
+over numbers and operators. A plain `"$NAME"` as a redirect or an operand, or `"$NAME/file"` with a literal rest as an operand, in a
+call's second command is read as the path its first command, a plain `NAME=path`, assigns; any other variable in a redirect asks. Shell it does not read, such as `case`, `[[ … ]]`, `eval`, `watch`,
 `xargs -I`, arithmetic over a name, a `cd` after `!` or an expanding heredoc, asks: what runs inside it
 is not known, and bash runs code from places such as a case pattern, a `[[` operand or a name's value in
 arithmetic. Its words are checked first, and it is refused when they name a secret, a credential store,
@@ -536,7 +536,10 @@ or a URL; `gh api` is left out, because its `GET` returns any file the repositor
   read-only only when the command they run is itself in this profile with `{}` in place of the found
   path; what it reads then counts as reading everything below find's roots, through links, and under
   `-execdir` it names no other path. Whatever program find hands `{}`, its roots are searched for
-  secrets through links. `git grep --no-index`, and `--untracked` with `--no-exclude-standard`, are
+  secrets through links, unless every program it runs prints only names, sizes, counts, types or link
+  targets (`ls`, `stat`, `du`, `basename`, `dirname`, `realpath`, `readlink`, `wc` with `-l`, `-w`,
+  `-c`, `-m` or `-L`, and `file` without `-z`, `-Z`, `-f` or `-m`; `--files0-from`, or any prefix of it, reads a found file
+  as names) and find's own `-name` or `-path` names no secret, as `-name '.env*'` does. `git grep --no-index`, and `--untracked` with `--no-exclude-standard`, are
   judged as a recursive search of the paths they name, or of the working directory, since they read
   ignored files.
 - Options whose value is optional, such as `grep --context` on macOS, are accepted only as
@@ -569,7 +572,18 @@ or a URL; `gh api` is left out, because its `GET` returns any file the repositor
   `env -C`.
 - A command may follow `cd ./dir`, `cd ../dir` or `cd /abs/dir` joined by `&&` or `;`, with the
   directory judged as its working directory. A bare `cd name` is refused, because `CDPATH` can send
-  it elsewhere: write `cd ./name`, or `git -C name`. A `..` after a directory name, as in
+  it elsewhere: write `cd ./name`, or `git -C name`. `cd sub/dir`, a path of several names that starts
+  with no dot, is judged as the directory below when it exists there, the call sets no `CDPATH`, and
+  no run of its names reaches a credential store from the home directory, where a `CDPATH` entry could
+  send it; otherwise it asks, or is refused when it names a credential store, a file that runs programs, such as
+  a launch agent, or the home directory itself. After such a `cd` the rest of the call's text is read whole,
+  here-strings, heredocs, loop lists and inline code included, with and without its quotes and backslashes: a `$`
+  expansion asks, so `cd workorders/x && echo "$HOME"` asks where `cd ./workorders/x && echo "$HOME"` runs; a value
+  assigned anywhere in the call that holds `..` asks; a pattern that can expand to `..`, such as `.[.]` or `.?`,
+  asks; a command that reads its path names from standard input or a file (`xargs`, `cpio`, `zip -@`, any prefix of
+  `--files-from` or `--files0-from`) asks; and a run of `..` that climbs back to the directory the `cd` was named
+  from asks, so `cd packages/cockpit && cat ../../package.json` asks where `cd ./packages/cockpit && cat ../../package.json`
+  runs. A shorter climb is refused when its names reach those locations from home. A `..` after a directory name, as in
   `cd ./a/../b` or `env -C a/..`, is refused too, as are `pushd`, `popd` and zsh's `chdir`. A `cd`
   may fail, and one after `||` may not run, so each later command is judged from every directory it
   may run in: in `pwd || cd ./dir && cat x` the `cat` is judged from both. A newline after `&&`,

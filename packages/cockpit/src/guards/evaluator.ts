@@ -5,7 +5,7 @@ import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from './host.js'
 import { GuardCommandArgv, McpAllowedTools } from '../schema.js'
 import { renderGuardProjectCommand } from '../environment/install-policy.js'
 import { GUARD_LOCAL_PATHS } from './local-identity.js'
-import { classifyReadOnlyInvocation, cockpitLauncherPrefix, ghWords, gitContentOperands, gitGrepReadsIgnored, type ReadOnlyAccess } from './read-only.js'
+import { classifyReadOnlyInvocation, cockpitLauncherPrefix, findPrintsOnlyMetadata, ghWords, gitContentOperands, gitGrepReadsIgnored, type ReadOnlyAccess } from './read-only.js'
 import { SURFACE_EXECUTION_CONTROL_PATHS } from '../surfaces/harness-registry.js'
 import { AGENT_HOME_TOOLS, classifyAgentHomeEntry, type AgentHomeTool } from './agent-homes.js'
 
@@ -1956,10 +1956,16 @@ function sourceTrees(invocation: ParsedInvocation): { readonly paths: readonly s
         operands.push(arg)
     }
     if (name === 'tar') return { paths: tarWrites(invocation.argv).sources, followsLinks: false }
-    // A program find runs on what it finds may read it, through links, whether or not the guard knows the program.
+    // A program find runs on what it finds may read it, through links, whether or not the guard knows the program,
+    // unless it prints only facts about the found paths and find's own tests name no secret, as `-name '.env*'` does;
+    // a bare `*` names nothing, and a regular expression is not read.
     if (name === 'find') {
         const roots = invocation.argv.slice(0, Math.max(0, invocation.argv.findIndex(arg => arg.startsWith('-') || arg === '!' || arg === '(')))
+        const selectsSecret = invocation.argv.some((arg, at) => /^-i?regex$/.test(arg) || /^-i?(?:name|path|wholename)$/.test(arg)
+            && (invocation.argv[at + 1] ?? '').split('/').some(component => !/^[*?]*$/.test(component) && SECRET_SAMPLES.some(sample => (arg.startsWith('-i')
+                ? globPattern(component.toLowerCase()).test(sample.toLowerCase()) : globPattern(component).test(sample)))))
         const execs = invocation.argv.some((arg, at) => /^-(?:exec|execdir|ok|okdir)$/.test(arg) && invocation.argv.slice(at + 1).some(word => word.includes('{}')))
+            && (selectsSecret || !findPrintsOnlyMetadata(invocation.argv))
         return execs ? { paths: roots.length ? roots : ['.'], followsLinks: true } : undefined
     }
     // zip names its archive first; the others name their destination last. A zip flag cluster counts as
@@ -2050,6 +2056,52 @@ function admittingAllowEntries(input: Readonly<{ invocations: readonly ParsedInv
     }
     return chosen.map(rule => `[[guards.allow]] argv = [${rule.argv.map(word => JSON.stringify(word)).join(', ')}]${rule.cwd === undefined ? ''
         : ` cwd = ${JSON.stringify(posix.relative(resolved.canonicalRoot, rule.cwd) || '.')}`} reason = "<why it is safe>"`)
+}
+
+/** The directory a `cd` names without `./`, `../` or `/`, which a shell with CDPATH set may resolve elsewhere. */
+function bareDirectory(invocation: ParsedInvocation): string | undefined {
+    const word = invocation.executable === null && invocation.words.length === 1 && invocation.words[0]!.role === 'directory' ? invocation.words[0]!.value : undefined
+    return word !== undefined && !/^(?:\/|\.\.?(?:\/|$))/.test(word) ? word : undefined
+}
+
+/** The shell text after the first `cd` spelling `target`, or the whole text when no spelling the guard reads matches. */
+function textAfterCd(text: string, target: string): string {
+    for (const phrase of text.matchAll(/(?:^|[\s;&|(`'"])cd\s+(?:--\s+)?/g)) {
+        const start = phrase.index + phrase[0].length
+        const word = /^(?:[^\s;&|()'"\\]|\\.|'[^']*'|"(?:[^"\\]|\\.)*")+/.exec(text.slice(start))?.[0]
+        if (word !== undefined && word.replace(/\\(.)|'([^']*)'|"((?:[^"\\]|\\.)*)"/g, (_, escaped, single, double) => escaped ?? single ?? double.replace(/\\(.)/g, '$1')) === target) {
+            return text.slice(start + word.length)
+        }
+    }
+    return text
+}
+
+/** Whether a glob segment can match `..`: `?` and `*` match a dot, and a bracket class only when its set holds one. */
+function expandsToDots(segment: string): boolean {
+    const dot = (body: string) => {
+        const negated = /^[!^]/.test(body)
+        const set = negated ? body.slice(1) : body
+        const holds = set.includes('.') || /\[:(?:punct|print|graph):\]/.test(set) || [...set.matchAll(/(.)-(.)/g)].some(([, from, to]) => from! <= '.' && '.' <= to!)
+        return negated !== holds
+    }
+    const pattern = segment.split(/(\*+|\?|\[[!^]?\]?(?:\[:[a-z]+:\]|[^\]])*\])/).map((part, at) => at % 2 === 0 ? part.replace(/[.+^${}()|\\[\]]/g, '\\$&')
+        : part.startsWith('*') ? '.*' : part === '?' ? '.' : dot(part.slice(1, -1)) ? '.' : '(?!)').join('')
+    return new RegExp(`^${pattern}$`).test('..')
+}
+
+/** Shell text without its single-quoted spans, where `$` and backquotes expand nothing. */
+function outsideSingleQuotes(text: string): string {
+    let out = ''
+    let quote: string | undefined
+    for (let at = 0; at < text.length; at++) {
+        const character = text[at]!
+        if (quote === "'") { if (character === "'") quote = undefined; continue }
+        if (character === '\\') { out += text.slice(at, at + 2); at++; continue }
+        if (character === "'" && quote !== '"') { quote = "'"; continue }
+        if (character === '"') quote = quote === '"' ? undefined : '"'
+        out += character
+    }
+    return out
 }
 
 function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): GuardDecision {
@@ -2243,6 +2295,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (resolved.vendorHosts.some(host => hostUsed(text, host))) return deny('Refusing executable use of a declared vendor host.')
         const tokens = text.split(/[^\w./@~+-]+/).filter(Boolean)
         for (const token of tokens) {
+            // In shell text the guard does not read, a bare `.key` or `.pem` is a jq field or a file extension, as in
+            // `jq '.[] | .key'`, far more often than a file; such text asks anyway, so only a named key file refuses it.
+            if (!code && /^\.(?:pem|p12|pfx|key)$/i.test(token)) continue
             const lexical = posix.resolve(cwd, token.startsWith('~/') && home !== undefined ? home + token.slice(1) : token)
             const folded = fold(lexical)
             // A path the text reaches outside the roots is the agent tool's to permit, so the call gets no allow answer.
@@ -2828,7 +2883,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const unseenWrite = (invocation: ParsedInvocation, path: string, spelled = true) => {
         if (!spelled && !invocation.argv.some(word => word === path || word.endsWith(`=${path}`) || word.startsWith('-') && word.endsWith(path))) return
         if (/[*?[]/.test(path)) holdBoundary(invocation, ask(`${named(invocation)} writes to ${shownGuardWord(path)}, a path holding a glob, which the shell can expand to any file, a guard control included. Write the path out.`))
-        else if (/\$\(|`/.test(path) || references(path).some(name => setInCall.has(name))) holdBoundary(invocation, ask(`${named(invocation)} writes to ${shownGuardWord(path)}, a path holding an expansion the call sets and the guard cannot see. Write the path out, or assign it as the call's first command, \`NAME=path; <command> "$NAME"\`.`))
+        else if (/\$\(|`/.test(path) || references(path).some(name => setInCall.has(name))) holdBoundary(invocation, ask(`${named(invocation)} writes to ${shownGuardWord(path)}, a path holding an expansion the call sets and the guard cannot see. Write the path out, or assign it as the call's first command, \`NAME=path; <command> "$NAME"\` or \`"$NAME/file"\`.`))
     }
     // Whether a command makes a link, or moves or copies an existing one, which a later write could follow.
     const makesLink = (invocation: ParsedInvocation) => {
@@ -2868,6 +2923,58 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (inspectRemoval(path, input.cwd)) hold(unavailable('Removal path escapes configured roots.'))
     }
     for (const path of input.paths) inspectPath({ path, cwd: input.cwd, operation: 'write' })
+    // What a path below where a `cd` by a name without ./ was named from reaches from home: a credential store, a file
+    // that runs programs, or the home directory itself, through every trailing run of its names.
+    const homeHazard = (run: string): string | undefined => {
+        if (resolved.homeDirectory === undefined || run === '') return undefined
+        // From a CDPATH entry above home, such as `/`, the whole run may spell the way down to home.
+        if (fold(resolved.homeDirectory).endsWith(`/${fold(run)}`)) return 'the home directory itself'
+        const names = run.split('/')
+        for (let at = 0; at < names.length; at++) {
+            const tail = fold(names.slice(at).join('/'))
+            if (namesCredential(fold(posix.join(resolved.homeDirectory, tail)))) return 'a credential store'
+            const configuration = HOME_RUN_CONFIGURATION.find(item => within(tail, item.path) || within(item.path, tail))
+            if (configuration) return configuration.what
+        }
+        return undefined
+    }
+    // After a `cd` by a name without ./, the shell may stand wherever a CDPATH entry put that name, the home directory
+    // included, and only the call's text shows every way back out: here-strings, heredocs, loop lists, glued options
+    // and inline code. So the text after the cd is read whole. An expansion hides how far it climbs, a value held for
+    // later holding `..` may climb anywhere, and a run of `..` that climbs back to where the cd was named from leaves
+    // the cockpit; a shorter run lands where the names it keeps reach from home.
+    invocations.forEach((cd, at) => {
+        const spelled = bareDirectory(cd)
+        if (spelled === undefined || input.cdByName === undefined) return
+        const base = posix.resolve(cd.cwd, ...posix.normalize(spelled).split('/').filter(Boolean).map(() => '..'))
+        // The directories the commands after it run in below that base, where a later cd moves them.
+        const cwds = [...new Set(invocations.slice(at).map(item => item.cwd).filter(cwd => within(cwd, base) && cwd !== base))]
+        const depth = Math.min(...cwds.map(cwd => posix.relative(base, cwd).split('/').length))
+        const after = textAfterCd(input.cdByName, spelled)
+        const leaves = (what: string) => holdBoundary(cd, ask(`After cd ${shownGuardWord(spelled)}, a shell with CDPATH set may stand outside the cockpit, the home directory included, and ${what}. Write \`cd ./<dir>\`, or name the path from the cockpit.`))
+        // Quotes and backslashes join a `..` the raw text splits, as `.\./` and `'.''.'/` do, so both spellings are read.
+        const unquoted = (text: string) => text.replace(/['"\\]/g, '')
+        if (/[$`]/.test(outsideSingleQuotes(after))) leaves('an expansion after it can climb out of that directory unseen')
+        if ([input.cdByName, unquoted(input.cdByName)].some(text => /(?:^|[\s;&|(`'"])[A-Za-z_]\w*=[^\s;&|]*\.\./.test(text))) leaves('a value the call holds climbs with `..`')
+        // A pattern that starts with a dot and can match `..`, as `.[.]`, `.?` or `.*` do, expands to it.
+        const pattern = unquoted(after).split(/[\s;&|<>()]+/).flatMap(word => word.split('/'))
+            .find(segment => segment.startsWith('.') && /[?*[]/.test(segment) && expandsToDots(segment))
+        if (pattern !== undefined) leaves(`the pattern ${shownGuardWord(pattern)} can expand to \`..\` and climb out of it`)
+        // A program handed its path names on standard input or in a file names paths the text never shows.
+        const namesFromFile = invocations.slice(at + 1).find(item => {
+            const program = posix.basename(item.executable ?? '')
+            return ['xargs', 'cpio'].includes(program) || item.words.some(word => word.value === XARGS_INPUT)
+                || item.argv.some(arg => { const option = arg.split('=')[0]!; return option !== '--file' && option.length >= 3 && ['--files-from', '--files0-from'].some(name => name.startsWith(option)) })
+                || program === 'zip' && item.argv.some(arg => /^-[^-]*@/.test(arg))
+        })
+        if (namesFromFile) leaves(`${named(namesFromFile)} reads the paths it acts on from a file or standard input, which may climb out of it`)
+        for (const [, climb, rest] of [after, unquoted(after)].flatMap(text => [...text.matchAll(/(?<!\.)((?:\.\.(?:\/+|(?![\w.])))+)([^\s'"`;&|<>()]*)/g)])) {
+            const steps = climb!.split('..').length - 1
+            if (steps >= depth) { leaves(`${shownGuardWord(climb! + rest!)} climbs back out of it`); continue }
+            const hazard = cwds.map(cwd => homeHazard(posix.relative(base, posix.resolve(cwd, climb! + rest!)))).find(Boolean)
+            if (hazard) hold(deny(`Refusing ${shownGuardWord(climb! + rest!)} after cd ${shownGuardWord(spelled)}: a shell with CDPATH set can resolve that name from the home directory, where the path reaches ${hazard}.`))
+        }
+    })
     for (const invocation of invocations) {
         // Redirects, heredocs, comments and definitions are not executable host use.
         // A host passed to printf is still an argument and remains a hard denial.
@@ -2881,7 +2988,20 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (resolved.hostedDatabaseHosts.some((host) => hostUsed(word.value, host))) hold(deny('Refusing executable use of a declared hosted database host.'))
             if (resolved.vendorHosts.some((host) => hostUsed(word.value, host))) hold(deny('Refusing executable use of a declared vendor host.'))
         }
-        inspectPath({ path: invocation.cwd, cwd: invocation.cwd, operation: 'cwd' })
+        const directory = inspectPath({ path: invocation.cwd, cwd: invocation.cwd, operation: 'cwd' })
+        // A `cd` by a name without `./` may land in a CDPATH entry instead, such as the home directory or one above it,
+        // so no trailing run of the names below the root may reach a credential store or a file that runs programs from
+        // home, nor be the home directory itself. Where nothing exists below the root by that name, only a CDPATH entry
+        // can hold it.
+        const spelled = bareDirectory(invocation)
+        const below = spelled === undefined ? undefined : resolved.allowedRoots.find(root => within(invocation.cwd, root))
+        if (spelled !== undefined && below !== undefined && directory !== undefined) {
+            const hazard = homeHazard(posix.relative(below, invocation.cwd))
+            if (hazard) hold(deny(`Refusing cd ${shownGuardWord(spelled)}: a shell with CDPATH set can resolve the name from the home directory, where it reaches ${hazard}. Write \`cd ./<dir>\` for the directory in the cockpit.`))
+            else if (directory.identity === null) {
+                holdBoundary(invocation, ask(`cd ${shownGuardWord(spelled)} names nothing below the directory it runs from, so a shell with CDPATH set may find it elsewhere, which the guard cannot see. Write \`cd ./<dir>\` once it exists.`))
+            }
+        }
         // A redirect writes the file it names, whatever the command does to its operands.
         linking = false
         moving = false
