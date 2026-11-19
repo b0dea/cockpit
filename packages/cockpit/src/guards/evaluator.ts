@@ -2076,6 +2076,19 @@ function textAfterCd(text: string, target: string): string {
     return text
 }
 
+/** Whether a glob segment can match `..`: `?` and `*` match a dot, and a bracket class only when its set holds one. */
+function expandsToDots(segment: string): boolean {
+    const dot = (body: string) => {
+        const negated = /^[!^]/.test(body)
+        const set = negated ? body.slice(1) : body
+        const holds = set.includes('.') || /\[:(?:punct|print|graph):\]/.test(set) || [...set.matchAll(/(.)-(.)/g)].some(([, from, to]) => from! <= '.' && '.' <= to!)
+        return negated !== holds
+    }
+    const pattern = segment.split(/(\*+|\?|\[[!^]?\]?(?:\[:[a-z]+:\]|[^\]])*\])/).map((part, at) => at % 2 === 0 ? part.replace(/[.+^${}()|\\[\]]/g, '\\$&')
+        : part.startsWith('*') ? '.*' : part === '?' ? '.' : dot(part.slice(1, -1)) ? '.' : '(?!)').join('')
+    return new RegExp(`^${pattern}$`).test('..')
+}
+
 /** Shell text without its single-quoted spans, where `$` and backquotes expand nothing. */
 function outsideSingleQuotes(text: string): string {
     let out = ''
@@ -2939,9 +2952,23 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const depth = Math.min(...cwds.map(cwd => posix.relative(base, cwd).split('/').length))
         const after = textAfterCd(input.cdByName, spelled)
         const leaves = (what: string) => holdBoundary(cd, ask(`After cd ${shownGuardWord(spelled)}, a shell with CDPATH set may stand outside the cockpit, the home directory included, and ${what}. Write \`cd ./<dir>\`, or name the path from the cockpit.`))
+        // Quotes and backslashes join a `..` the raw text splits, as `.\./` and `'.''.'/` do, so both spellings are read.
+        const unquoted = (text: string) => text.replace(/['"\\]/g, '')
         if (/[$`]/.test(outsideSingleQuotes(after))) leaves('an expansion after it can climb out of that directory unseen')
-        if (/(?:^|[\s;&|(`'"])[A-Za-z_]\w*=[^\s;&|]*\.\./.test(input.cdByName)) leaves('a value the call holds climbs with `..`')
-        for (const [, climb, rest] of after.matchAll(/(?<!\.)((?:\.\.(?:\/+|(?![\w.])))+)([^\s'"`;&|<>()]*)/g)) {
+        if ([input.cdByName, unquoted(input.cdByName)].some(text => /(?:^|[\s;&|(`'"])[A-Za-z_]\w*=[^\s;&|]*\.\./.test(text))) leaves('a value the call holds climbs with `..`')
+        // A pattern that starts with a dot and can match `..`, as `.[.]`, `.?` or `.*` do, expands to it.
+        const pattern = unquoted(after).split(/[\s;&|<>()]+/).flatMap(word => word.split('/'))
+            .find(segment => segment.startsWith('.') && /[?*[]/.test(segment) && expandsToDots(segment))
+        if (pattern !== undefined) leaves(`the pattern ${shownGuardWord(pattern)} can expand to \`..\` and climb out of it`)
+        // A program handed its path names on standard input or in a file names paths the text never shows.
+        const namesFromFile = invocations.slice(at + 1).find(item => {
+            const program = posix.basename(item.executable ?? '')
+            return ['xargs', 'cpio'].includes(program) || item.words.some(word => word.value === XARGS_INPUT)
+                || item.argv.some(arg => { const option = arg.split('=')[0]!; return option !== '--file' && option.length >= 3 && ['--files-from', '--files0-from'].some(name => name.startsWith(option)) })
+                || program === 'zip' && item.argv.some(arg => /^-[^-]*@/.test(arg))
+        })
+        if (namesFromFile) leaves(`${named(namesFromFile)} reads the paths it acts on from a file or standard input, which may climb out of it`)
+        for (const [, climb, rest] of [after, unquoted(after)].flatMap(text => [...text.matchAll(/(?<!\.)((?:\.\.(?:\/+|(?![\w.])))+)([^\s'"`;&|<>()]*)/g)])) {
             const steps = climb!.split('..').length - 1
             if (steps >= depth) { leaves(`${shownGuardWord(climb! + rest!)} climbs back out of it`); continue }
             const hazard = cwds.map(cwd => homeHazard(posix.relative(base, posix.resolve(cwd, climb! + rest!)))).find(Boolean)

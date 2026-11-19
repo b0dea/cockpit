@@ -577,9 +577,12 @@ or a URL; `gh api` is left out, because its `GET` returns any file the repositor
   no run of its names reaches a credential store from the home directory, where a `CDPATH` entry could
   send it; otherwise it asks, or is refused when it names a credential store, a file that runs programs, such as
   a launch agent, or the home directory itself. After such a `cd` the rest of the call's text is read whole,
-  here-strings, heredocs, loop lists and inline code included: a `$` expansion asks, a value assigned anywhere in
-  the call that holds `..` asks, and a run of `..` that climbs back to the directory the `cd` was named from asks,
-  so `cd packages/cockpit && cat ../../package.json` asks where `cd ./packages/cockpit && cat ../../package.json`
+  here-strings, heredocs, loop lists and inline code included, with and without its quotes and backslashes: a `$`
+  expansion asks, so `cd workorders/x && echo "$HOME"` asks where `cd ./workorders/x && echo "$HOME"` runs; a value
+  assigned anywhere in the call that holds `..` asks; a pattern that can expand to `..`, such as `.[.]` or `.?`,
+  asks; a command that reads its path names from standard input or a file (`xargs`, `cpio`, `zip -@`, any prefix of
+  `--files-from` or `--files0-from`) asks; and a run of `..` that climbs back to the directory the `cd` was named
+  from asks, so `cd packages/cockpit && cat ../../package.json` asks where `cd ./packages/cockpit && cat ../../package.json`
   runs. A shorter climb is refused when its names reach those locations from home. A `..` after a directory name, as in
   `cd ./a/../b` or `env -C a/..`, is refused too, as are `pushd`, `popd` and zsh's `chdir`. A `cd`
   may fail, and one after `||` may not run, so each later command is judged from every directory it

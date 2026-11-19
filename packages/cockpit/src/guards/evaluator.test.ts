@@ -3307,6 +3307,23 @@ describe('everyday directory changes and held paths', () => {
         expect(judge('cd ./packages/cockpit && cat ../../package.json').decision).toBe('allow')
     })
 
+    it('reads a climb after a cd by name however it is quoted or globbed, and asks for path names read from a file', () => {
+        const made = new Set(['workorders/x', 'Library/Caches', 'src/lib'].map(path => `${root}/${path}`))
+        const local: PathInspection = request => ({ ...withGit(request), ...made.has(posix.resolve(request.cwd, request.path)) ? { identity: '8:4' } : {} })
+        const judge = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command), { home }), configured(), local)
+        for (const command of ['cd workorders/x && jq . f.json', 'cd src/lib && npm test', 'cd workorders/x && cat ../y/f.json',
+            "cd src/lib && npm test -- --grep 'a..b'", 'cd src/lib && git log main..HEAD', "cd workorders/x && jq '.[0]' f.json"]) {
+            expect(judge(command), command).toMatchObject({ decision: 'allow' })
+        }
+        for (const command of ['cd Library/Caches && cat .\\./.\\./.netrc', "cd Library/Caches && cat '.''.'/'.''.'/.netrc", 'cd Library/Caches && cat ".""."/".""."/.netrc',
+            'cd Library/Caches && cat .[.]/.[.]/.netrc', 'cd Library/Caches && cat .?/.?/.netrc',
+            'cd Library/Caches && xargs cat < build/paths.txt', 'cd Library/Caches && wc --files0-from=build/paths.txt', 'cd Library/Caches && wc --files0=build/paths.txt',
+            `cd Library/Caches && rsync -a --files-from=build/paths.txt . ${root}/build/copy`, `cd Library/Caches && zip ${root}/build/a.zip -@ < build/paths.txt`,
+            `cd Library/Caches && tar -cf ${root}/build/a.tar -T build/paths.txt`, `cd Library/Caches && cpio -o < build/paths.txt > ${root}/build/a.cpio`]) {
+            expect(judge(command).decision, command).not.toBe('allow')
+        }
+    })
+
     it('reads a jq program after cd as the program it is, not as key file names', () => {
         const filter = "'{cockpitVersion, claude:{exit:.claude.exit, notRefused:[.claude.results|to_entries[]|select(.value.is_error|not)|.key]}, codex:{blocked:(.codex.blocked|length)}, leftovers}'"
         expect(run(`cat ${session}/tasks/b1.output; tail -5 ${session}/scratchpad/probe.err; cd workorders/WO-1-adoption/evidence && jq ${filter} guard-parity.json`))
