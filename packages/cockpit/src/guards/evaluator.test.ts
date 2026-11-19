@@ -3256,6 +3256,22 @@ describe('everyday directory changes and held paths', () => {
         expect(run('cd api && ls').decision).toBe('ask')
     })
 
+    it('judges cd into an existing directory by a single name as it does a name with a slash', () => {
+        const made = new Set(['workorders', 'workorders/WO-1/evidence', 'Library'].map(path => `${root}/${path}`))
+        const local: PathInspection = request => ({ ...withGit(request), ...made.has(posix.resolve(request.cwd, request.path)) ? { identity: '8:5' } : {} })
+        const judge = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command), { home }), configured(), local)
+        expect(judge('cd workorders && jq . WO-1/evidence/x.json')).toMatchObject({ decision: 'allow' })
+        // One name down and one back up reaches where the cd started, wherever a CDPATH entry put it.
+        expect(judge('cd workorders && cat ../package.json')).toMatchObject({ decision: 'ask', reason: expect.stringContaining('climbs back out') })
+        expect(judge('cd ./workorders && cat ../package.json')).toMatchObject({ decision: 'allow' })
+        // Nothing below the root by that name: only a CDPATH entry can hold it.
+        expect(judge('cd missing && ls')).toMatchObject({ decision: 'ask', reason: expect.stringContaining('names nothing below') })
+        expect(judge('CDPATH=/workspace/home; cd workorders && ls').decision).not.toBe('allow')
+        // From the home directory these names reach launch agents and a credential store.
+        expect(judge('cd Library && ls')).toMatchObject({ decision: 'deny' })
+        expect(judge('cd .aws && cat credentials')).toMatchObject({ decision: 'deny' })
+    })
+
     it('holds what follows a cd by name to the directory it was named from, which a CDPATH entry such as home may replace', () => {
         // The cockpit holds these directories, and the home directory holds none of them, so only a profile's CDPATH could move the cd.
         const made = new Set(['workorders/x', 'Library/Caches', 'Documents/x', 'src/lib', 'packages/cockpit', 'workspace/home'].map(path => `${root}/${path}`))

@@ -191,7 +191,7 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
      `git add -A` that covers a secrets directory, and the first commit stages the guard's own
      files. Show them `git status --short` and hand them that fix to run in a terminal. To read
      Git state in another directory, use `git -C <dir> status` or `cd ./<dir> && <command>`; a bare
-     `cd <dir>` is refused.
+     `cd <dir>` passes only for a directory that exists there.
    Done when the result reports `environment-verified`, or, for a cockpit that declares no runtime,
    reports `surfaces-verified` with `ENVIRONMENT_NOT_DECLARED` as information and no bring-up. That
    stage verifies the surfaces only: step 7's `doctor` is what reports its env schemas.

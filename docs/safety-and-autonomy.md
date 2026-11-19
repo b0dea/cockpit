@@ -571,12 +571,12 @@ or a URL; `gh api` is left out, because its `GET` returns any file the repositor
 - `$?` is allowed as an argument only to a read-only command, and never as the directory of
   `env -C`.
 - A command may follow `cd ./dir`, `cd ../dir` or `cd /abs/dir` joined by `&&` or `;`, with the
-  directory judged as its working directory. A bare `cd name` is refused, because `CDPATH` can send
-  it elsewhere: write `cd ./name`, or `git -C name`. `cd sub/dir`, a path of several names that starts
-  with no dot, is judged as the directory below when it exists there, the call sets no `CDPATH`, and
-  no run of its names reaches a credential store from the home directory, where a `CDPATH` entry could
-  send it; otherwise it asks, or is refused when it names a credential store, a file that runs programs, such as
-  a launch agent, or the home directory itself. After such a `cd` the rest of the call's text is read whole,
+  directory judged as its working directory. `CDPATH` can send a bare name elsewhere, so `cd name`
+  or `cd sub/dir`, a path of names that starts with no dot, is judged as the directory below only when it
+  exists there, the call sets no `CDPATH`, and no run of its names reaches a credential store from the
+  home directory, where a `CDPATH` entry could send it; otherwise it asks, or is refused when it names a
+  credential store, a file that runs programs, such as a launch agent, or the home directory itself. A
+  name that starts with a dot is refused: write `cd ./name`, or `git -C name`. After such a `cd` the rest of the call's text is read whole,
   here-strings, heredocs, loop lists and inline code included, with and without its quotes and backslashes: a `$`
   expansion asks, so `cd workorders/x && echo "$HOME"` asks where `cd ./workorders/x && echo "$HOME"` runs; a value
   assigned anywhere in the call that holds `..` asks; a pattern that can expand to `..`, such as `.[.]` or `.?`,
