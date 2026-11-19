@@ -253,7 +253,8 @@ settings, and the FAQ says [when not to use cockpit](docs/faq.md#when-should-i-n
 
 - **Pre-1.0.** Commands and configuration can change between minors
   ([release policy](docs/release-policy.md)). `npx --no cockpit upgrade --config cockpit.toml` moves
-  the pin and reruns `sync`.
+  the pin, reruns `sync` and prints the next steps; an agent's run waits for a person's
+  `npx --no cockpit approve`.
 - **Not a sandbox.** The guard stops mistakes, not malicious code running as your user.
 - **macOS and Linux.** Native Windows is refused at startup; WSL2 is untested.
 - **Codex** runs the guard hook only after a person trusts it once per machine; `cockpit doctor`

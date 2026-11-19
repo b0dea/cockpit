@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { renderHumanDiagnostics } from '../diagnostics.js'
 import { executeProbe } from '../environment-exec/execute.js'
 import { inspectCodexHookTrust } from './codex-hook-trust.js'
+import { readFile } from 'node:fs/promises'
+import { expandRestrictions } from '../surfaces/restrictions.js'
 
 const scratch: string[] = []
 afterEach(async () => { await Promise.all(scratch.splice(0).map(path => rm(path, { recursive: true, force: true }))) })
@@ -157,5 +159,25 @@ describe('Codex hook trust', () => {
         const codexless = await estate()
         await rm(codexless.home, { recursive: true })
         expect(await codexless.inspect()).toEqual([])
+    })
+
+    // Codex 0.170.0's app-server hooks/list reported these as the current hashes of the Codex hooks cockpit
+    // generates for a root cockpit.toml, and reported both trusted once recorded (2026-11-19); one changed
+    // character in the session-start text made that hook "modified". The hash covers the command, so a
+    // release that changes either command makes every Codex user trust the hooks again, and Codex skips
+    // them, unguarded, until then. Behaviour changes belong in the check script and package they run.
+    it('keeps the generated hooks under the trust Codex recorded for them', async () => {
+        const read = (name: string) => readFile(new URL(`../../surfaces/guards/${name}`, import.meta.url), 'utf8')
+        const expanded = expandRestrictions({ canonicalProjectRoot: '/workspace/product', guardTemplate: await read('bash-guard.sh'),
+            guardPath: '.cockpit/guards/bash-guard.sh', instances: [], configFile: 'cockpit.toml',
+            policy: { hosted_db_hosts: [], protected_branches: ['main'], readonly: { kind: 'agent', name: 'evaluator' } },
+            adapters: await Promise.all(['claude', 'codex', 'opencode'].map(async name => JSON.parse(await read(`${name}.adapter.json`)) as unknown)) })
+        if (expanded.kind !== 'complete') throw new Error(expanded.message)
+        const fixture = await estate(expanded.targets.find(row => row.target === 'codexcli')!.files[0]!.bytes)
+        await fixture.trust(fixture.root, {
+            'pre_tool_use:0:0': 'sha256:57e4c7a8e43e96ac4cf9e0e6e10894d0b19c738ae9b5cb9417f35582caec1a56',
+            'session_start:0:0': 'sha256:7128588ed2167b4530cd46d58c4332be7439417f1da900b2202319bc15ce91a9',
+        })
+        expect(await fixture.inspect()).toEqual([])
     })
 })

@@ -436,30 +436,48 @@ An upgrade replaces the generated files that guard and instruct every agent, so 
 
 ```sh
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config cockpit.toml            # latest published release
-./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade 1.4.0 --config cockpit.toml      # a named version, including an older one
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade 1.4.0 --config cockpit.toml      # a named, newer version
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config cockpit.toml --dry-run  # resolve the target, print the commands, run nothing
+./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config cockpit.toml --commit   # also commit exactly the files it changed
 ```
 
-`upgrade` resolves the target, refuses one that is not newer than the installed version unless you
-name it, detects the package manager from the one lockfile at the cockpit root, installs the exact
-version as a dev dependency, then runs `npx --no cockpit sync --config <path>` in a new process so
-the new version renders. Sync's output and exit code pass through: it removes stale generated files, and an upgrade
-that widens what agents may do waits for a person's `npx --no cockpit approve` yes. It ends by printing the `Upgrade:` lines from the installed `CHANGELOG.md`
-between the two versions (each names a step `sync` does not do), or the npm page when there is no
-changelog.
+`upgrade` resolves the target, refuses one that is older than the installed version, detects the
+package manager from the one lockfile at the cockpit root, installs the exact version as a dev
+dependency, then runs the new package's `sync` in a new process so the new version renders. Sync's
+output and exit code pass through: it removes stale generated files, and an upgrade that widens what
+agents may do waits for a person's `npx --no cockpit approve` yes. It ends by printing the `Upgrade:`
+lines from the installed `CHANGELOG.md` between the two versions (each names a step `sync` does not
+do), or the npm page when there is no changelog, and the next steps, one `next:` line each, in order:
+start a branch first when the tree was dirty, the branch has no upstream or it is the default branch
+(`git switch -c cockpit-<version> origin/<default>`, best before the upgrade); commit exactly the
+files the upgrade changed, named by path; then run `check` and `doctor`.
+
+`--commit` stages exactly those files by path and commits them as `chore: upgrade cockpit to
+<version>`, with the repository's own hooks. It refuses before installing while anything else is
+staged (`UPGRADE_COMMIT_REFUSED`), and commits nothing when a file the upgrade changed already held
+edits (`UPGRADE_COMMIT_FAILED`), naming it for review.
 
 Some machines wrap npm with a supply-chain filter that enforces a minimum package age and answers the
 latest lookup with an older version. `upgrade` then refuses with `UPGRADE_LATEST_FILTERED` (exit 2)
 instead of calling the install current, names the registry's real latest when it can read it, and
 asks you to name that version.
 
-An agent may run `upgrade` exactly where it may run a writing `sync`, so it is refused
-(`GUARD_CONFIG_WIDENED`) while an unsynced widening waits. `--dry-run` is never gated. Until
+Installing a new release is a person's step. An agent's `upgrade` resolves the version, installs
+nothing, and records the step for approve (`UPGRADE_PERSON_REQUIRED`); its output says to run `npx
+--no cockpit approve` in the cockpit root, in a terminal outside the agent, after any branch to start
+first. The person's screen names both versions and the install command. On `y`, approve installs with
+`SAFE_CHAIN_MINIMUM_PACKAGE_AGE_EXCLUSIONS=@b00dea/cockpit` set for that install alone, so
+Safe Chain's minimum package age check skips cockpit and
+nothing else; the sync after it, the agent and every later command run without it. An agent's
+`upgrade --commit` records the commit too: the person's yes installs and syncs, and a second yes on
+the exact list of changed files commits them, since anything that wrote during the install would
+ride along. The guard
+refuses an agent's `upgrade` (`GUARD_CONFIG_WIDENED`) while an unsynced widening waits. `--dry-run`
+is never gated. Until
 `sync` finishes, the guard holds every guarded agent tool call, because it trusts only the cockpit
 and `cockpit.toml` it was generated for. A Node upgrade or a second Node install does not hold
 calls: the hook runs Node by the path sync found on the search path. A built-in that one of your overlays replaces and the
-release changed is reported as `OVERRIDDEN_CORE_CHANGED`. Then review `git diff` and commit
-`package.json`, the lockfile and the regenerated files together.
+release changed is reported as `OVERRIDDEN_CORE_CHANGED`. Then follow the `next:` lines.
 
 Dependabot and Renovate can bump the pin on their own; the `cockpit-check` action then reports drift
 until someone runs `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml` and commits the result.

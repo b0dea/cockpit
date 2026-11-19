@@ -166,6 +166,8 @@ describe('agent admission', () => {
         for (const args of [['sync'], ['upgrade', '1.2.3'], ['setup', '--write-instruction-files'], ['setup', '--write-instruction-pointers'], ['sync', '--dry-run'], ['reset']]) {
             expect(agentMayRun(args, ungranted), args.join(' ')).toBe(true)
         }
+        // An agent's upgrade, --commit included, only records the install for approve, so the guard lets it run.
+        expect(agentMayRun(['upgrade', '1.2.3', '--commit'], ungranted)).toBe(true)
     })
 })
 

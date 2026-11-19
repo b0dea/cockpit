@@ -914,8 +914,9 @@ spelling, such as `pnpm exec cockpit check` or `npm run cockpit:sync`, is refuse
 use: the launcher takes options of its own, so its words do not say which command runs. A command
 that changes the installed package, such as an install of another version, prompts.
 
-An agent's `sync`, and `upgrade`, whose sync child writes, regenerate the files the configuration
-declares. After `cockpit.toml` changes, sync applies the edit only when it [does not
+An agent's `sync` regenerates the files the configuration declares; an agent's `upgrade` installs
+nothing and leaves the install, and the sync after it, for a person at `npx --no cockpit approve`.
+After `cockpit.toml` changes, sync applies the edit only when it [does not
 widen](#edits-the-guard-has-not-applied) what agents may do, so an agent's sync never publishes a
 widening of its own. `setup --write-instruction-files` and `--write-instruction-pointers` write the
 sibling `AGENTS.md`, `CLAUDE.md` and guide links `setup` proposes, which the agent could write with
@@ -1093,7 +1094,8 @@ inside an agent tool's session, in CI, with `--json` and without a terminal.
 | Decision | Who | Why |
 | --- | --- | --- |
 | A change to `cockpit.toml` that widens what agents may do (`GUARD_CONFIG_WIDENED`), including a new or changed MCP server, and the first sync after an upgrade that widens | a person, at `npx --no cockpit approve` | It widens what the agent may run, read or write; [Edits the guard has not applied](#edits-the-guard-has-not-applied). |
-| Any other `cockpit.toml` edit, `sync` and `upgrade` | the agent | The edit does not widen; the agent's plain `sync` applies it. |
+| Any other `cockpit.toml` edit, and `sync` | the agent | The edit does not widen; the agent's plain `sync` applies it. |
+| `upgrade`, which installs a new cockpit release | a person, at `npx --no cockpit approve`; the agent's run records it (`UPGRADE_PERSON_REQUIRED`) | It installs a new package version, with Safe Chain's minimum package age check waived for `@b00dea/cockpit` for that install only. |
 | `reset --apply`, and a `stacks prune --apply` that deletes volumes | the agent where `[environment] seed` is declared and no widening is unsynced; otherwise a person, at `npx --no cockpit approve` | A seed brings the data back. Without one the refusal is `RESET_CONFIRMATION_REQUIRED`. |
 | `setup --write-instruction-files` and `--write-instruction-pointers`, and `sync` removing a file it generated before and no longer generates | the agent | They write or remove cockpit's own output and sibling instruction files the agent may already edit. |
 | Accepting, amending, answering and signing off a work order | the agent | The grade still judges the work. |
