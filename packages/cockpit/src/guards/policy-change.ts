@@ -72,9 +72,10 @@ const toolRestrictionNarrowing: Rule = (before: unknown, after: unknown, at: str
         || gains(from.data[name]!, to.data[name]!)).map(name => `${at}.${name}`)
 }
 
-// Revoking an approval or narrowing a tool list never needs a person.
+// Revoking an approval or narrowing a tool list never needs a person; starts_stack only sets how long
+// Codex waits for a server to answer.
 const mcpPolicyWideningFields: Rule = (before: unknown, after: unknown, at: string) =>
-    walk(before ?? {}, after ?? {}, { approved: approvalRemovals, allowed_tools: toolRestrictionNarrowing }, at)
+    walk(before ?? {}, after ?? {}, { approved: approvalRemovals, allowed_tools: toolRestrictionNarrowing, starts_stack: safe }, at)
 
 // The fields of an existing sibling that say what it is for. Everything else about a sibling decides
 // what the agent may write or read: its directory is a writable root, its environment files are the

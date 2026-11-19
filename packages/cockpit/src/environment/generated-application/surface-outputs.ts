@@ -276,6 +276,8 @@ export function nativeSources(
     instances: readonly { slug: string; path: string }[],
     secretPaths: readonly string[] = [],
     coldStartSeconds?: number,
+    // Servers whose cockpit.toml entry says they start the stack, through a script that hides the launch.
+    startsStack: readonly string[] = [],
 ): readonly SurfaceSourceFile[] {
     const sources: SurfaceSourceFile[] = []
     const transports = mcp.result.harnesses.flatMap(row => row.servers)
@@ -293,7 +295,7 @@ export function nativeSources(
             // Codex spells Claude Code's headersHelper http_headers_helper; Rulesync passes an unknown
             // key through to config.toml unchanged.
             const sessionTimeout = (server: McpHarnessServer) => coldStartSeconds !== undefined
-                && runsCockpitSession(mcp.result.servers.find(model => model.name === server.name))
+                && (startsStack.includes(server.name) || runsCockpitSession(mcp.result.servers.find(model => model.name === server.name)))
                 ? coldStartSeconds + SESSION_STARTUP_MARGIN_SECONDS : undefined
             const respelled = row.target === 'codexcli'
                 ? row.servers.filter(server => server.allowedTools !== undefined || 'url' in server && server.headersHelper !== null

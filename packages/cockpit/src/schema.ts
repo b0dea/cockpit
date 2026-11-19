@@ -459,6 +459,11 @@ const Mcp = z
         allowed_tools: McpAllowedTools.default({}).describe('Exact tool names permitted per declared MCP server. An empty list denies every tool; an absent server has no tool restriction. Review the tool implementation: names and read-only annotations do not establish read-only behavior. Unsupported harnesses receive no restricted server.'),
         approved: z.record(z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/).max(128), z.string().regex(/^[a-f0-9]{64}$/, 'an approval is the sha256 cockpit approve records for the server'))
             .refine((approved) => Object.keys(approved).length <= 256, 'at most 256 MCP servers can be approved').default({}).describe('Approved MCP servers, each mapped to the sha256 of the declaration a person approved; cockpit approve writes them when a person answers yes. Others stay disabled.'),
+        // A script that runs `cockpit session` inside hides the launch from the declared command, so
+        // cockpit cannot see that the server answers only once the stack is up.
+        starts_stack: z.record(z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/).max(128), z.boolean())
+            .refine((servers) => Object.keys(servers).length <= 256, 'at most 256 MCP servers can be marked').default({})
+            .describe('Declared local MCP servers whose command brings up the stack through cockpit session, directly or inside a script it runs, each mapped to true, so Codex is given the cold start to wait for it. Needs [environment.machine].'),
     })
     .strict()
 
@@ -945,6 +950,14 @@ export const CockpitConfig = z
             const slug = repositoryOf(path)
             if (slug !== '.' && !cfg.sibling.some(row => row.slug === slug)) {
                 ctx.addIssue({ code: 'custom', path: ['guards', 'secret_paths', index], message: `${JSON.stringify(path)} names sibling "${slug}", which no [[sibling]] declares` })
+            }
+        }
+        // The startup timeout is the declared cold start plus margins; without one, up refuses at once,
+        // so the flag would read as a control and set nothing.
+        if (!cfg.environment.machine) {
+            for (const [name, starts] of Object.entries(cfg.mcp.starts_stack)) {
+                if (starts) ctx.addIssue({ code: 'custom', path: ['mcp', 'starts_stack', name],
+                    message: 'starts_stack needs [environment.machine] with cold_start_seconds, the time Codex is given to wait for the stack; declare it, or remove starts_stack' })
             }
         }
         // Not checked here: that `environment.profiles` and each `profile:<name>` mount name a

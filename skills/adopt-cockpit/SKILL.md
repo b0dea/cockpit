@@ -304,6 +304,9 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
      `npx --no cockpit approve` in a
      terminal outside the agent, which shows the servers a yes would enable and the fields that
      widen, and asks once. List the servers and fields in your report, and hand them the command.
+   - A server whose command runs a script that starts the stack through `cockpit session` gets
+     `<server name> = true` under `[mcp.starts_stack]`, so Codex waits out the cold start
+     instead of giving up after 10 seconds; it needs `[environment.machine]`.
    Done when `doctor` reports no required gap and every other gap is cleared or reported. Report
    four things separately, because none implies another: **configuration generated** (`check`
    passes), **machine ready** (`doctor`, run where it can read this machine, has no required gap),
