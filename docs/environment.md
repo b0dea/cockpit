@@ -310,7 +310,14 @@ that progress before touching containers left by the earlier attempt.
 When a service `up` started does not become healthy, cockpit reports its last log lines as one
 diagnostic, then stops its container and keeps it, so a restart policy cannot leave it restarting.
 Failure logs are limited to that service and time window, and never follow the process that failed.
-The holder and lease stay, so the next `up` resumes and `down` removes the stack.
+The holder and lease stay, so the next `up` resumes and `down` removes the stack. A `session` whose
+`up` refused this way releases them at once, as its closing `sleep` would.
+
+One `up` of a stack runs at a time. Another, such as each MCP server an agent tool starts at once
+through `session`, waits for it holding nothing, then joins the stack it started, or starts the
+stack itself when that `up` refused. It waits at most as long as the longest `cold_start_seconds`
+allowed, then refuses with `STATE_LOCKED`. An `up` that refuses before starting a service gives back
+the hold it took, even when another holder joined or left meanwhile.
 
 `up` times the start, from the earliest recorded service start to the moment the last newly started
 service reports healthy. Over `cold_start_seconds` it refuses with `MACHINE_COLD_START_EXCEEDED`;

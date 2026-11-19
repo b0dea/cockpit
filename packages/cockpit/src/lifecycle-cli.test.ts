@@ -177,6 +177,19 @@ describe('lifecycle CLI composition', () => {
         ], captureIo().io, { session })).toBe(2)
     })
 
+    it('keeps stdout for the supervised command, which an MCP client reads as its protocol stream', async () => {
+        const refusal = { kind: 'refusal', status: 2, diagnostics: [{ severity: 'error', code: 'LIFECYCLE_PROGRESS_INVALID',
+            message: 'the stack could not be brought up', target: 'synthetic-stack' }] } as never
+        for (const session of [vi.fn(async () => refusal), vi.fn(async () => complete('stopped'))]) {
+            const capture = captureIo()
+            await runCli(['session', '--config', '/synthetic/cockpit.toml', '--', 'synthetic-agent'], capture.io, { session })
+            expect(capture.output().stdout).toBe('')
+        }
+        const capture = captureIo()
+        await runCli(['session', '--config', '/synthetic/cockpit.toml', '--', 'synthetic-agent'], capture.io, { session: vi.fn(async () => refusal) })
+        expect(capture.output().stderr).toContain('the stack could not be brought up')
+    })
+
     it.each([7, 143])('exits with the supervised command status %i that the session ended with', async (status) => {
         const session = vi.fn(async () => ({ ...complete('stopped'), status }))
         expect(await runCli(['session', '--config', '/synthetic/cockpit.toml', '--', 'synthetic-agent'],

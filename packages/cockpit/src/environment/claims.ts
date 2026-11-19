@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { lstat, opendir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
+import { MAX_COLD_START_SECONDS, STRUCTURED_INPUT_ENTRY_LIMIT } from '../schema.js'
 import {
     hasErrorCode,
     RefusalError,
@@ -943,4 +943,34 @@ export async function withStackTeardown<T extends object>(
         ? refuse(ENVIRONMENT_CODES.STATE_LOCKED, `a sleep, down or reset of this stack is running: ${locked.message}`, stackId,
             'wait for it to finish, then retry')
         : stateRefusal(locked)
+}
+
+/**
+ * Runs `operation` while this process alone brings the stack up; another up of it waits, then joins
+ * the stack the first one started. An agent tool starts every MCP server at once, and each server a
+ * `cockpit session` wraps runs its own up: each claimed the stopped stack beside the others, none was
+ * its only holder or saw progress it could trust, and every one refused. A waiter holds nothing, and
+ * the lock of a run that was killed goes to the next one. A waiter gives up after the longest cold
+ * start a cockpit.toml may declare.
+ */
+export async function withStackBringUp<T extends object>(
+    namespace: StateNamespace,
+    stackId: StackId,
+    holderId: HolderId,
+    operation: () => Promise<T>,
+): Promise<T | ClaimMutationRefusal> {
+    const scope = issueStateScopedLock(namespace, { owner: 'stack-bring-up', identity: createHash('sha256').update(stackId).digest('hex') })
+    if (!scope) return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'stack bring-up lock could not be named', stackId)
+    const deadline = Date.now() + MAX_COLD_START_SECONDS * 1_000
+    let ran = false
+    const run = () => { ran = true; return operation() }
+    while (true) {
+        const locked = await withStateScopedLock(namespace, scope, { ownerId: holderId, contentionTimeoutMs: 30_000 }, run)
+        if (locked.kind === 'complete' || locked.kind === 'indeterminate') return locked.value
+        if (locked.kind === 'missing') return refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'stack bring-up lock returned no result', locked.path)
+        // Only a lock this run never got is waited for again; a run that started is never repeated.
+        if (locked.code !== ENVIRONMENT_CODES.STATE_LOCKED || ran) return stateRefusal(locked)
+        if (Date.now() >= deadline) return refuse(ENVIRONMENT_CODES.STATE_LOCKED, `another up of this stack is still running: ${locked.message}`, stackId,
+            'wait for it to finish, then retry')
+    }
 }

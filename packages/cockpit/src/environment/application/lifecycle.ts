@@ -56,6 +56,7 @@ import {
     releaseDeadSessionHolders,
     releaseStoppedStack,
     decodeCoordinationRecord,
+    withStackBringUp,
     withStackTeardown,
 } from '../claims.js'
 import { readState } from '../state.js'
@@ -644,7 +645,25 @@ export async function runUp(
         )
     }
     const context = loaded.result
-    return withLifecycleRunNotices(context, await upWithContext(context, adapters))
+    const locked = await withStackBringUp(context.namespace, context.stackId, context.holderId, () => upWithContext(context, adapters))
+    return withLifecycleRunNotices(context, 'status' in locked ? locked : forwardedRefusal(locked.diagnostics))
+}
+
+// A refused up gives back the hold it took before starting anything. Compensation restores the
+// record only while it is exactly as the acquisition wrote it; once another holder joined or left,
+// this holder's own entry is released instead, with the lease when no other holder remains. Without
+// that, every up that refused beside another kept its hold, and its session ended still holding the stack.
+async function giveBackAcquiredHold(context: LifecycleRunContext, leaseResult: LeasePortFamilyResult): Promise<readonly EnvironmentDiagnostic[]> {
+    const compensation = await compensateAcquiredPortHolder({ namespace: context.namespace, leaseResult, now: new Date().toISOString() })
+    if (compensation.kind === 'complete') return []
+    const stored = await readState(context.namespace.paths.coordination(context.stackId))
+    const coordination = stored.kind === 'complete' ? decodeCoordinationRecord(stored.value, context.stackId) : undefined
+    if (!coordination?.holders.some(({ holderId }) => holderId === context.holderId)) return compensation.diagnostics
+    const released = coordination.holders.length > 1
+        ? await releasePortFamily({ namespace: context.namespace, stackId: context.stackId, requesterId: context.holderId,
+            holderId: context.holderId, now: new Date().toISOString() })
+        : await releaseStoppedStack({ namespace: context.namespace, stackId: context.stackId, holderId: context.holderId })
+    return released.kind === 'complete' ? [] : uniqueDiagnostics([...compensation.diagnostics, ...released.diagnostics])
 }
 
 async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAdapters): Promise<UpCommandResult> {
@@ -696,25 +715,17 @@ async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAd
             if (unrecorded.length > 0) result = { ...result, diagnostics: uniqueDiagnostics([...result.diagnostics, ...unrecorded]) }
         }
         if (result.kind === 'refusal' && releasable()) {
-            const compensation = await compensateAcquiredPortHolder({
-                namespace: context.namespace,
-                leaseResult: acquired!,
-                now: new Date().toISOString(),
-            })
-            if (compensation.kind === 'refusal') return {
+            const unreleased = await giveBackAcquiredHold(context, acquired!)
+            if (unreleased.length > 0) return {
                 ...result,
-                diagnostics: uniqueDiagnostics([...result.diagnostics, ...compensation.diagnostics]),
+                diagnostics: uniqueDiagnostics([...result.diagnostics, ...unreleased]),
             }
         }
         return result
     }
     if (releasable()) {
-        const compensation = await compensateAcquiredPortHolder({
-            namespace: context.namespace,
-            leaseResult: acquired!,
-            now: new Date().toISOString(),
-        })
-        if (compensation.kind === 'refusal') {
+        const unreleased = await giveBackAcquiredHold(context, acquired!)
+        if (unreleased.length > 0) {
             const primary = lifecycleRefusal(
                 ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID,
                 'lifecycle progress could not be reset from fresh evidence',
@@ -722,7 +733,7 @@ async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAd
             )
             return {
                 ...primary,
-                diagnostics: uniqueDiagnostics([...primary.diagnostics, ...compensation.diagnostics]),
+                diagnostics: uniqueDiagnostics([...primary.diagnostics, ...unreleased]),
             }
         }
     }
@@ -786,7 +797,14 @@ export async function runSession(
         'name the command after -- by an absolute path, a path inside the session working directory, or a name found on PATH',
     )
     const up = await adapters.up({ configPath: input.configPath })
-    if (up.kind === 'refusal') return up
+    if (up.kind === 'refusal') {
+        // An up that refused once a service had started keeps its hold, so down can still remove what
+        // it started. The session ends here, so it releases that hold as its closing sleep would, and
+        // reports the release only when it did something or failed.
+        const sleep = await adapters.sleep({ configPath: input.configPath })
+        return sleep.kind === 'complete' && sleep.result.change === 'unchanged' ? up
+            : { ...up, diagnostics: uniqueDiagnostics([...up.diagnostics, ...sleep.diagnostics]) }
+    }
     if (up.kind !== 'complete') return lifecycleRefusal(
         ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
         'session bring-up did not reach a terminal result',
