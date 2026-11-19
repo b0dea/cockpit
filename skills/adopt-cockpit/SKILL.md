@@ -114,7 +114,7 @@ has been cleared or reported to the human. Cockpit is usable once `check` passes
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config cockpit.toml` removes its containers, keeping data
   volumes, from the local Docker daemon fixed at the start of the run.
 - **Upgrade:** `./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config cockpit.toml` does the move (`--dry-run`
-  previews). By hand, install the new version, then run
+  previews); an agent's run records the install for the person's `npx --no cockpit approve`. By hand, install the new version, then run
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml`,
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --dry-run` and
   `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`. The guard trusts only the cockpit

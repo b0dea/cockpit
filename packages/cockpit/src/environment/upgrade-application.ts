@@ -6,24 +6,37 @@
  * must be exact too. The package manager comes from the single lockfile at the cockpit root. Every
  * child process crosses the supplied `execute` / `executeForeground`, which production binds to
  * `environment-exec/execute.ts`; sync's own refusals and exit code pass through unchanged.
+ *
+ * Installing a release is a person's step: an agent's run stops before the install and leaves it for
+ * `cockpit approve`. Comparing the Git tree before and after names the files the upgrade wrote, which
+ * the next steps list and `--commit` stages by path.
  */
-import { readFile, stat } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { lstat, readFile, readlink, realpath, stat } from 'node:fs/promises'
+import { dirname, join, relative, resolve } from 'node:path'
 import type { ExecuteProbeOutcome, ForegroundProcessInput, ForegroundProcessOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { readLatestRelease, type ReleaseMetadataTransport } from '../freshness.js'
-import { formatShellCommand } from '../fix-catalogue.js'
+import { cockpitCommand, formatShellCommand } from '../fix-catalogue.js'
 import { EXACT_DEV_INSTALL } from '../init/derive.js'
 import type { Diagnostic } from '../diagnostics.js'
+import { EXIT_CODES } from '../invocation.js'
+import type { Approval } from '../operator-confirmation.js'
 import { installedPackageMetadata } from '../package-metadata.js'
+import { sha256Hex } from '../sha256.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, tryParseJson, type ExecutionStep } from './contract.js'
-import { resolveExecutable, resolveExecutablePath, type ResolvedExecutable } from './executable.js'
+import { GIT_CHILD_CONFIG, resolveExecutable, resolveExecutablePath, type ResolvedExecutable } from './executable.js'
 
 export interface UpgradeInput {
     readonly configPath: string
     readonly version?: string
     readonly dryRun: boolean
+    /** Stage exactly the files the upgrade changed, by path, and commit them. */
+    readonly commit?: boolean
     readonly env: Readonly<Record<string, string>>
+    /** An agent tool's run: the install waits for a person, so it is described and left for approve. */
+    readonly agent?: boolean
+    /** The run `cockpit approve` makes for a person: they answer this before anything is installed. */
+    readonly confirm?: (approval: Approval) => Promise<boolean>
 }
 
 export interface UpgradeDependencies {
@@ -47,6 +60,8 @@ const AGE_FILTER_NOTICE = /minimum package age/i
 // wrapper's "to disable this check" hint is a bypass cockpit never repeats.
 const INSTALL_CAUSE = /ERR_PNPM_|npm error|npm ERR!|\b404\b|E404|No matching version|minimum package age|\berror\b/i
 const INSTALL_NOISE = /\(node:\d+\)|DeprecationWarning|--trace-deprecation|disable this check|--[a-z-]*skip[a-z-]*/i
+// Safe Chain's list of packages its minimum package age check skips.
+const AGE_EXEMPTION = 'SAFE_CHAIN_MINIMUM_PACKAGE_AGE_EXCLUSIONS'
 const LOOKUP_TIMEOUT_MS = 60_000
 const INSTALL_TIMEOUT_MS = 600_000
 
@@ -73,13 +88,14 @@ function compareVersions(a: string, b: string): number {
     return 0
 }
 
+// `whole`: a read that is parsed, so output past the bound fails the step instead of losing its start.
 function step(executable: ResolvedExecutable, cwd: string, env: Readonly<Record<string, string>>, id: string,
-    args: readonly string[], timeoutMs: number): ExecutionStep {
+    args: readonly string[], timeoutMs: number, output: 'tail' | 'whole' = 'tail'): ExecutionStep {
     return {
         id, argv: [executable.canonicalPath, ...args] as readonly [string, ...string[]],
         argv0: executable.invocationPath, cwd, env, timeoutMs,
-        stdoutLimitBytes: 65_536, stderrLimitBytes: 65_536,
-        outputOverflow: 'retain-tail' as const, failureOutput: 'stderr-tail' as const,
+        stdoutLimitBytes: output === 'whole' ? 4_194_304 : 65_536, stderrLimitBytes: 65_536,
+        ...output === 'whole' ? {} : { outputOverflow: 'retain-tail' as const }, failureOutput: 'stderr-tail' as const,
         paths: [], ports: [], labels: { purpose: id }, expected: [],
         consumedFiles: [{ path: executable.canonicalPath, sha256: executable.sha256,
             maxBytes: 536_870_912, argvIndexes: [0], executable: true as const, executionMode: executable.executionMode }],
@@ -129,6 +145,75 @@ function publishedVersion(stdout: string): string | undefined {
         return typeof value === 'string' && VERSION.test(value) ? [value] : []
     })
     return versions.length === 1 ? versions[0] : undefined
+}
+
+/**
+ * The Git state an upgrade is judged against: the branch, its upstream, origin's default branch, what
+ * is staged, and a digest of every changed or untracked file, keyed by its path from the cockpit root.
+ * Comparing two of these names exactly the files the upgrade wrote.
+ */
+type Tree = Readonly<{ git: ResolvedExecutable; branch: string | null; upstream: string | null; defaultRef: string | undefined
+    staged: readonly string[]; files: ReadonlyMap<string, string> }>
+
+const MAX_HASHED_BYTES = 16_777_216
+// A ref printed into a command a person pastes stays plain; anything else is named as a placeholder.
+const PLAIN_REF = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/
+
+/** The tree at `root`, or why it cannot be read; reads run with repository hooks and fsmonitor off. */
+async function observeTree(root: string, env: Readonly<Record<string, string>>,
+    execute: UpgradeDependencies['execute']): Promise<Tree | string> {
+    const git = await resolveExecutable('git', env)
+    if (git.state !== 'available') return `git is not on PATH: ${git.reason}`
+    const run = async (id: string, args: readonly string[], cwd: string) => {
+        const read = step(git.value, cwd, env, id, [...GIT_CHILD_CONFIG, ...args], LOOKUP_TIMEOUT_MS, 'whole')
+        const outcome = authenticatedExecutionOutcome(await execute(read), read)
+        return outcome?.kind === 'complete' ? outcome.stdout.toString('utf8') : undefined
+    }
+    const top = (await run('upgrade:git-top', ['rev-parse', '--show-toplevel'], root))?.trim()
+    if (!top) return `${root} is not in a Git repository`
+    const status = await run('upgrade:git-status', ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], top)
+    if (status === undefined) return `git status did not answer in ${top}`
+    let branch: string | null = null
+    let upstream: string | null = null
+    const staged: string[] = []
+    const paths: string[] = []
+    const records = status.split('\0')
+    for (let index = 0; index < records.length; index++) {
+        const record = records[index]!
+        const fields = record.split(' ')
+        if (record.startsWith('# branch.head ')) branch = record === '# branch.head (detached)' ? null : record.slice(14)
+        else if (record.startsWith('# branch.upstream ')) upstream = record.slice(18)
+        // Ordinary, renamed (its source follows in the next record), unmerged and untracked entries.
+        else if (/^[12u] /.test(record)) {
+            const path = fields.slice({ 1: 8, 2: 9, u: 10 }[fields[0] as '1' | '2' | 'u']).join(' ')
+            const moved = fields[0] === '2' ? [records[++index]!] : []
+            paths.push(path, ...moved)
+            if (fields[1]![0] !== '.' || fields[0] === 'u') staged.push(path, ...moved)
+        } else if (record.startsWith('? ')) paths.push(record.slice(2))
+        else if (record !== '' && !record.startsWith('# ')) return `git status printed a record cockpit does not read: ${record.slice(0, 64)}`
+    }
+    // Git names the top by its real path, so paths are made relative to the root's real path, which a
+    // linked spelling of the root would otherwise turn into a walk out of the repository.
+    let real: string
+    try { real = await realpath(root) } catch (error) { return `${root} could not be resolved: ${errorCause(error)}` }
+    const files = new Map<string, string>()
+    for (const path of paths) {
+        const absolute = join(top, path)
+        let digest: string
+        // A link is its target's spelling and a large file its size and time: neither is followed or read whole.
+        try {
+            const facts = await lstat(absolute)
+            digest = facts.isSymbolicLink() ? `link:${await readlink(absolute)}`
+                : !facts.isFile() ? 'not-a-file' : facts.size > MAX_HASHED_BYTES ? `size:${facts.size}:${facts.mtimeMs}` : sha256Hex(await readFile(absolute))
+        } catch (error) {
+            if (!hasErrorCode(error, 'ENOENT')) return `${absolute} could not be read: ${errorCause(error)}`
+            digest = 'missing'
+        }
+        files.set(relative(real, absolute), digest)
+    }
+    const origin = (await run('upgrade:git-default', ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], top))?.trim()
+    return { git: git.value, branch, upstream, defaultRef: origin && PLAIN_REF.test(origin) ? origin : undefined,
+        staged: staged.map(path => relative(real, join(top, path))), files }
 }
 
 export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDependencies): Promise<UpgradeOutcome> {
@@ -195,7 +280,37 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
     if (input.dryRun) return { status: 0, diagnostics: [],
         result: { ...result, next: 'nothing was run; drop --dry-run to install and sync' } }
 
-    const install = step(manager.value, root, input.env, 'upgrade:install', installArgv.slice(1), INSTALL_TIMEOUT_MS)
+    const before = await observeTree(root, input.env, dependencies.execute)
+    const message = `chore: upgrade cockpit to ${target}`
+    if (input.commit && typeof before === 'string') return refused({ severity: 'error' as const, code: 'UPGRADE_COMMIT_REFUSED' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_COMMIT_REFUSED,
+        message: `--commit needs the cockpit root's Git state, and ${before}; nothing was installed`,
+        fix: 'unstage what the upgrade does not write, by path, or run it where Git reads the cockpit root, then run the upgrade again; or drop --commit and commit the files its next steps name' })
+    if (input.commit && typeof before !== 'string' && before.staged.length) return refused({ severity: 'error' as const, code: 'UPGRADE_COMMIT_REFUSED' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_COMMIT_REFUSED,
+        message: `--commit commits only what the upgrade writes, and ${before.staged.join(', ')} ${before.staged.length === 1 ? 'is' : 'are'} already staged; nothing was installed`,
+        fix: 'unstage what the upgrade does not write, by path, or run it where Git reads the cockpit root, then run the upgrade again; or drop --commit and commit the files its next steps name' })
+    // The consumer's branch is made before the upgrade: once its files are dirty, switching to a branch
+    // from the default branch refuses wherever a changed file also differs there.
+    const branch = typeof before !== 'string' && (before.branch === null || before.upstream === null || before.files.size > 0
+        || before.defaultRef !== undefined && `origin/${before.branch}` === before.defaultRef)
+        ? `start a branch first: git switch -c cockpit-${target} ${typeof before !== 'string' && before.defaultRef || 'origin/<default branch>'}` : undefined
+
+    // The install and its age exemption are a person's: an agent's run leaves them for approve.
+    const approve = `run \`npx --no cockpit approve\` in ${root}, in a terminal outside the agent`
+    if (input.agent) return { status: 2, result: { ...result, next: [branch, approve].filter(Boolean).join('\n') },
+        diagnostics: [{ severity: 'error' as const, code: 'UPGRADE_PERSON_REQUIRED' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_PERSON_REQUIRED,
+            message: `upgrading cockpit from ${installed} to ${target} installs a new package version, which a person approves; nothing was installed${branch ? `; ${branch}` : ''}`,
+            fix: 'run `npx --no cockpit approve` in <the cockpit root>, in a terminal outside the agent' }] }
+    // A person at approve installs past Safe Chain's minimum package age for cockpit alone, and only in
+    // the install's own environment: the sync after it and every later command run without it.
+    const exemption = { [AGE_EXEMPTION]: name }
+    if (input.confirm && !await input.confirm({ title: `Upgrade cockpit from ${installed} to ${target}`,
+        why: `this installs a new package version, with Safe Chain's minimum package age check waived for ${name} only`,
+        details: [`runs ${formatShellCommand([`${AGE_EXEMPTION}=${name}`, ...installArgv])}`, `then ${result.sync}`,
+            ...input.commit && typeof before !== 'string' ? [`then commits the files it changed on ${before.branch ?? 'a detached HEAD'} as "${message}"`] : []] })) {
+        return { status: EXIT_CODES.cancelled, diagnostics: [], result: null }
+    }
+
+    const install = step(manager.value, root, input.confirm ? { ...input.env, ...exemption } : input.env, 'upgrade:install', installArgv.slice(1), INSTALL_TIMEOUT_MS)
     const installOutcome = authenticatedExecutionOutcome(await dependencies.execute(install), install)
     const installOutput = installOutcome?.kind === 'complete' ? '' : installOutcome ? `${installOutcome.stdout.toString('utf8')}\n${installOutcome.stderr.toString('utf8')}` : ''
     const installLines = installOutput.split('\n').map(line => line.trim()).filter(line => line !== '' && !INSTALL_NOISE.test(line))
@@ -214,14 +329,55 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
         message: `${spec} is installed but sync did not finish (${synced.kind === 'refusal' ? synced.code : `exit ${synced.exitCode}`}); the generated files are still those of ${installed}`,
         fix: 'act on what sync reported above, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>' }, synced.exitCode === 0 ? 1 : synced.exitCode)
 
-    let notes: string[]
-    try { notes = upgradeNotes(await readFile(join(root, 'node_modules', name, 'CHANGELOG.md'), 'utf8'), installed, target) }
-    catch (error) {
-        return { status: 0, diagnostics: [], result: { ...result,
-            upgradeSteps: `the installed package's CHANGELOG.md could not be read (${hasErrorCode(error, 'ENOENT') ? 'missing' : errorCause(error)}); release notes: ${npmPage(target)}`,
-            next: 'review git diff, then commit package.json, the lockfile and the regenerated files together' } }
+    let upgradeSteps: string | string[]
+    try {
+        const notes = upgradeNotes(await readFile(join(root, 'node_modules', name, 'CHANGELOG.md'), 'utf8'), installed, target)
+        upgradeSteps = notes.length === 0 ? 'the changelog lists no Upgrade: steps between these versions' : notes
+    } catch (error) {
+        upgradeSteps = `the installed package's CHANGELOG.md could not be read (${hasErrorCode(error, 'ENOENT') ? 'missing' : errorCause(error)}); release notes: ${npmPage(target)}`
     }
-    return { status: 0, diagnostics: [], result: { ...result,
-        upgradeSteps: notes.length === 0 ? 'the changelog lists no Upgrade: steps between these versions' : notes,
-        next: 'review git diff, then commit package.json, the lockfile and the regenerated files together' } }
+
+    // The files the upgrade wrote are those whose content differs from before it ran. One that already
+    // held edits would carry them into the upgrade's commit, so it is named for review instead.
+    const after = typeof before === 'string' ? before : await observeTree(root, input.env, dependencies.execute)
+    const changed = typeof before === 'string' || typeof after === 'string' ? undefined
+        : [...after.files].filter(([path, digest]) => before.files.get(path) !== digest).map(([path]) => path).sort()
+    const held = changed?.filter(path => typeof before !== 'string' && before.files.has(path)) ?? []
+    // The commit names its paths, so whatever else is staged stays out of it.
+    const commitCommand = changed && `${formatShellCommand(['git', 'add', '--', ...changed])} && ${formatShellCommand(['git', 'commit', '-m', message, '--', ...changed])}`
+    const checks = `run ${cockpitCommand('check', { config: configPath })}, then ${cockpitCommand('doctor', { config: configPath })}`
+    const next = (committed: boolean) => [
+        committed ? undefined : branch && `${branch} (best run before the upgrade)`,
+        committed ? `committed exactly the files the upgrade changed as "${message}": ${changed!.join(' ')}`
+            : !changed ? 'review git diff, then commit package.json, the lockfile and the regenerated files together'
+                : !changed.length ? 'the upgrade changed no file in the Git tree, so there is nothing to commit'
+                    : `${held.length ? `review ${held.join(', ')} first, which held changes before the upgrade; then ` : ''}review git diff, then commit exactly the files the upgrade changed: ${commitCommand}`,
+        checks,
+    ].filter(Boolean).join('\n')
+    const finished = { ...result, upgradeSteps }
+    if (!input.commit) return { status: 0, diagnostics: [], result: { ...finished, next: next(false) } }
+
+    const uncommitted = (reason: string): UpgradeOutcome => ({ status: 2, result: { ...finished, next: next(false) },
+        diagnostics: [{ severity: 'error' as const, code: 'UPGRADE_COMMIT_FAILED' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_COMMIT_FAILED,
+            message: `${spec} is installed and synced, but ${reason}`,
+            fix: 'review the files the message names, then commit exactly the files the upgrade changed by path, as the next steps say' }] })
+    if (typeof after === 'string') return uncommitted(`its Git state could not be read again (${after}), so nothing was committed`)
+    if (!changed?.length) return uncommitted('it changed no file in the Git tree, so nothing was committed')
+    if (held.length) return uncommitted(`${held.join(', ')} held changes before the upgrade, so nothing was committed`)
+    // Anything else that wrote while the install ran would ride along, so the person at approve sees the
+    // exact list before it is staged.
+    if (input.confirm && !await input.confirm({ title: `Commit the upgrade to ${target} as "${message}"`,
+        why: 'these files changed while the upgrade ran; one that something else changed meanwhile would be committed with it',
+        details: changed })) return uncommitted('the person declined the commit, so nothing was committed')
+    // Staged by explicit literal path, never by directory, glob or `-A`, and committed with the repository's own hooks.
+    for (const [id, args] of [['upgrade:git-add', ['--literal-pathspecs', 'add', '--', ...changed]],
+        ['upgrade:git-commit', ['--literal-pathspecs', 'commit', '-m', message, '--', ...changed]]] as const) {
+        const write = step(after.git, root, input.env, id, args, INSTALL_TIMEOUT_MS)
+        const outcome = authenticatedExecutionOutcome(await dependencies.execute(write), write)
+        if (outcome?.kind !== 'complete') {
+            const output = outcome ? `${outcome.stdout.toString('utf8')}\n${outcome.stderr.toString('utf8')}`.trim().split('\n').slice(-4).join(' | ').slice(0, 512) : 'the outcome could not be authenticated'
+            return uncommitted(`git ${args[1]} failed (${output})${id === 'upgrade:git-commit' ? `; ${changed.join(', ')} ${changed.length === 1 ? 'stays' : 'stay'} staged` : ''}`)
+        }
+    }
+    return { status: 0, diagnostics: [], result: { ...finished, committed: changed, next: next(true) } }
 }

@@ -580,8 +580,9 @@ fixed once per run ([Choose the Docker daemon](environment.md#choose-the-docker-
 ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config ./cockpit.toml
 ```
 
-Review and commit the regenerated files. If the new version widens what agents may do, the first
-sync waits for a person's `npx --no cockpit approve` yes. [Upgrade cockpit](harness-surfaces.md#upgrade-cockpit) has
+Then follow the `next:` lines it prints, or add `--commit` to commit exactly the files it changed. Run
+from an agent, `upgrade` installs nothing and waits for a person's `npx --no cockpit approve` yes; so
+does a first sync that widens what agents may do. [Upgrade cockpit](harness-surfaces.md#upgrade-cockpit) has
 the details.
 
 ## Install from source

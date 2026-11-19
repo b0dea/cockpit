@@ -16,7 +16,7 @@ export type PersonIo = Readonly<{ stdin?: NodeJS.ReadStream; stderr: Pick<NodeJS
 const AGENT_SESSION_VARIABLES = ['CLAUDECODE', 'CODEX_THREAD_ID', 'OPENCODE'] as const
 
 /** The variable that marks `env` as an agent tool's session, or undefined outside one. */
-function agentSessionVariable(env: Readonly<Record<string, string | undefined>>): string | undefined {
+export function agentSessionVariable(env: Readonly<Record<string, string | undefined>>): string | undefined {
     return AGENT_SESSION_VARIABLES.find(name => env[name] !== undefined && env[name] !== '')
 }
 

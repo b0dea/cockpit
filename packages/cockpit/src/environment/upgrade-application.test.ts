@@ -1,10 +1,16 @@
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { executeForegroundProcess, executeProbe } from '../environment-exec/execute.js'
 import { installedPackageMetadata } from '../package-metadata.js'
 import { runUpgrade } from './upgrade-application.js'
+import { execFileSync } from 'node:child_process'
+import { runCli, type CliIo } from '../cli.js'
+import type { Approval } from '../operator-confirmation.js'
+import { PENDING_APPROVALS_PATH } from '../pending-approvals.js'
+import type { OperatorPolicy } from './operator-application.js'
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -154,5 +160,143 @@ describe('cockpit upgrade', () => {
         expect(diagnostic!.message).toMatch(/wait|exempt/)
         expect(diagnostic!.message).not.toMatch(/DEP0169|trace-deprecation|skip|disable/i)
         expect(diagnostic!.fix).not.toMatch(/skip|disable/i)
+    })
+})
+
+const EXEMPTION = 'SAFE_CHAIN_MINIMUM_PACKAGE_AGE_EXCLUSIONS'
+
+// A cockpit root that is a clone with a pushed default branch. The fake `npm` records the age-filter
+// exemption each install ran with; the installed entrypoint records the one sync ran with and writes a
+// generated file, as a real sync would.
+function repository(options: { branch?: string } = {}) {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-upgrade-flow-')))
+    roots.push(base)
+    const bin = join(base, 'bin')
+    const log = join(base, 'calls.log')
+    const project = join(base, 'project')
+    const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: base }
+    const git = (...args: string[]) => execFileSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: project, env, encoding: 'utf8' })
+    mkdirSync(bin)
+    execFileSync('git', ['init', '--quiet', '--bare', '-b', 'main', join(base, 'origin.git')], { env })
+    execFileSync('git', ['clone', '--quiet', join(base, 'origin.git'), project], { env, stdio: 'ignore' })
+    git('config', 'user.name', 'Synthetic')
+    git('config', 'user.email', 'synthetic@example.invalid')
+    writeFileSync(join(project, 'package.json'), `{ "devDependencies": { "@b00dea/cockpit": "${installedPackageMetadata.version}" } }\n`)
+    writeFileSync(join(project, 'package-lock.json'), '{}\n')
+    writeFileSync(join(project, 'cockpit.toml'), '')
+    writeFileSync(join(project, '.gitignore'), 'node_modules/\n.cockpit/local/\n')
+    mkdirSync(join(project, '.cockpit'))
+    git('add', '--', '.gitignore', 'cockpit.toml', 'package.json', 'package-lock.json')
+    git('commit', '--quiet', '-m', 'Create synthetic cockpit')
+    git('push', '--quiet', '-u', 'origin', 'main')
+    git('remote', 'set-head', 'origin', 'main')
+    if (options.branch) {
+        git('switch', '--quiet', '-c', options.branch)
+        git('push', '--quiet', '-u', 'origin', options.branch)
+    }
+    const installed = join(project, 'node_modules', '@b00dea', 'cockpit')
+    const entrypoint = `import { appendFileSync, writeFileSync } from 'node:fs'\nappendFileSync('${log}', 'cockpit ' + process.argv.slice(2).join(' ') + ' exempt=' + (process.env.${EXEMPTION} ?? '') + '\\n')\nwriteFileSync('AGENTS.md', 'generated\\n')\n`
+    writeFileSync(join(bin, 'npm'), `#!/bin/sh\necho "npm $* exempt=$${EXEMPTION}" >> '${log}'\n`
+        + `if [ "$1" = view ]; then echo '"9.9.9"'; exit 0; fi\n`
+        + `echo '{ "devDependencies": { "@b00dea/cockpit": "9.9.9" } }' > package.json\necho '{ "upgraded": true }' > package-lock.json\n`
+        + `mkdir -p '${join(installed, 'bin')}'\ncat > '${join(installed, 'bin', 'cockpit.mjs')}' <<'EOF'\n${entrypoint}EOF\nprintf '# Changelog\\n' > '${join(installed, 'CHANGELOG.md')}'\n`)
+    chmodSync(join(bin, 'npm'), 0o755)
+    const config = join(project, 'cockpit.toml')
+    const calls = () => existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []
+    const pendingPath = join(project, PENDING_APPROVALS_PATH)
+    const pending = () => existsSync(pendingPath) ? JSON.parse(readFileSync(pendingPath, 'utf8')).items as { argv: string[] }[] : []
+    const loadPolicy = async (): Promise<OperatorPolicy> => ({ configSha256: 'a'.repeat(64), widened: [], unrecorded: false, seeded: false, approveMcp: async () => 'a'.repeat(64) })
+    // One run of the CLI in the given environment, with what it printed.
+    const cli = async (args: readonly string[], runEnv: Record<string, string> = env, io: Partial<CliIo> = {}) => {
+        let stdout = '', stderr = ''
+        const status = await runCli(args, { stdout: { write: text => ((stdout += text), true) }, stderr: { write: text => ((stderr += text), true) }, ...io },
+            { loadPolicy }, { env: runEnv })
+        return { status, stdout, stderr, json: () => JSON.parse(stdout) }
+    }
+    return { project, config, env, git, calls, pending, cli }
+}
+
+describe('cockpit upgrade for an agent and a person', () => {
+    // Installing a release a package-age filter calls too new is a person's decision, so an agent's run
+    // records the exact release for approve, which exempts cockpit for that one install and nothing else.
+    it('queues an agent\'s upgrade for approve, which installs with the age exemption on that child only and commits what it wrote', async () => {
+        const f = repository()
+        const agent = await f.cli(['upgrade', '--commit', '--config', f.config, '--json'], { ...f.env, CLAUDECODE: '1' })
+        expect(agent.status).toBe(2)
+        const envelope = agent.json()
+        expect(envelope.diagnostics).toEqual([expect.objectContaining({ severity: 'error', code: 'UPGRADE_PERSON_REQUIRED',
+            message: expect.stringContaining(`from ${installedPackageMetadata.version} to 9.9.9`) })])
+        expect(envelope.guidance[0].text).toBe(`run \`npx --no cockpit approve\` in ${f.project}, in a terminal outside the agent`)
+        // On the default branch the branch to commit on comes first, before the person's step.
+        expect(envelope.result.next.split('\n')).toEqual(['start a branch first: git switch -c cockpit-9.9.9 origin/main',
+            `run \`npx --no cockpit approve\` in ${f.project}, in a terminal outside the agent`])
+        expect(f.calls()).toEqual(['npm view @b00dea/cockpit version --json exempt='])
+        // The record names the release the agent resolved, so a later publish is not what the person approves.
+        expect(f.pending()).toEqual([expect.objectContaining({ argv: ['upgrade', '9.9.9', '--commit', '--config', f.config] })])
+
+        writeFileSync(join(f.project, 'notes.md'), 'unrelated\n')
+        const shown: Approval[] = []
+        const person = await f.cli(['approve', '--config', f.config], f.env, { confirm: async approval => (shown.push(approval), true) })
+        expect(person.status).toBe(0)
+        expect(shown).toEqual([{ title: `Upgrade cockpit from ${installedPackageMetadata.version} to 9.9.9`,
+            why: 'this installs a new package version, with Safe Chain\'s minimum package age check waived for @b00dea/cockpit only',
+            details: [`runs ${EXEMPTION}=@b00dea/cockpit npm install --save-dev --save-exact @b00dea/cockpit@9.9.9`,
+                `then ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${f.config}`,
+                'then commits the files it changed on main as "chore: upgrade cockpit to 9.9.9"'] },
+        // Something else may write while the install runs, so the person sees the exact list before it is staged.
+        { title: 'Commit the upgrade to 9.9.9 as "chore: upgrade cockpit to 9.9.9"',
+            why: 'these files changed while the upgrade ran; one that something else changed meanwhile would be committed with it',
+            details: ['AGENTS.md', 'package-lock.json', 'package.json'] }])
+        expect(f.calls().slice(1)).toEqual(['npm install --save-dev --save-exact @b00dea/cockpit@9.9.9 exempt=@b00dea/cockpit',
+            `cockpit sync --config ${f.config} exempt=`])
+        expect(f.git('log', '-1', '--format=%s', '--name-only').trim().split('\n').filter(Boolean))
+            .toEqual(['chore: upgrade cockpit to 9.9.9', 'AGENTS.md', 'package-lock.json', 'package.json'])
+        // Staged by explicit path: a file the upgrade did not write stays untracked.
+        expect(f.git('status', '--porcelain')).toBe('?? notes.md\n')
+        expect(f.pending()).toEqual([])
+    })
+
+    it('ends with the checklist in order: a branch when the tree was dirty or the branch is the default, the exact files, then check and doctor', async () => {
+        const dirty = repository({ branch: 'topic' })
+        writeFileSync(join(dirty.project, 'notes.md'), 'unrelated\n')
+        const run = await dirty.cli(['upgrade', '9.9.9', '--config', dirty.config, '--json'])
+        expect(run.status).toBe(0)
+        const check = `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config ${dirty.config}`
+        const doctor = `./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config ${dirty.config}`
+        expect(run.json().result.next.split('\n')).toEqual([
+            'start a branch first: git switch -c cockpit-9.9.9 origin/main (best run before the upgrade)',
+            "review git diff, then commit exactly the files the upgrade changed: git add -- AGENTS.md package-lock.json package.json && git commit -m 'chore: upgrade cockpit to 9.9.9' -- AGENTS.md package-lock.json package.json",
+            `run ${check}, then ${doctor}`,
+        ])
+        // A clean work branch with an upstream needs no new branch; a person reads each step on its own line.
+        // The root is named through a link, and the files are still named from it.
+        const clean = repository({ branch: 'topic' })
+        const linked = `${clean.project}-link`
+        symlinkSync(clean.project, linked)
+        roots.push(linked)
+        const config = join(linked, 'cockpit.toml')
+        const human = await clean.cli(['upgrade', '9.9.9', '--config', config])
+        expect(human.status).toBe(0)
+        expect(human.stdout).toContain("\nnext: review git diff, then commit exactly the files the upgrade changed: git add -- AGENTS.md package-lock.json package.json && git commit -m 'chore: upgrade cockpit to 9.9.9' -- AGENTS.md package-lock.json package.json\n"
+            + `next: run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config ${config}, then ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config ${config}\n`)
+        expect(human.stdout).not.toContain('git switch')
+    })
+
+    it('refuses --commit before installing while anything is staged, and commits nothing when a file it changed held edits', async () => {
+        const staged = repository({ branch: 'topic' })
+        writeFileSync(join(staged.project, 'notes.md'), 'unrelated\n')
+        staged.git('add', '--', 'notes.md')
+        const refused = await staged.cli(['upgrade', '9.9.9', '--commit', '--config', staged.config, '--json'])
+        expect(refused.status).toBe(2)
+        expect(refused.json().diagnostics).toEqual([expect.objectContaining({ code: 'UPGRADE_COMMIT_REFUSED', message: expect.stringContaining('notes.md') })])
+        expect(staged.calls()).toEqual([])
+        // Edits already in package.json would ride along under the upgrade's message, so nothing is committed.
+        const edited = repository({ branch: 'topic' })
+        writeFileSync(join(edited.project, 'package.json'), '{ "edited": true }\n')
+        const kept = await edited.cli(['upgrade', '9.9.9', '--commit', '--config', edited.config, '--json'])
+        expect(kept.status).toBe(2)
+        expect(kept.json().diagnostics).toEqual([expect.objectContaining({ code: 'UPGRADE_COMMIT_FAILED', message: expect.stringContaining('package.json') })])
+        expect(edited.git('log', '-1', '--format=%s').trim()).toBe('Create synthetic cockpit')
+        expect(edited.git('diff', '--cached', '--name-only')).toBe('')
     })
 })

@@ -1,5 +1,5 @@
 /**
- * Steps that wait for a person. When an agent's run of sync, reset, stacks prune or a person's work
+ * Steps that wait for a person. When an agent's run of sync, reset, stacks prune, upgrade or a person's work
  * step stops short of a person, cockpit records the command here; `cockpit approve`, which a person
  * runs in a terminal outside the agent, runs each one again against the current state with the person
  * answering. The record holds only what to run, never what to show, so nothing in it is trusted as
@@ -19,7 +19,7 @@ export const PENDING_APPROVALS_PATH = `${GUARD_LOCAL_PATHS.directory}/${NAME}`
 const MAX_ITEMS = 20
 const MAX_BYTES = 262_144
 /** The commands approve runs; any other in the record means cockpit did not write it. */
-const APPROVABLE = new Set(['sync', 'reset', 'stacks', 'work accept', 'work signoff', 'work acknowledge', 'work retry'])
+const APPROVABLE = new Set(['sync', 'reset', 'stacks', 'upgrade', 'work accept', 'work signoff', 'work acknowledge', 'work retry'])
 
 export type PendingApproval = Readonly<{ argv: readonly string[]; config: string; title: string; at: string }>
 type Read = Readonly<{ kind: 'complete'; items: readonly PendingApproval[] }> | Readonly<{ kind: 'refusal'; message: string }>

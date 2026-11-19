@@ -466,8 +466,11 @@ never applied silently. Installing a new cockpit also makes the guard hold every
    `./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config cockpit.toml --dry-run` resolves the target and
    prints the commands; show them to the person. `./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config cockpit.toml`
    (or `upgrade <version>`) then installs that exact release with the package manager the lockfile
-   names, runs `sync` in a new process, and prints the `Upgrade:` lines. An agent may run it
-   unless a widening waits for a person. When
+   names, runs `sync` in a new process, and prints the `Upgrade:` lines and its `next:` steps. Your
+   run installs nothing: it records the install for the person (`UPGRADE_PERSON_REQUIRED`), so start
+   the branch its output names first, then ask the person to run `npx --no cockpit approve` in the
+   cockpit root, in a terminal outside the agent. Add `--commit` to have that run commit exactly the
+   files it changed. When
    its sync fails (`UPGRADE_SYNC_FAILED`, for example on a change that widens what agents may do), the new
    version is already installed and the guard holds every guarded call: a person acts on what sync
    reported and runs `npx --no cockpit approve` in a
@@ -486,7 +489,8 @@ never applied silently. Installing a new cockpit also makes the guard hold every
 4. **Do what sync does not.** Read the newly installed `./node_modules/@b00dea/cockpit/CHANGELOG.md`
    between the old and new version for lines starting `Upgrade:`; each names a step that sync alone
    does not do. Done when every `Upgrade:` line has been done or reported to the person.
-5. **Commit together.** Ask the person to commit the lockfile and the regenerated files together.
+5. **Commit together.** Unless `--commit` did, commit exactly the files the upgrade's `next:` line
+   names, by path, then run the `check` and `doctor` it names.
    Done when `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json` exits 0.
 
 ## Keep checkouts and stacks current

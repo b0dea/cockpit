@@ -350,6 +350,11 @@ export function renderHumanDiagnostics(
         if (command === 'doctor') {
             return doctorSummary(outcome.result as Readonly<Record<string, unknown>>, outcome.diagnostics ?? [], fixContext)
         }
+        // An upgrade's next steps are a checklist, one line each, in the order a person takes them.
+        if (command === 'upgrade' && 'next' in outcome.result && typeof outcome.result.next === 'string') {
+            const { next, ...rest } = outcome.result
+            return renderHumanValue(rest) + next.split('\n').map(line => `next: ${escapeForTerminal(line)}\n`).join('')
+        }
         if (command === 'upgrade' || command === 'init' || command === 'stacks') {
             return renderHumanValue(outcome.result)
         }

@@ -1,4 +1,4 @@
-import { askApproval, askNote, personAbsence, shown, type Approval } from './operator-confirmation.js'
+import { agentSessionVariable, askApproval, askNote, personAbsence, shown, type Approval } from './operator-confirmation.js'
 import { readPendingApprovals, recordPendingApproval, removePendingApproval, type PendingApproval } from './pending-approvals.js'
 import { randomUUID } from 'node:crypto'
 import { ComposeProfileName, EVALUATOR_COMMANDS, runningEvaluatorTool, type EvaluatorTool } from './schema.js'
@@ -174,7 +174,8 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
         ) => Promise<GeneratedStaleRemovalApproval | undefined>
     }>
     up: UpCommandInput & Readonly<{ profiles: readonly string[] }>
-    upgrade: Readonly<{ configPath: string; version?: string; dryRun: boolean }>
+    upgrade: Readonly<{ configPath: string; version?: string; dryRun: boolean; commit?: boolean; agent?: boolean
+        confirm?: (approval: Approval) => Promise<boolean> }>
     use: Omit<UseCommandInput, 'env'>
     pull: Omit<PullCommandInput, 'env'>
 }
@@ -1127,10 +1128,10 @@ async function decodeRequest(
     }
 
     if (handler === 'upgrade') {
-        const values = parsed.values as { config?: string; 'dry-run'?: boolean }
+        const values = parsed.values as { config?: string; 'dry-run'?: boolean; commit?: boolean }
         if (parsed.positionals.length > 1) return usageOutcome('CLI_USAGE_INVALID', 'upgrade accepts at most one version')
         if (!values.config) return missingConfig()
-        return { handler, input: { configPath: values.config, dryRun: values['dry-run'] === true,
+        return { handler, input: { configPath: values.config, dryRun: values['dry-run'] === true, ...values.commit === true ? { commit: true } : {},
             ...(parsed.positionals[0] === undefined ? {} : { version: parsed.positionals[0] }) } }
     }
 
@@ -1368,7 +1369,9 @@ async function dispatchHandler(
     if (request.handler === 'docs-check') return handlers['docs-check']?.(request.input) ?? unavailable()
     if (request.handler === 'env-keys') return handlers['env-keys']?.(request.input) ?? unavailable()
     if (request.handler === 'env-schema') return handlers['env-schema']?.(request.input) ?? unavailable()
-    if (request.handler === 'upgrade') return handlers.upgrade?.(request.input) ?? unavailable()
+    // A person at approve answers the install; an agent's run leaves it for them.
+    if (request.handler === 'upgrade') return handlers.upgrade?.({ ...request.input,
+        ...confirm ? { confirm } : agentSessionVariable(options.env) ? { agent: true } : {} }) ?? unavailable()
     if (request.handler === 'up') return handlers.up?.(request.input) ?? unavailable()
     if (request.handler === 'sleep') return handlers.sleep?.(request.input) ?? unavailable()
     if (request.handler === 'session') return handlers.session?.(request.input) ?? unavailable()
@@ -1421,10 +1424,11 @@ function resetApproval(preview: CommandOutcome): Approval {
 // server that stays off until one approves it, or other cockpits' orphans only a person's machine-wide
 // prune removes, since their checkouts are gone. Other warnings ask nothing of a person.
 const PERSON_CODES: ReadonlySet<string> = new Set([ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED, ENVIRONMENT_CODES.RESET_CONFIRMATION_REQUIRED,
-    ENVIRONMENT_CODES.WORK_PERSON_REQUIRED])
+    ENVIRONMENT_CODES.WORK_PERSON_REQUIRED, ENVIRONMENT_CODES.UPGRADE_PERSON_REQUIRED])
 const waitsForPerson = (row: Diagnostic) => row.severity === 'error' && PERSON_CODES.has(row.code) || row.code === 'MCP_NOT_APPROVED'
     || row.code === ENVIRONMENT_CODES.STACKS_PRUNE_UNCONFIRMED
-const PERSON_TITLES: Partial<Record<HandlerIdentifier, string>> = { sync: 'Apply the cockpit.toml change', reset: 'Reset the stack', stacks: 'Remove orphaned stacks' }
+const PERSON_TITLES: Partial<Record<HandlerIdentifier, string>> = { sync: 'Apply the cockpit.toml change', reset: 'Reset the stack', stacks: 'Remove orphaned stacks',
+    upgrade: 'Upgrade cockpit' }
 
 // A step is recorded and found under one spelling of its configuration, whatever links led to it.
 async function canonicalConfig(configPath: string): Promise<string> {
@@ -1442,7 +1446,11 @@ async function recordForPerson(handler: HandlerIdentifier, configured: string, a
     const title = isPersonHandler(handler) ? (outcome.result as { title?: unknown } | null)?.title : PERSON_TITLES[handler]
     if (typeof title !== 'string' || args.includes('--dry-run') || !outcome.diagnostics.some(waitsForPerson)) return outcome
     const config = await canonicalConfig(configured)
-    const argv = args.filter((word, index) => word !== '--json' && word !== '--config' && args[index - 1] !== '--config' && !word.startsWith('--config='))
+    const words = args.filter((word, index) => word !== '--json' && word !== '--config' && args[index - 1] !== '--config' && !word.startsWith('--config='))
+    // An upgrade is recorded with the release the agent's run resolved, so a later publish is not what the person approves.
+    const resolved = (outcome.result as { to?: unknown } | null)?.to
+    const argv = handler === 'upgrade' && typeof resolved === 'string' && words.slice(1).every(word => word.startsWith('-'))
+        ? [words[0]!, resolved, ...words.slice(1)] : words
     const failed = await recordPendingApproval(dirname(config), { argv: [...argv, '--config', config], config, title, at: new Date().toISOString() })
     return failed === undefined ? outcome : { ...outcome, diagnostics: [...outcome.diagnostics, { severity: 'error', target: 'approve',
         code: 'APPROVAL_NOT_RECORDED', message: `this step could not be left for a person to approve: ${failed}`,

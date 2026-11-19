@@ -96,6 +96,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     ask: 'Record the note as an open question, which blocks the order until it is answered',
     apply: 'Apply the displayed reversible operation',
     command: 'With --scaffold-compose: the command that starts the app, as words separated by spaces',
+    commit: 'Stage exactly the files the upgrade changed, by path, and commit them; refused while anything else is staged',
     config: 'Path to cockpit.toml',
     create: 'Create a new local sibling repository',
     decision: 'With work note: record the text as a decision the order made, resolved with work decide before signoff. With work decide: number of the decision to resolve, as work status lists it',
@@ -284,9 +285,9 @@ const sources = [
         usage: '[<version>] [options]',
         handler: 'upgrade',
         visibility: 'public',
-        // The install is exact and its sync child decides as sync does, so an agent runs the real upgrade
-        // as it runs sync.
-        flags: { config: configFlag, 'dry-run': bool(), json: jsonFlag },
+        // An agent's run resolves the release and records the install for a person at approve; its sync
+        // child then decides as sync does.
+        flags: { config: configFlag, 'dry-run': bool(), commit: bool(), json: jsonFlag },
     },
     {
         name: 'sync',
