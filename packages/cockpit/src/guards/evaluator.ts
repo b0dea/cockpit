@@ -5,7 +5,7 @@ import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from './host.js'
 import { GuardCommandArgv, McpAllowedTools } from '../schema.js'
 import { renderGuardProjectCommand } from '../environment/install-policy.js'
 import { GUARD_LOCAL_PATHS } from './local-identity.js'
-import { classifyReadOnlyInvocation, cockpitLauncherPrefix, ghWords, gitContentOperands, gitGrepReadsIgnored, type ReadOnlyAccess } from './read-only.js'
+import { classifyReadOnlyInvocation, cockpitLauncherPrefix, findPrintsOnlyMetadata, ghWords, gitContentOperands, gitGrepReadsIgnored, type ReadOnlyAccess } from './read-only.js'
 import { SURFACE_EXECUTION_CONTROL_PATHS } from '../surfaces/harness-registry.js'
 import { AGENT_HOME_TOOLS, classifyAgentHomeEntry, type AgentHomeTool } from './agent-homes.js'
 
@@ -1956,10 +1956,16 @@ function sourceTrees(invocation: ParsedInvocation): { readonly paths: readonly s
         operands.push(arg)
     }
     if (name === 'tar') return { paths: tarWrites(invocation.argv).sources, followsLinks: false }
-    // A program find runs on what it finds may read it, through links, whether or not the guard knows the program.
+    // A program find runs on what it finds may read it, through links, whether or not the guard knows the program,
+    // unless it prints only facts about the found paths and find's own tests name no secret, as `-name '.env*'` does;
+    // a bare `*` names nothing, and a regular expression is not read.
     if (name === 'find') {
         const roots = invocation.argv.slice(0, Math.max(0, invocation.argv.findIndex(arg => arg.startsWith('-') || arg === '!' || arg === '(')))
+        const selectsSecret = invocation.argv.some((arg, at) => /^-i?regex$/.test(arg) || /^-i?(?:name|path|wholename)$/.test(arg)
+            && (invocation.argv[at + 1] ?? '').split('/').some(component => !/^[*?]*$/.test(component) && SECRET_SAMPLES.some(sample => (arg.startsWith('-i')
+                ? globPattern(component.toLowerCase()).test(sample.toLowerCase()) : globPattern(component).test(sample)))))
         const execs = invocation.argv.some((arg, at) => /^-(?:exec|execdir|ok|okdir)$/.test(arg) && invocation.argv.slice(at + 1).some(word => word.includes('{}')))
+            && (selectsSecret || !findPrintsOnlyMetadata(invocation.argv))
         return execs ? { paths: roots.length ? roots : ['.'], followsLinks: true } : undefined
     }
     // zip names its archive first; the others name their destination last. A zip flag cluster counts as

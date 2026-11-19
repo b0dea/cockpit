@@ -1707,6 +1707,24 @@ describe('allow by default', () => {
         expect(run('find src -exec unknowntool {} +').decision).toBe('allow')
     })
 
+    it('skips the secret search for find handing its paths to a program that prints only their names, sizes, counts or types', () => {
+        const secret = onBranch('refs/heads/topic', undefined, { sourceSecret: true })
+        for (const command of ["find . -name '*.md' -exec wc -l {} +", 'find . -name .github -type d -exec ls {} +', "find . -exec stat -f '%m %N' {} +",
+            'find . -type d -exec du -sh {} +', "find . -path '*/docs/*' -name '*.md' -exec file -b {} +", 'find . -type l -exec readlink {} \\;', 'find . -execdir basename {} \\;']) {
+            expect(run(command, open(), secret).decision, command).toBe('allow')
+        }
+        // A program that prints what it reads keeps the search, and so do options that print a found file's text:
+        // `--files0-from` and `file -f` read it as a list of names and echo the ones they cannot open.
+        for (const command of ['find . -exec cat {} +', 'find . -exec head -1 {} +', 'find . -exec grep -h KEY {} +', 'find . -exec file -z {} +',
+            'find . -exec file -f {} +', 'find . -exec wc --files0-from {} +', 'find . -exec du --files0-from {} +', 'find . -exec ls {} + -exec cat {} +']) {
+            expect(run(command, open(), secret).decision, command).not.toBe('allow')
+        }
+        // find's own test naming a secret keeps the search, whatever the program prints.
+        for (const command of ["find . -name '.env*' -exec wc -c {} +", "find . -iname '*.KEY' -exec ls {} +", "find . -path '*/.secrets/*' -exec stat {} +"]) {
+            expect(run(command, open(), secret).decision, command).toBe('deny')
+        }
+    })
+
     it('judges forced checkouts, aborts and new worktrees against the files on disk, and asks for plumbing that moves HEAD under them', () => {
         // HEAD moved onto a crafted commit (`reset --soft`), then a forced checkout, wrote agent settings over the
         // ones on disk while every comparison with HEAD found nothing.

@@ -536,7 +536,10 @@ or a URL; `gh api` is left out, because its `GET` returns any file the repositor
   read-only only when the command they run is itself in this profile with `{}` in place of the found
   path; what it reads then counts as reading everything below find's roots, through links, and under
   `-execdir` it names no other path. Whatever program find hands `{}`, its roots are searched for
-  secrets through links. `git grep --no-index`, and `--untracked` with `--no-exclude-standard`, are
+  secrets through links, unless every program it runs prints only names, sizes, counts, types or link
+  targets (`ls`, `stat`, `du`, `basename`, `dirname`, `realpath`, `readlink`, `wc` with `-l`, `-w`,
+  `-c`, `-m` or `-L`, and `file` without `-z`, `-Z`, `-f` or `-m`; `--files0-from` reads a found file
+  as names) and find's own `-name` or `-path` names no secret, as `-name '.env*'` does. `git grep --no-index`, and `--untracked` with `--no-exclude-standard`, are
   judged as a recursive search of the paths they name, or of the working directory, since they read
   ignored files.
 - Options whose value is optional, such as `grep --context` on macOS, are accepted only as

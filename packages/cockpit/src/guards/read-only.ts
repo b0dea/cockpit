@@ -169,6 +169,31 @@ const FIND_FLAG = set('-print', '-print0', '-prune', '-empty', '-not', '!', '-a'
 const FIND_EXEC = set('-exec', '-execdir', '-ok', '-okdir')
 // What a found path becomes in the command find runs: never a path of the tree, so its place in the access is plain.
 const FOUND = '\0found'
+// Programs that print only the names, sizes, counts, types or link targets of the paths find hands them, never their
+// text, so what find finds is not searched for secrets as a reader's tree is. Each pattern admits the words that keep
+// it so: `--files0-from` and `file -f` read a found file as a list of names and echo the ones they cannot open, and
+// `file -z` and `-Z` look inside compressed files. `file` may still quote a few bytes some formats' magic describes.
+const ANY_BUT_NAME_LIST = /^(?!--files0-from)/
+const FOUND_METADATA: ReadonlyMap<string, RegExp> = new Map([
+    ['wc', /^(?:-[clmwL]+|--(?:lines|words|bytes|chars|max-line-length))$/],
+    ['file', /^(?:-[bhiIkLnN0]+|--(?:brief|mime|mime-type|mime-encoding|extension|dereference|no-dereference|no-pad|no-buffer|keep-going|print0))$/],
+    ...['ls', 'stat', 'du', 'basename', 'dirname', 'realpath', 'readlink'].map(name => [name, ANY_BUT_NAME_LIST] as const),
+])
+
+/** Whether every program `find` runs on what it finds prints only facts about the found paths, never their text. */
+export function findPrintsOnlyMetadata(argv: readonly string[]): boolean {
+    let clauses = 0
+    for (let index = 0; index < argv.length; index++) {
+        if (!FIND_EXEC.has(argv[index]!)) continue
+        const end = argv.findIndex((item, at) => at > index && (item === ';' || item === '+' && argv[at - 1] === '{}'))
+        const [program, ...args] = argv.slice(index + 1, end < 0 ? undefined : end)
+        const allowed = program === undefined ? undefined : FOUND_METADATA.get(program)
+        if (end < 0 || !allowed || args.some(arg => arg !== '{}' && (arg.includes('{}') || !allowed.test(arg)))) return false
+        clauses++
+        index = end
+    }
+    return clauses > 0
+}
 
 /**
  * find lists its roots; a command it runs on each found path is read-only only when the profile classifies it so with
@@ -195,7 +220,7 @@ function find(argv: readonly string[], cwd: string, environment: { readonly ripg
             access.reads.push(...found(ran.reads))
             access.trees.push(...found(ran.trees))
             // find lists a link without following it, but the program it hands the link to reads what it names.
-            if ([...ran.reads, ...ran.trees].includes(FOUND)) { access.trees.push(...tree); access.followsLinks = true }
+            if ([...ran.reads, ...ran.trees].includes(FOUND) && !findPrintsOnlyMetadata(argv)) { access.trees.push(...tree); access.followsLinks = true }
             access.listings.push(...found(ran.listings))
             index = end
             continue
