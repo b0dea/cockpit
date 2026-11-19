@@ -1517,6 +1517,31 @@ describe('allow by default', () => {
         expect(run('case x in a) git push origin feat;; esac; echo main').decision).toBe('deny')
     })
 
+    it('judges a written path as the command spells it, never as the names its sources make below a directory', () => {
+        for (const command of ['cp src/*.ts build/', 'cp src/*.json build/out/']) expect(run(command).decision, command).toBe('allow')
+        for (const command of ['cp src/*.json .claude/', 'cp build/* .cockpit/guards/']) expect(run(command).decision, command).toBe('deny')
+    })
+
+    it('asks when a builtin that sets a variable is handed its name through an expansion', () => {
+        for (const command of ['a=GIT_EXTERNAL; b=_DIFF; export "$a$b=rm"; git diff', 'a=GIT_EXTERNAL; b=_DIFF; declare -x "$a$b=rm"',
+            'a=GIT_EXTERNAL; b=_DIFF; printf -v "$a$b" rm; export "$a$b"', "read -r n v <<< 'GIT_EXTERNAL_DIFF rm'; export \"$n=$v\"", 'export $(cat build/env.txt)']) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+        for (const command of ['export FOO=1', 'read -r line < notes.txt', "printf -v out '%s' x", 'export "FOO=$HOME"']) expect(run(command).decision, command).toBe('allow')
+    })
+
+    it('asks before a write to a path holding an expansion the call sets, unless it is the first command\'s literal', () => {
+        for (const command of ['X=.claude; cp build/a "$X/settings.json"', 'X=.claude; git log -1 --format=%B --output "$X/settings.json"',
+            'X=$(printf %s/%s .claude settings.json); cp build/a "$X"', 'X=`printf %s/%s .claude settings.json`; cp build/a "$X"', 'read -r X < build/p.txt; cp build/a "$X"',
+            'cp build/a "$(printf %s/%s .claude settings.json)"', 'export GIT_TRACE="$PWD/.claude/settings.json"; git status', 'X=/abs/.claude; GIT_TRACE="$X/settings.json" git status',
+            'read -r GIT_TRACE < build/p.txt; export GIT_TRACE; git status', 'export EDITOR=vim; git commit -m done']) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+        for (const command of ['X=build/out.txt; cp a "$X"', 'cp a build/b', 'GIT_TRACE=1 git status', 'for f in src/*.ts; do cp "$f" build/; done']) {
+            expect(run(command).decision, command).toBe('allow')
+        }
+    })
+
     it('reads a pathspec of a Git verb that only prints or lists as a selection, and keeps judging one that writes', () => {
         for (const command of ["git grep -n -- '--interactive' -- ':!workorders/evidence' ':!.cockpit'", "git grep -n x -- ':^.cockpit'", "git log --oneline -- ':(exclude).cockpit'",
             "git diff --stat -- '.cockpit/*'", "git ls-files -- '.cockpit/*'", "git status -- ':/.cockpit'"]) {

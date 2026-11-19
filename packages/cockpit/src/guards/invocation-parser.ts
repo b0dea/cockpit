@@ -664,7 +664,7 @@ interface Context { readonly options: GuardParseOptions; readonly definitions: S
 // Names the shell itself sets as commands run, whatever the list assigned them.
 const SHELL_SET = /^(?:_|REPLY|OPTARG|OPTIND|MAPFILE|BASH_\w*|PWD|OLDPWD|IFS|HOME|RANDOM|SECONDS|LINENO|reply|match|MATCH)$/
 
-/** The path a redirect to a plain `$NAME` in the call's second command writes, when its first assigned NAME a literal. */
+/** The value a plain `$NAME` in the call's second command stands for, when its first command assigned NAME a literal. */
 function heldTarget(target: Token, tokens: readonly Token[], context: Context): string | undefined {
     const name = /^\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)\})$/.exec(target.value)?.slice(1).find(Boolean)
     const held = context.depth === 0 && context.literals?.commands === 1 ? context.literals.held : undefined
@@ -702,7 +702,11 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
                 redirectPaths.push({ target: path(value), write: token.value !== '<', truncate: token.value === '>' || token.value === '>|' })
             } else if (['>&', '<&'].includes(token.value) && !/^(?:\d+|-)$/.test(value)) refuse('Unsupported descriptor redirect.')
         } else if (token.kind !== 'word') refuse('Unsupported shell operator.')
-        else args.push(token)
+        else {
+            // An operand that is the call's first-command literal is that literal; the program's own name stays as spelled.
+            const held = token.dynamic && !token.status && !token.braced && args.some(item => !ASSIGNMENT.test(item.value)) ? heldTarget(token, tokens, context) : undefined
+            args.push(held === undefined ? token : { ...token, value: held, dynamic: false })
+        }
     }
     // Definitions are data until invoked. Never guess the shell's alias expansion mode.
     if (args[0]?.value === 'alias') {

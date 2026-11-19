@@ -2798,6 +2798,11 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         && item.words.slice(1).every(word => word.role === 'argument' && (!word.dynamic || plainGlob(word)) && inRoots(posix.resolve(item.cwd, word.value))))
         .map(item => [item.words[0]!.value, item.words.slice(1).map(word => word.value)]))
     const references = (value: string) => [...value.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g)].map(match => match[1]!)
+    // Names the call itself sets: by assignment, as a loop variable or in a definition, or through a builtin handed the name.
+    // A variable it never sets holds what the environment gave it, which no command in the call chose.
+    const setInCall = new Set(invocations.flatMap(item => [
+        ...item.words.flatMap(word => word.role === 'environment-assignment-value' && word.name !== undefined ? [word.name] : word.role === 'definition' ? [word.value] : []),
+        ...VARIABLE_SETTERS.has(posix.basename(item.executable ?? '')) ? item.argv.filter(arg => !arg.startsWith('-')).map(arg => arg.split('=')[0]!) : []]))
     // A glob in a path's last component that a declared secret path, instance or the secrets root could
     // match, or that lies inside one: `rg KEY var/sess*` searches the secret directory it expands to.
     const globReachesProtected = (word: string, cwd: string) => {
@@ -2817,10 +2822,13 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         return [...secretPaths, fold(secretRoot), ...resolved.instances.map((item) => fold(item.path))]
             .some(path => parts.some((_, at) => at > 0 && new RegExp(`^${parts.slice(0, at + 1).map(component).join('/')}$`).test(path)))
     }
-    // A written path holding a glob writes whatever the shell expands it to, and bracket classes and the shells' extended
-    // globs leave no pattern the guard can match against what it protects, so it asks.
-    const globWrite = (invocation: ParsedInvocation, path: string) => {
+    // A written path holding a glob, a variable or a command substitution writes whatever the shell expands it to, and
+    // bracket classes and extended globs leave no pattern the guard can match against what it protects, so it asks. Only a
+    // path as the command spells it counts: `cp src/*.ts build/` names `build/`, not the `build/*.ts` its sources make.
+    const unseenWrite = (invocation: ParsedInvocation, path: string, spelled = true) => {
+        if (!spelled && !invocation.argv.some(word => word === path || word.endsWith(`=${path}`) || word.startsWith('-') && word.endsWith(path))) return
         if (/[*?[]/.test(path)) holdBoundary(invocation, ask(`${named(invocation)} writes to ${shownGuardWord(path)}, a path holding a glob, which the shell can expand to any file, a guard control included. Write the path out.`))
+        else if (/\$\(|`/.test(path) || references(path).some(name => setInCall.has(name))) holdBoundary(invocation, ask(`${named(invocation)} writes to ${shownGuardWord(path)}, a path holding an expansion the call sets and the guard cannot see. Write the path out, or assign it as the call's first command, \`NAME=path; <command> "$NAME"\`.`))
     }
     // Whether a command makes a link, or moves or copies an existing one, which a later write could follow.
     const makesLink = (invocation: ParsedInvocation) => {
@@ -2881,7 +2889,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         for (const redirect of invocation.redirects) {
             // A control file's own denial names the stronger boundary, so it is held last.
             if (redirect.truncate) inspectRemoval(redirect.target, invocation.cwd)
-            if (redirect.write) { globWrite(invocation, redirect.target); inspectPath({ path: redirect.target, cwd: invocation.cwd, operation: 'write' }) }
+            if (redirect.write) { unseenWrite(invocation, redirect.target); inspectPath({ path: redirect.target, cwd: invocation.cwd, operation: 'write' }) }
             // `/dev/tcp/<host>/<port>` opens a connection to that host.
             if (/^\/dev\/(?:tcp|udp)\//.test(redirect.target)) {
                 if (resolved.hostedDatabaseHosts.some((host) => hostUsed(redirect.target, host))) hold(deny('Refusing executable use of a declared hosted database host.'))
@@ -2951,7 +2959,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const writeCwd = git && ['archive', 'mv'].includes(git.verb) ? git.cwd : invocation.cwd
             for (const path of writes.paths) {
                 pathCount++
-                globWrite(invocation, path)
+                unseenWrite(invocation, path, false)
                 inspectPath({ path, cwd: writeCwd, operation: 'write' }, true)
                 if (writes.removes) inspectRemoval(path, writeCwd)
             }
@@ -2977,7 +2985,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const optioned = optionWrites(invocation, git)
         for (const path of optioned?.paths ?? []) {
             pathCount++
-            globWrite(invocation, path)
+            unseenWrite(invocation, path, false)
             inspectPath({ path, cwd: optioned!.cwd, operation: 'write' }, true)
         }
         // A download that names its own file writes that file, and one whose name the server or a glob
@@ -2985,7 +2993,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const downloads = downloadWrites(invocation)
         for (const path of [...downloads?.paths ?? [], ...decompressedWrites(invocation)]) {
             pathCount++
-            globWrite(invocation, path)
+            unseenWrite(invocation, path, false)
             inspectPath({ path, cwd: invocation.cwd, operation: 'write' }, true)
         }
         const naming = unseenMembers
@@ -3121,18 +3129,30 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 && (name !== 'SSH_ASKPASS' || prefixed.some(other => other.name === 'SSH_ASKPASS_REQUIRE')) && name !== 'SSH_ASKPASS_REQUIRE')
             if (program) holdBoundary(invocation, ask(`${named(invocation)} runs with ${program.name} set to ${shownGuardWord(program.value)}, a program Git runs. Run it without that variable, or a person runs it.`))
             // A trace variable holding a path appends Git's trace to that file.
-            for (const word of prefixed) if (/^GIT_TRACE/.test(word.name!) && word.value.includes('/')) {
+            for (const word of prefixed) if (/^GIT_TRACE/.test(word.name!) && /[/$`]/.test(word.value)) {
                 const path = word.value.replace(/^af_unix:(?:stream:|dgram:)?/, '')
                 pathCount++
-                globWrite(invocation, path)
+                unseenWrite(invocation, path)
                 inspectPath({ path, cwd: invocation.cwd, operation: 'write' }, true)
             }
         } else {
             const sets = invocation.executable === null
                 ? invocation.words.filter(word => word.role === 'environment-assignment-value' || word.role === 'definition').map(word => word.role === 'definition' ? word.value : `${word.name}=${word.value}`)
                 : VARIABLE_SETTERS.has(program) ? invocation.argv : []
-            const setting = sets.find(word => NAMES_GIT_PROGRAM.test(word) && !(/^\w+=/.test(word) && plainGitProgram(word.slice(0, word.indexOf('=')), word.slice(word.indexOf('=') + 1))))
-            if (setting !== undefined) holdBoundary(invocation, ask(`${named(invocation)} sets ${shownGuardWord(setting)}, a variable naming a program Git runs, which reaches every later command and any Git a child process runs. Set it as a prefix of the git command itself, or a person runs it.`))
+            // A trace variable set elsewhere writes its file from every later Git; one whose value the guard cannot see may too.
+            const setting = sets.find(word => NAMES_GIT_PROGRAM.test(word) && !(/^\w+=/.test(word) && plainGitProgram(word.slice(0, word.indexOf('=')), word.slice(word.indexOf('=') + 1)))
+                || /^GIT_TRACE\w*(?:$|=.*[/$`])/s.test(word))
+            if (setting !== undefined) holdBoundary(invocation, ask(`${named(invocation)} sets ${shownGuardWord(setting)}, a variable naming a program Git runs or a file it writes, which reaches every later command and any Git a child process runs. Set it as a prefix of the git command itself, or a person runs it.`))
+        }
+        // A builtin handed a variable's name through an expansion can set any variable, one that steers Git included.
+        if (VARIABLE_SETTERS.has(program) && invocation.executable !== null) {
+            const words = invocation.words.filter(word => word.role === 'argument')
+            const values = program === 'printf' ? ['-v'] : program === 'read' ? ['-p', '-d', '-t', '-n', '-N', '-u', '-i']
+                : ['mapfile', 'readarray'].includes(program) ? ['-d', '-n', '-O', '-s', '-u', '-C', '-c'] : []
+            const names = words.filter((word, at) => program === 'printf' ? words[at - 1]?.value === '-v' || /^-v./.test(word.value)
+                : program === 'getopts' ? at === 1 : !word.value.startsWith('-') && !values.includes(words[at - 1]?.value ?? ''))
+            const hidden = names.find(word => word.dynamic && /[$`]/.test(word.value.split('=')[0]!))
+            if (hidden) holdBoundary(invocation, ask(`${posix.basename(invocation.executable)} is handed the variable name ${shownGuardWord(hidden.value)} through an expansion, so it can set any variable, one naming a program Git runs included. Write the name out.`))
         }
         // A value held for a later word names the path that word writes, which the guard then cannot see.
         for (const { value } of assigned) {
