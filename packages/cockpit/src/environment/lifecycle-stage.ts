@@ -65,6 +65,31 @@ export interface LifecycleRecordValue extends LifecycleProgress {
     readonly steady?: true
     /** When `environment.seed` last succeeded, so the next `up` seeds again only into volumes created since. */
     readonly seededAt?: string
+    /**
+     * What the stack was started under besides its files: up resumes a stack only under the same
+     * runtime and ports, and a refusal names which of them differs instead of blaming unchanged files.
+     */
+    readonly startedWith?: StartedWith
+}
+
+export interface StartedWith {
+    readonly runtimeVersion: string
+    readonly composeVersion: string
+    readonly executableSha256: string
+    readonly ports: Readonly<Record<string, number>>
+}
+
+function decodeStartedWith(value: unknown): StartedWith | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+        || !exactKeys(value, ['composeVersion', 'executableSha256', 'ports', 'runtimeVersion'], [])) return undefined
+    const { runtimeVersion, composeVersion, executableSha256, ports } = value as Record<string, unknown>
+    const version = (item: unknown): item is string => typeof item === 'string' && item.length > 0 && item.length <= 128 && !/[\u0000-\u001f]/u.test(item)
+    if (!version(runtimeVersion) || !version(composeVersion) || typeof executableSha256 !== 'string' || !lifecycleDigest.test(executableSha256)
+        || !ports || typeof ports !== 'object' || Array.isArray(ports)) return undefined
+    const entries = Object.entries(ports)
+    if (entries.length > 64 || entries.some(([name, port]) => name.length === 0 || name.length > 128
+        || !Number.isSafeInteger(port) || (port as number) < 1 || (port as number) > 65_535)) return undefined
+    return { runtimeVersion, composeVersion, executableSha256, ports: Object.fromEntries(entries) as Record<string, number> }
 }
 
 export type RuntimeInputs = Readonly<Record<string, string>>
@@ -124,7 +149,7 @@ export function decodeLifecycleRecord(
 ): CurrentLifecycleRecord | undefined {
     const value = snapshotJson(record.value)
     if (!value || typeof value !== 'object' || Array.isArray(value)
-        || !exactKeys(value, ['completedServices', 'holderId', 'operationGeneration', 'workBasisSha256'], ['activeProfiles', 'runtimeInputs', 'seededAt', 'steady', 'teardownComplete'])
+        || !exactKeys(value, ['completedServices', 'holderId', 'operationGeneration', 'workBasisSha256'], ['activeProfiles', 'runtimeInputs', 'seededAt', 'startedWith', 'steady', 'teardownComplete'])
         || record.format !== 'cockpit-state/v1' || record.kind !== 'lifecycle'
         || record.cockpitId !== context.cockpitId || record.subjectId !== context.stackId) return undefined
     const candidate = value as Record<string, unknown>
@@ -145,6 +170,8 @@ export function decodeLifecycleRecord(
             || name.includes('\0') || typeof digest !== 'string' || !lifecycleDigest.test(digest))) return undefined
         runtimeInputs = Object.fromEntries(entries)
     }
+    const startedWith = Object.hasOwn(candidate, 'startedWith') ? decodeStartedWith(candidate.startedWith) : undefined
+    if (Object.hasOwn(candidate, 'startedWith') && (teardownComplete || !startedWith)) return undefined
     let activeProfiles: readonly string[] | undefined
     if (Object.hasOwn(candidate, 'activeProfiles')) {
         const value = candidate.activeProfiles
@@ -171,6 +198,7 @@ export function decodeLifecycleRecord(
             ...(teardownComplete ? { teardownComplete: true as const } : {}),
             ...(runtimeInputs ? { runtimeInputs } : {}),
             ...(activeProfiles ? { activeProfiles } : {}),
+            ...(startedWith ? { startedWith } : {}),
             ...(candidate.steady === true ? { steady: true as const } : {}),
             ...(typeof candidate.seededAt === 'string' ? { seededAt: candidate.seededAt } : {}),
             workBasisSha256: candidate.workBasisSha256,

@@ -10,6 +10,7 @@ import { ENVIRONMENT_CODES, type Diagnostic, type EnvironmentDiagnostic, type Ex
 import { selectLocalDockerDaemon } from './docker-daemon.js'
 import { resolveDockerExecutable, resolveGitExecutable, type ResolvedExecutable } from './executable.js'
 import { checkoutId as deriveCheckoutId, stackId as deriveStackId } from './identity.js'
+import { observeProcessStart, processHost } from './claims.js'
 import { discoverMachineStacks } from './reclaim.js'
 import { consumeSetupCheckoutProjection, observeSetupCheckout, withSetupCheckoutProjection } from './setup-observation.js'
 import { observeMachineStacks, refuse, type Observation, type OwnCheckout, type Refusal } from './stack-inventory.js'
@@ -65,12 +66,14 @@ export async function loadStacksContext({ configPath, env }: StacksInput, execut
     }
 }
 
-export async function observeWithDocker(context: StacksContext, execute: Executor): Promise<Observation | Refusal> {
+// Only the listing reads each holder's process: prune acts on stacks whose checkout is gone, not on holds.
+export async function observeWithDocker(context: StacksContext, execute: Executor, readHolders = false): Promise<Observation | Refusal> {
     const discovery = await discoverMachineStacks(context.docker, execute)
     if (discovery === undefined) return refuse(ENVIRONMENT_CODES.RUNTIME_UNAVAILABLE,
         `the containers, networks and volumes cockpit labels could not be listed on Docker context ${context.docker.context}`, 'docker',
         'start Docker, or select the local context that runs cockpit stacks, then retry')
-    return observeMachineStacks({ namespace: context.namespace, own: context.own, discovery })
+    return observeMachineStacks({ namespace: context.namespace, own: context.own, discovery,
+        ...readHolders ? { observeProcess: (pid: number) => observeProcessStart(pid, processHost(execute)) } : {} })
 }
 
 export interface StacksOutcome {
@@ -87,7 +90,7 @@ export function refusalStatus(refusal: Refusal): StacksOutcome {
 export async function runStacksInventory(input: StacksInput, dependencies: Readonly<{ execute: Executor }>): Promise<StacksOutcome> {
     const context = await loadStacksContext(input, dependencies.execute)
     if ('kind' in context) return refusalStatus(context)
-    const observed = await observeWithDocker(context, dependencies.execute)
+    const observed = await observeWithDocker(context, dependencies.execute, true)
     if ('kind' in observed) return refusalStatus(observed)
     const orphaned = observed.inventory.stacks.filter(({ verdict }) => verdict === 'orphaned').length
         + observed.inventory.stateFolders.filter(({ verdict }) => verdict === 'orphaned').length

@@ -23,12 +23,13 @@ import { createHealthCommandAdapters } from './health-composition.js'
 import { createReadCommandAdapters } from './read-composition.js'
 import { runServiceExec, runServicePs, runServiceRestart } from './application/services.js'
 import { readState } from './state.js'
-import { decodeCoordinationRecord, readActiveStackInventory } from './claims.js'
+import { decodeCoordinationRecord, readActiveStackInventory, releaseStoppedStack } from './claims.js'
 import { observeProcessStart, processHost } from './claims.js'
 import { checkGeneratedEnvironment } from './generated-application/check.js'
 import { syncGeneratedEnvironment } from './generated-application/sync.js'
 import { checkoutId, composeProjectName, holderId } from './identity.js'
 import { leasePortFamily } from './ports.js'
+import { observeMachineStacks } from './stack-inventory.js'
 import {
     resolveRuntimeServiceOrder,
     type RuntimeTopologyEvidence,
@@ -1401,5 +1402,221 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         const coordination = await readState(first.context.namespace.paths.coordination(first.context.stackId))
         if (coordination.kind !== 'complete') throw new Error(JSON.stringify(coordination))
         expect(decodeCoordinationRecord(coordination.value, first.context.stackId)?.lease).toMatchObject({ released: false, ports: { APP_HOST_PORT: 4200 } })
+    })
+
+    // An agent tool that gives up on a server during a cold start kills its `cockpit session` wrapper
+    // outright, which leaves a hold whose process is gone and a stack only partly started. Doctor
+    // called that a missing runtime, which its readiness summary put down to the Compose version.
+    it('names a start a killed session left unfinished, lists its hold as ended, and lets up finish it', async () => {
+        const first = await runStackScenario()
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const configPath = first.candidate.configPath
+        const env = { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home }
+        expect(await runDown({ configPath }, createDestructiveCommandAdapters({ configPath, env, sessionId: 'stack-production', timeoutMs: 5_000, dockerContext: 'default' }, executeProbe)))
+            .toMatchObject({ kind: 'complete', result: { change: 'removed' } })
+        await configureStackDocker(first.candidate, first.context)
+        // Health reads of a starting service wait, as they do through a cold start.
+        const hang = join(first.candidate.root, 'health-reads-wait')
+        await writeFile(first.candidate.dockerPath, (await readFile(first.candidate.dockerPath, 'utf8')).replace('joined="$*"\n',
+            `joined="$*"\ncase "$joined" in *inspect*) if [ -f '${hang}' ]; then /bin/sleep 60; fi ;; esac\n`), { mode: 0o700 })
+        await writeFile(hang, '')
+        const stopped = join(first.candidate.root, 'runtime-stopped')
+        const wrapper = spawn(process.execPath, [resolve('packages/cockpit/bin/cockpit.mjs'), 'session', '--config', configPath, '--', '/usr/bin/true'],
+            { env: { ...env, PATH: `${first.candidate.root}:/usr/bin:/bin` }, stdio: 'ignore' })
+        const exited = once(wrapper, 'exit')
+        try {
+            // Compose was asked to start the service once the stopped marker is gone.
+            for (let waited = 0; await readFile(stopped).then(() => true, () => false); waited += 1) {
+                if (waited > 600) throw new Error('the session never started the stack')
+                await new Promise((settle) => setTimeout(settle, 100))
+            }
+            await new Promise((settle) => setTimeout(settle, 1_000))
+        } finally {
+            wrapper.kill('SIGKILL')
+            await exited
+        }
+        await rm(hang)
+
+        const doctor = await runDoctor({ configPath }, createHealthCommandAdapters({ configPath, env, timeoutMs: 5_000 }, executeProbe))
+        expect(doctor.diagnostics[0], JSON.stringify(doctor.diagnostics)).toMatchObject({ code: 'STACK_NOT_RUNNING', target: first.context.stackId,
+            message: expect.stringContaining('the session that was starting this stack ended before it finished'),
+            fix: cockpitCommand('up', { config: configPath }) })
+        expect(doctor.diagnostics.map(({ code }) => code)).not.toContain('RUNTIME_UNAVAILABLE')
+        expect((doctor.result as { readiness: { gaps: readonly { id: string }[] } }).readiness.gaps.map(({ id }) => id)).not.toContain('container-runtime')
+
+        // `stacks` lists the machine's stacks from this observation; the hold the killed session left is ended.
+        const stacks = await observeMachineStacks({ namespace: first.context.namespace,
+            own: { cockpitId: first.context.cockpitId, stackId: first.context.stackId, mainCheckoutPath: first.candidate.checkout },
+            observeProcess: (pid) => observeProcessStart(pid, processHost(executeProbe)) })
+        if ('kind' in stacks) throw new Error(JSON.stringify(stacks))
+        expect(stacks.inventory.stacks.find(({ stackId }) => stackId === first.context.stackId)).toMatchObject({ state: { holders: 1, endedHolders: 1 } })
+
+        const finished = await runUp({ configPath }, createLifecycleCommandAdapters({ configPath, env, sessionId: 'stack-production', timeoutMs: 5_000 }, executeProbe))
+        expect(finished, JSON.stringify(finished)).toMatchObject({ kind: 'complete', status: 0 })
+    })
+
+    // A wrapper whose server exits at once sleeps as soon as its up returns. The sessions that waited
+    // behind its bring-up then tried to join while that sleep ran, and up refused them outright.
+    it('starts sessions that begin together when one of them ends at once, and leaves the stack stopped after the last', async () => {
+        const first = await runStackScenario()
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const configPath = first.candidate.configPath
+        const env = { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home }
+        expect(await runDown({ configPath }, createDestructiveCommandAdapters({ configPath, env, sessionId: 'stack-production', timeoutMs: 5_000, dockerContext: 'default' }, executeProbe)))
+            .toMatchObject({ kind: 'complete' })
+        let sleeping!: () => void
+        const sleepStarted = new Promise<void>((settle) => { sleeping = settle })
+        const sessionIds = ['mcp-exits', 'mcp-product', 'mcp-browser']
+        const adapters = sessionIds.map((sessionId) => createLifecycleCommandAdapters({ configPath, env, sessionId, timeoutMs: 5_000 }, executeProbe))
+        // The first wrapper's sleep holds the stack's teardown while the others come to join.
+        const slowSleep = createLifecycleCommandAdapters({ configPath, env, sessionId: sessionIds[0]!, timeoutMs: 5_000 }, async (step) => {
+            sleeping()
+            await new Promise((settle) => setTimeout(settle, 1_500))
+            return executeProbe(step)
+        })
+        const loaded = await adapters[0]!.load({ configPath })
+        if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
+        await configureStackDocker(first.candidate, loaded.result)
+        let settled = 0
+        let everyUpSettled!: () => void
+        const allSettled = new Promise<void>((settle) => { everyUpSettled = settle })
+
+        const sessions = await Promise.all(adapters.map((sessionAdapters, index) => runSession({
+            configPath, argv: ['synthetic-mcp-server'], cwd: first.candidate.checkout, env,
+        }, {
+            up: async (input) => {
+                if (index > 0) await sleepStarted
+                const up = await runUp(input, sessionAdapters)
+                if (++settled === sessionIds.length - 1) everyUpSettled()
+                return up
+            },
+            sleep: (input) => runSleep(input, index === 0 ? slowSleep : sessionAdapters),
+            resolveExecutable: async () => ({ state: 'available', value: {
+                canonicalPath: process.execPath, invocationPath: process.execPath,
+                sha256: '1'.repeat(64), executionMode: 'verified-path',
+            } }),
+            executeForeground: async () => {
+                if (index === 0) return { kind: 'complete', exitCode: 1, signal: null, terminationConfirmed: true }
+                await allSettled
+                return { kind: 'complete', exitCode: 0, signal: null, terminationConfirmed: true }
+            },
+        })))
+
+        expect(sessions.map(({ kind, status }) => [kind, status]), JSON.stringify(sessions)).toEqual([['complete', 1], ['complete', 0], ['complete', 0]])
+        const stored = await readState(first.context.namespace.paths.coordination(first.context.stackId))
+        if (stored.kind !== 'complete') throw new Error(JSON.stringify(stored))
+        expect(decodeCoordinationRecord(stored.value, first.context.stackId)).toMatchObject({ holders: [], lease: { released: true } })
+        expect(await readFile(join(first.candidate.root, 'runtime-stopped')).then(() => 'stopped', () => 'running')).toBe('stopped')
+    })
+
+    describe('a session that joins a running stack while another holder leaves', () => {
+        // The stack the first up started, joined by a second session, after the first one slept: the
+        // second session holds it alone, and the progress still names the first.
+        const joinedStack = async () => {
+            const first = await runStackScenario()
+            expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+            const configPath = first.candidate.configPath
+            const env = { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home }
+            const remaining = createLifecycleCommandAdapters({ configPath, env, sessionId: 'mcp-remaining', timeoutMs: 5_000 }, executeProbe)
+            expect(await runUp({ configPath }, remaining)).toMatchObject({ kind: 'complete', result: { change: 'unchanged' } })
+            expect(await runSleep({ configPath }, first.adapters)).toMatchObject({ kind: 'complete', result: { change: 'retained' } })
+            const coordination = async () => {
+                const stored = await readState(first.context.namespace.paths.coordination(first.context.stackId))
+                if (stored.kind !== 'complete') throw new Error(JSON.stringify(stored))
+                return decodeCoordinationRecord(stored.value, first.context.stackId)!
+            }
+            return { first, configPath, env, remaining, coordination }
+        }
+        // The joining session's up runs; once it holds the stack, the remaining holder sleeps.
+        const joining = (stack: Awaited<ReturnType<typeof joinedStack>>, afterLeave: () => Promise<void> = async () => {}) => {
+            let left = false
+            const adapters = createLifecycleCommandAdapters({ configPath: stack.configPath, env: stack.env, sessionId: 'mcp-joining', timeoutMs: 5_000 }, async (step) => {
+                if (!left && step.id.startsWith('runtime:')) {
+                    left = true
+                    expect(await runSleep({ configPath: stack.configPath }, stack.remaining)).toMatchObject({ kind: 'complete', result: { change: 'retained' } })
+                    await afterLeave()
+                }
+                return executeProbe(step)
+            })
+            return runSession({ configPath: stack.configPath, argv: ['synthetic-mcp-server'], cwd: stack.first.candidate.checkout, env: stack.env }, {
+                up: (input) => runUp(input, adapters),
+                sleep: (input) => runSleep(input, adapters),
+                resolveExecutable: async () => ({ state: 'available', value: {
+                    canonicalPath: process.execPath, invocationPath: process.execPath,
+                    sha256: '1'.repeat(64), executionMode: 'verified-path',
+                } }),
+                executeForeground: async () => ({ kind: 'complete', exitCode: 0, signal: null, terminationConfirmed: true }),
+            })
+        }
+
+        // Taking the progress over checked the holders against those the up started with, so a holder
+        // that left meanwhile refused the session with CLAIM_CO_TENANT.
+        it('takes the stack over instead of refusing, and stops it when the session ends', async () => {
+            const stack = await joinedStack()
+
+            const session = await joining(stack)
+
+            expect(session, JSON.stringify(session)).toMatchObject({ kind: 'complete', status: 0, result: { sleep: { change: 'stopped' } } })
+            expect(await stack.coordination()).toMatchObject({ holders: [], lease: { released: true } })
+        })
+
+        // A refused up that found itself the last holder dropped its hold and the lease while the
+        // containers it joined kept running, and the session's closing sleep then had nothing to stop.
+        it('stops the stack it was left holding when its up refuses', async () => {
+            const stack = await joinedStack()
+            const needle = join(stack.first.candidate.root, 'docker-failure-needle')
+
+            const session = await joining(stack, () => writeFile(needle, 'inspect\n'))
+            await writeFile(needle, '\n')
+
+            expect(session, JSON.stringify(session)).toMatchObject({ kind: 'refusal' })
+            expect(await stack.coordination()).toMatchObject({ holders: [], lease: { released: true } })
+            expect(await readFile(join(stack.first.candidate.root, 'runtime-stopped')).then(() => 'stopped', () => 'running')).toBe('stopped')
+        })
+    })
+
+    // A running stack nothing holds read to up as a stopped one: its own containers' listeners made
+    // the leased family look taken, up leased the next one, and then refused the stack as one started
+    // from an earlier configuration, naming files that had not changed.
+    it('takes over a running stack no session holds, on the ports it runs on', async () => {
+        const first = await runStackScenario()
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const configPath = first.candidate.configPath
+        const env = { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home }
+        expect(await releaseStoppedStack({ namespace: first.context.namespace, stackId: first.context.stackId, holderId: first.context.holderId }))
+            .toMatchObject({ kind: 'complete' })
+        listenerProbeControl.enabled = false
+        // The stack's own service still publishes the port it was leased.
+        const published = createServer()
+        published.listen(4100, '127.0.0.1')
+        await once(published, 'listening')
+        try {
+            const adapters = createLifecycleCommandAdapters({ configPath, env, sessionId: 'mcp-next', timeoutMs: 5_000 }, executeProbe)
+
+            const up = await runUp({ configPath }, adapters)
+
+            expect(up, JSON.stringify(up)).toMatchObject({ kind: 'complete', status: 0, result: { change: 'unchanged', ports: { APP_HOST_PORT: 4100 } } })
+        } finally {
+            published.close()
+            await once(published, 'close')
+        }
+        const stored = await readState(first.context.namespace.paths.coordination(first.context.stackId))
+        if (stored.kind !== 'complete') throw new Error(JSON.stringify(stored))
+        expect(decodeCoordinationRecord(stored.value, first.context.stackId)).toMatchObject({ holders: [expect.anything()], lease: { released: false, ports: { APP_HOST_PORT: 4100 } } })
+    })
+
+    // A Compose upgrade under a running stack changes the work up would resume; the refusal named
+    // cockpit.toml and the Compose files, which had not changed.
+    it('names a changed Compose version, not unchanged files, when it refuses a running stack', async () => {
+        const first = await runStackScenario()
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        await writeFile(first.candidate.dockerPath, (await readFile(first.candidate.dockerPath, 'utf8'))
+            .replace("printf '2.39.2\\n'", "printf '5.5.0\\n'"), { mode: 0o700 })
+
+        const refused = await runUp({ configPath: first.candidate.configPath }, first.adapters)
+
+        expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_PROGRESS_INVALID',
+            message: expect.stringContaining('Docker Compose 2.39.2, now 5.5.0') }] })
+        expect(refused.diagnostics[0]!.message).not.toContain('changed since it started, and up')
     })
 })

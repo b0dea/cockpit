@@ -946,6 +946,21 @@ export async function withStackTeardown<T extends object>(
 }
 
 /**
+ * Waits until no sleep, down or reset of the stack runs. Up refuses to lease ports under a teardown,
+ * and sessions started together met exactly that: one whose command ended at once slept while the
+ * others came to join, and every one of them refused. A teardown is bounded by its stop steps, so
+ * this gives up after two minutes rather than the hour a cold start may take.
+ */
+export async function waitForStackTeardown(namespace: StateNamespace, stackId: StackId, holderId: HolderId): Promise<boolean> {
+    const deadline = Date.now() + 120_000
+    while (true) {
+        const waited = await withStackTeardown(namespace, stackId, holderId, async () => ({}), 30_000)
+        if (!('diagnostics' in waited)) return true
+        if (waited.diagnostics[0]?.code !== ENVIRONMENT_CODES.STATE_LOCKED || Date.now() >= deadline) return false
+    }
+}
+
+/**
  * Runs `operation` while this process alone brings the stack up; another up of it waits, then joins
  * the stack the first one started. An agent tool starts every MCP server at once, and each server a
  * `cockpit session` wraps runs its own up: each claimed the stopped stack beside the others, none was

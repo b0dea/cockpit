@@ -17,7 +17,7 @@ import { lstat, readdir, realpath } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { readBoundedFile } from '../bounded-read.js'
 import { cockpitCommand } from '../fix-catalogue.js'
-import { decodeCoordinationRecord, type CoordinationRecord } from './claims.js'
+import { decodeCoordinationRecord, isProcessGone, type CoordinationRecord, type ProcessStartObservation } from './claims.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, type CockpitId, type EnvironmentDiagnostic, type StackId } from './contract.js'
 import { checkoutId as deriveCheckoutId, cockpitId as deriveCockpitId, composeProjectName, stackId as deriveStackId } from './identity.js'
 import type { MachineStackDiscovery, MachineStackResource } from './reclaim.js'
@@ -44,7 +44,9 @@ export interface StackRow {
     readonly stackId: StackId
     readonly composeProject: string
     readonly checkout: StackCheckout
-    readonly state: Readonly<{ status: 'readable' | 'malformed' | 'absent'; path: string | null; reason?: string; holders: number }>
+    readonly state: Readonly<{ status: 'readable' | 'malformed' | 'absent'; path: string | null; reason?: string; holders: number
+        /** Of `holders`, the sessions whose process is confirmed gone: they hold the stack, and nothing will release it. */
+        endedHolders?: number }>
     readonly containers: Readonly<{ running: readonly string[]; stopped: readonly string[] }>
     readonly networks: readonly string[]
     readonly volumes: readonly string[]
@@ -318,6 +320,8 @@ export async function observeMachineStacks(input: Readonly<{
     namespace: StateNamespace
     own: OwnCheckout
     discovery?: MachineStackDiscovery
+    /** Reads a holder's process, so a hold whose session has ended is counted as ended. */
+    observeProcess?: (pid: number) => Promise<ProcessStartObservation>
 }>): Promise<Observation | Refusal> {
     // A read that fails in an unexpected way leaves the inventory unknown: a named refusal, which
     // doctor reports as a warning, rather than a throw that ends the command.
@@ -404,6 +408,9 @@ async function observe(input: Parameters<typeof observeMachineStacks>[0]): Promi
         const decided = verdictOf({ current: cockpitId === input.own.cockpitId && stackId === input.own.stackId, checkout,
             malformed: malformed !== undefined, registered: registered?.missing })
         const lease = record?.lease && !record.lease.released ? record.lease.ports : null
+        const observeProcess = input.observeProcess
+        const ended = observeProcess === undefined ? undefined : (await Promise.all((record?.holders ?? []).map(async ({ pid, processStart }) =>
+            pid !== undefined && isProcessGone(processStart, await observeProcess(pid))))).filter(Boolean).length
         stacks.push({
             namespace: stored?.namespace, files: stored?.files ?? [], resources: owned,
             row: {
@@ -416,6 +423,7 @@ async function observe(input: Parameters<typeof observeMachineStacks>[0]): Promi
                     path: stored?.coordinationPath ?? folder?.path ?? null,
                     ...(malformed === undefined ? {} : { reason: malformed }),
                     holders: record?.holders.length ?? 0,
+                    ...(ended === undefined ? {} : { endedHolders: ended }),
                 },
                 containers: {
                     running: containers.filter(({ running }) => running).map(({ name }) => name),

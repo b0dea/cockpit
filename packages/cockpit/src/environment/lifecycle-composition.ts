@@ -16,7 +16,7 @@ import {
     type SleepCommandAdapters,
     type UpCommandAdapters,
 } from './application/lifecycle-context.js'
-import { isProcessStart, observeProcessStart, processHost, releaseDeadSessionHolders, type HolderProcess } from './claims.js'
+import { isProcessStart, observeProcessStart, processHost, releaseDeadSessionHolders, waitForStackTeardown, type HolderProcess } from './claims.js'
 import {
     errorCause,
     RefusalError,
@@ -712,30 +712,42 @@ export function createLifecycleCommandAdapters(
     const withAcquiredPorts: LifecycleCommandAdapterComposition['withAcquiredPorts'] = async (context, use, refuse) => {
         if (!bindings.has(context)) return undefined
         const holderProcess = input?.holderProcess
-        // An up starts a service only after replacing the record down left, so a stack whose record
-        // still says down completed runs nothing its dead holders started.
-        const recorded = await readState(context.namespace.paths.lifecycle(context.stackId))
-        const reaped = await releaseDeadSessionHolders({
-            namespace: context.namespace, stackId: context.stackId,
-            removed: recorded.kind === 'complete' && decodeLifecycleRecord(recorded.value, context)?.value.teardownComplete === true,
-            successor: { holderId: context.holderId, checkoutId: context.checkoutId, ...holderProcess },
-            now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, processHost(execute)),
-        })
-        if (reaped.kind === 'refusal') return refuse?.(reaped.diagnostics)
-        const now = new Date().toISOString()
-        const listenerTimeoutMs = Math.min(input?.timeoutMs ?? 1, 30_000)
-        const acquired = await acquirePortProjection({
-            namespace: context.namespace,
-            stackId: context.stackId,
-            holderId: context.holderId,
-            checkoutId: context.checkoutId,
-            config: context.ports,
-            now,
-            listenerTimeoutMs,
-            listenerEvidence: await listenerEvidence(context, now, listenerTimeoutMs),
-            declarations: context.entrypointDerivatives,
-            ...(holderProcess === undefined ? {} : { holderProcess }),
-        })
+        const acquire = async () => {
+            // An up starts a service only after replacing the record down left, so a stack whose record
+            // still says down completed runs nothing its dead holders started.
+            const recorded = await readState(context.namespace.paths.lifecycle(context.stackId))
+            const progress = recorded.kind === 'complete' ? decodeLifecycleRecord(recorded.value, context)?.value : undefined
+            const reaped = await releaseDeadSessionHolders({
+                namespace: context.namespace, stackId: context.stackId,
+                removed: progress?.teardownComplete === true,
+                successor: { holderId: context.holderId, checkoutId: context.checkoutId, ...holderProcess },
+                now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, processHost(execute)),
+            })
+            if (reaped.kind === 'refusal') return reaped
+            const now = new Date().toISOString()
+            const listenerTimeoutMs = Math.min(input?.timeoutMs ?? 1, 30_000)
+            return acquirePortProjection({
+                namespace: context.namespace,
+                stackId: context.stackId,
+                holderId: context.holderId,
+                checkoutId: context.checkoutId,
+                config: context.ports,
+                now,
+                listenerTimeoutMs,
+                listenerEvidence: await listenerEvidence(context, now, listenerTimeoutMs),
+                declarations: context.entrypointDerivatives,
+                // Services were started and never stopped (sleep clears them, down marks the teardown),
+                // so the containers may still run on the recorded family with no session holding them.
+                ...(progress !== undefined && progress.teardownComplete !== true && progress.completedServices.length > 0
+                    ? { adoptUnheld: true } : {}),
+                ...(holderProcess === undefined ? {} : { holderProcess }),
+            })
+        }
+        let acquired = await acquire()
+        // A sleep, down or reset of this stack refuses the lease while it runs. It ends soon, and the
+        // stack it leaves is joined or started as any other, so up waits for it.
+        if (acquired.kind === 'refusal' && acquired.diagnostics.some(({ code }) => code === ENVIRONMENT_CODES.STATE_LOCKED)
+            && await waitForStackTeardown(context.namespace, context.stackId, context.holderId)) acquired = await acquire()
         if (acquired.kind === 'refusal') return refuse?.(acquired.diagnostics)
         if (acquired.kind !== 'complete') return undefined
         let retainOnFailure = false

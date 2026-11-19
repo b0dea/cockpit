@@ -20,6 +20,7 @@ import {
     type CurrentLifecycleRecord,
     type LifecycleRecordValue,
     type RuntimeInputs,
+    type StartedWith,
     type LifecycleStageProjection,
 } from '../lifecycle-stage.js'
 import {
@@ -126,13 +127,30 @@ function runtimeChangedRefusal(context: LifecycleRunContext, changed: string): R
         context.stackId)
 }
 
-function changedRuntimeInputs(recorded: RuntimeInputs | undefined, current: RuntimeInputs | undefined, fallback: string): string {
+function changedRuntimeInputs(recorded: RuntimeInputs | undefined, current: RuntimeInputs | undefined, fallback: string,
+    started?: Readonly<{ recorded: StartedWith | undefined; current: StartedWith }>): string {
     const names = (values: readonly string[], conjunction: string) => values.length <= 1 ? values.join('')
         : `${values.slice(0, -1).join(', ')} ${conjunction} ${values.at(-1)}`
     if (recorded && current) {
         const changed = [...new Set([...Object.keys(recorded), ...Object.keys(current)])]
             .filter((name) => recorded[name] !== current[name]).sort()
         if (changed.length > 0) return `${names(changed, 'and')} changed since it started`
+        // The files and profiles are the ones it started from, so what differs is what it runs under.
+        if (started) {
+            const before = started.recorded
+            const now = started.current
+            const ports = (value: StartedWith['ports']) => Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+                .map(([name, port]) => `${name}=${port}`).join(', ')
+            const differences = before === undefined ? [] : [
+                ...before.composeVersion === now.composeVersion ? [] : [`Docker Compose ${before.composeVersion}, now ${now.composeVersion}`],
+                ...before.runtimeVersion === now.runtimeVersion ? [] : [`Docker Engine ${before.runtimeVersion}, now ${now.runtimeVersion}`],
+                ...before.executableSha256 === now.executableSha256 ? [] : ['the docker command, which an update replaced'],
+                ...ports(before.ports) === ports(now.ports) ? [] : [`its ports ${ports(before.ports)}, now leased as ${ports(now.ports)}`],
+            ]
+            return differences.length > 0
+                ? `what it runs under changed since it started (${differences.join('; ')}), while ${names(Object.keys(current).sort(), 'and')} did not`
+                : `${names(Object.keys(current).sort(), 'and')} did not change, so the Docker or Compose version, the docker command or the stack's ports changed since it started`
+        }
     }
     // Without a recorded digest per file, name every file the stack is started from.
     const candidates = current ? Object.keys(current).sort() : [fallback]
@@ -241,6 +259,11 @@ export async function collectFailureLogs(
     )]
 }
 
+function startedWith(runtime: RuntimeReadiness, ports: AcquiredPorts): StartedWith {
+    return { runtimeVersion: runtime.topology.runtimeVersion, composeVersion: runtime.topology.composeVersion,
+        executableSha256: runtime.topology.executableSha256, ports: { ...ports.projection.lease.ports } }
+}
+
 function progressValueForPlan(value: LifecycleRecordValue): LifecycleProgress {
     return {
         workBasisSha256: value.workBasisSha256,
@@ -308,7 +331,8 @@ async function executeUpRound(
         if (stored && !teardownComplete && stored.value.runtimeInputs !== undefined
             && !isDeepStrictEqual(stored.value.runtimeInputs, runtime.inputs)) {
             return { kind: 'complete' as const, result: runtimeChangedRefusal(context,
-                changedRuntimeInputs(stored.value.runtimeInputs, runtime.inputs, basename(context.source.path))) }
+                changedRuntimeInputs(stored.value.runtimeInputs, runtime.inputs, basename(context.source.path),
+                    { recorded: stored.value.startedWith, current: startedWith(runtime, ports) })) }
         }
         if (teardownComplete) {
             const acquisition = initialAcquisition ?? (ports.leaseResult.kind === 'complete' && ports.leaseResult.change === 'acquired'
@@ -429,7 +453,8 @@ async function executeUpRound(
             // configuration says now.
             if (stored && !resetProgress && progressComplete) {
                 return { kind: 'complete' as const, result: runtimeChangedRefusal(context,
-                    changedRuntimeInputs(stored.value.runtimeInputs, runtime.inputs, basename(context.source.path))) }
+                    changedRuntimeInputs(stored.value.runtimeInputs, runtime.inputs, basename(context.source.path),
+                    { recorded: stored.value.startedWith, current: startedWith(runtime, ports) })) }
             }
             return stored && !resetProgress
                 ? { kind: 'retry' as const, forceReset: true }
@@ -474,18 +499,24 @@ async function executeUpRound(
             holderId: context.holderId,
             ...planned.plan.progress,
             runtimeInputs: runtime.inputs,
+            startedWith: startedWith(runtime, ports),
             ...(runtime.activeProfiles.length > 0 ? { activeProfiles: runtime.activeProfiles } : {}),
         }
         if (!stored || resetProgress || stored.value.holderId !== context.holderId && !completedCoTenant) {
+            const transfer = stored && stored.value.holderId !== context.holderId
+                ? { previousHolderId: stored.value.holderId, projection: ports.projection }
+                : undefined
             const publication = await publishLifecycleRecord(
                 context,
                 stored?.record ?? null,
                 plannedValue,
-                stored && stored.value.holderId !== context.holderId
-                    ? { previousHolderId: stored.value.holderId, projection: ports.projection }
-                    : undefined,
+                transfer,
                 teardownComplete ? ports.projection : undefined,
             )
+            // Taking the progress over requires the holders this round read; another session joining
+            // or leaving since only dated that read, so the round reads them again rather than refuse.
+            if ('status' in publication && transfer
+                && publication.diagnostics.some(({ code }) => code === ENVIRONMENT_CODES.CLAIM_CO_TENANT)) return { kind: 'retry' as const, forceReset }
             if ('status' in publication) return { kind: 'complete' as const, result: publication }
             if (publication.kind === 'indeterminate') return { kind: 'complete' as const, result: lifecycleRefusal(
                 ENVIRONMENT_CODES.STATE_DURABILITY_INDETERMINATE,
@@ -653,17 +684,43 @@ export async function runUp(
 // record only while it is exactly as the acquisition wrote it; once another holder joined or left,
 // this holder's own entry is released instead, with the lease when no other holder remains. Without
 // that, every up that refused beside another kept its hold, and its session ended still holding the stack.
+// When the stack it held may run, from services another session started and nothing stopped, the
+// last hold is kept instead: dropping it left the containers running with no holder, and the
+// session's closing sleep then had nothing to stop. It runs under the teardown lock, so a sleep
+// cannot leave this holder alone between its read and its release.
 async function giveBackAcquiredHold(context: LifecycleRunContext, leaseResult: LeasePortFamilyResult): Promise<readonly EnvironmentDiagnostic[]> {
-    const compensation = await compensateAcquiredPortHolder({ namespace: context.namespace, leaseResult, now: new Date().toISOString() })
-    if (compensation.kind === 'complete') return []
+    const given = await withStackTeardown(context.namespace, context.stackId, context.holderId, async () => {
+        const current = await readLifecycleRecord(context)
+        const progress = current !== null && 'value' in current ? current.value : undefined
+        // An unreadable record may name running services, so the hold stays.
+        const mayRun = progress === undefined ? current !== null
+            : progress.teardownComplete !== true && progress.completedServices.length > 0
+        if (!mayRun) {
+            const compensation = await compensateAcquiredPortHolder({ namespace: context.namespace, leaseResult, now: new Date().toISOString() })
+            if (compensation.kind === 'complete') return { diagnostics: [] }
+            const left = await coordinationHolders(context)
+            if (!left?.some(({ holderId }) => holderId === context.holderId)) return { diagnostics: compensation.diagnostics }
+            const released = left.length > 1 ? await releaseOwnHold(context)
+                : await releaseStoppedStack({ namespace: context.namespace, stackId: context.stackId, holderId: context.holderId })
+            return { diagnostics: released.kind === 'complete' ? [] : uniqueDiagnostics([...compensation.diagnostics, ...released.diagnostics]) }
+        }
+        const left = await coordinationHolders(context)
+        if (!left?.some(({ holderId }) => holderId === context.holderId) || left.length === 1) return { diagnostics: [] }
+        const released = await releaseOwnHold(context)
+        return { diagnostics: released.kind === 'complete' ? [] : released.diagnostics }
+    })
+    // A teardown that runs now decides the stack's fate; this hold stays for the session's own sleep.
+    return 'diagnostics' in given && given.diagnostics.every(({ code }) => code !== ENVIRONMENT_CODES.STATE_LOCKED) ? given.diagnostics : []
+}
+
+async function coordinationHolders(context: LifecycleRunContext) {
     const stored = await readState(context.namespace.paths.coordination(context.stackId))
-    const coordination = stored.kind === 'complete' ? decodeCoordinationRecord(stored.value, context.stackId) : undefined
-    if (!coordination?.holders.some(({ holderId }) => holderId === context.holderId)) return compensation.diagnostics
-    const released = coordination.holders.length > 1
-        ? await releasePortFamily({ namespace: context.namespace, stackId: context.stackId, requesterId: context.holderId,
-            holderId: context.holderId, now: new Date().toISOString() })
-        : await releaseStoppedStack({ namespace: context.namespace, stackId: context.stackId, holderId: context.holderId })
-    return released.kind === 'complete' ? [] : uniqueDiagnostics([...compensation.diagnostics, ...released.diagnostics])
+    return stored.kind === 'complete' ? decodeCoordinationRecord(stored.value, context.stackId)?.holders : undefined
+}
+
+function releaseOwnHold(context: LifecycleRunContext) {
+    return releasePortFamily({ namespace: context.namespace, stackId: context.stackId, requesterId: context.holderId,
+        holderId: context.holderId, now: new Date().toISOString() })
 }
 
 async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAdapters): Promise<UpCommandResult> {
@@ -755,18 +812,25 @@ function sessionChildEnvironment(
     return { ...env, ...leaseVariables(up.ports, up.entrypoints) }
 }
 
-// A session over a stack an earlier up from this checkout still holds ends with the containers running,
-// which read as a failed release when nothing said why. Only this checkout's own hold is its to release:
-// told to sleep while another checkout holds the stack, an agent would chase a hold it cannot clear.
-// Literals, so the diagnostic inventory captures the fix.
-function sessionStackRetained(stackId: string) {
-    return {
-        severity: 'info' as const,
-        code: 'SESSION_STACK_RETAINED' as const satisfies typeof ENVIRONMENT_CODES.SESSION_STACK_RETAINED,
-        message: 'the session released its hold, and the stack keeps running because an earlier up from this checkout still holds it',
-        target: stackId,
-        fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config <your cockpit.toml> to release this checkout\'s remaining hold',
-    }
+// A session over a stack something else still holds ends with the containers running, which read as
+// a failed release when nothing said why. Each message names what holds it. Only this checkout's own
+// hold, one an up outside any session took, is the reader's to release: told to sleep while another
+// session or checkout holds the stack, an agent would chase a hold it cannot clear.
+// Literals, so the diagnostic inventory captures each fix.
+function sessionStackRetained(sleep: Extract<SleepCommandResult, { kind: 'complete' }>['result']) {
+    const base = { severity: 'info' as const, code: 'SESSION_STACK_RETAINED' as const satisfies typeof ENVIRONMENT_CODES.SESSION_STACK_RETAINED,
+        target: sleep.stackId }
+    const processes = sleep.remainingProcesses ?? []
+    if (sleep.remainingHolders === 'none') return [{ ...base,
+        message: 'the session released its hold while another holder kept the stack running, and nothing holds it now',
+        fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml> to hold the running stack again, or ./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config <your cockpit.toml> to remove it' }]
+    if (sleep.remainingHolders !== 'this-checkout') return []
+    if (processes.length > 0) return [{ ...base,
+        // The command a session runs is not repeated here: its arguments can carry credentials.
+        message: `the session released its hold, and the stack keeps running because another session holds it (process ${processes.join(', ')}); it stops once the last session holding it ends, and \`ps -o pid,ppid,command -p ${processes.join(',')}\` shows which session that is` }]
+    return [{ ...base,
+        message: 'the session released its hold, and the stack keeps running because an up run outside any session from this checkout still holds it',
+        fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config <your cockpit.toml> to release this checkout\'s remaining hold' }]
 }
 
 export async function runSession(
@@ -853,7 +917,7 @@ export async function runSession(
             ...sleep.diagnostics,
         ],
     }
-    const retained = sleep.result.change === 'retained' && sleep.result.remainingHolders === 'this-checkout' ? [sessionStackRetained(sleep.result.stackId)] : []
+    const retained = sleep.result.change === 'retained' ? sessionStackRetained(sleep.result) : []
     return {
         kind: 'complete' as const,
         status: childStatus,
@@ -895,12 +959,13 @@ export async function runSleep(
 
 // Read after the release, so the holders left are the ones that keep the stack. An unreadable record
 // says nothing rather than guessing, since the answer decides whether an agent is told to run sleep.
-async function remainingHolderKind(context: LifecycleRunContext): Promise<'this-checkout' | 'other-checkouts' | undefined> {
-    const stored = await readState(context.namespace.paths.coordination(context.stackId))
-    if (stored.kind !== 'complete') return undefined
-    const coordination = decodeCoordinationRecord(stored.value, context.stackId)
-    if (!coordination || coordination.holders.length === 0) return undefined
-    return coordination.holders.every((holder) => holder.checkoutId === context.checkoutId) ? 'this-checkout' : 'other-checkouts'
+async function remainingHolders(context: LifecycleRunContext): Promise<Pick<Extract<SleepCommandResult, { kind: 'complete' }>['result'], 'remainingHolders' | 'remainingProcesses'>> {
+    const holders = await coordinationHolders(context)
+    if (!holders) return {}
+    if (holders.length === 0) return { remainingHolders: 'none' }
+    const processes = holders.flatMap(({ pid }) => pid === undefined ? [] : [pid])
+    return { remainingHolders: holders.every((holder) => holder.checkoutId === context.checkoutId) ? 'this-checkout' : 'other-checkouts',
+        ...(processes.length > 0 ? { remainingProcesses: processes } : {}) }
 }
 
 // Sleep stops the stack only when this checkout is its last holder; otherwise it gives up this
@@ -915,6 +980,13 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
     if (reaped.kind === 'refusal') return forwardedRefusal(reaped.diagnostics)
     const unheld = await unheldStack(context)
     if (unheld) return unheld
+    // A session whose up refused gave its hold back already; its closing sleep has nothing of its
+    // own to release, and refusing it read as a conflict with the sessions that do hold the stack.
+    const holders = await coordinationHolders(context)
+    if (holders && holders.length > 0 && !holders.some(({ holderId }) => holderId === context.holderId)) return {
+        kind: 'complete', status: 0, diagnostics: [],
+        result: { stackId: context.stackId, change: 'unchanged' },
+    }
     const retained = await observeRetainedPortFamily({
         namespace: context.namespace,
         stackId: context.stackId,
@@ -956,10 +1028,9 @@ async function sleepWithContext(context: LifecycleRunContext, adapters: SleepCom
                 'shared lifecycle ownership changed before release',
                 context.stackId,
             )
-            const remainingHolders = await remainingHolderKind(context)
             return {
                 kind: 'complete', status: 0, diagnostics: [],
-                result: { stackId: context.stackId, change: 'retained', ...(remainingHolders ? { remainingHolders } : {}) },
+                result: { stackId: context.stackId, change: 'retained', ...await remainingHolders(context) },
             }
         }
         const stopped = await stopRuntime({ topology: runtime.topology, execute: (step) => adapters.execute(step) })

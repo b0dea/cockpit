@@ -994,6 +994,13 @@ export async function leasePortFamily(supplied: {
     readonly listenerTimeoutMs: number
     readonly listenerEvidence: readonly PortListenerEvidenceInput[]
     readonly holderProcess?: HolderProcess
+    /**
+     * The stack's services were started and never stopped. A lease no holder retains is then the
+     * running stack's own, not a stopped one's: its family is leased again without probing, since
+     * its listeners are the stack's containers. Probing them leased the next family, and up then
+     * refused the running stack as one started from another configuration.
+     */
+    readonly adoptUnheld?: boolean
 }): Promise<LeasePortFamilyResult> {
     let input: Omit<typeof supplied, 'listenerEvidence'> & { readonly listenerEvidence: readonly PortListenerEvidenceInput[] }
     try {
@@ -1022,6 +1029,7 @@ export async function leasePortFamily(supplied: {
             config,
             now,
             listenerTimeoutMs,
+            adoptUnheld: supplied.adoptUnheld === true,
             ...(holderProcess === undefined ? {} : { holderProcess }),
         }
         const suppliedEvidence = supplied.listenerEvidence
@@ -1062,7 +1070,8 @@ export async function leasePortFamily(supplied: {
         requestedAt: input.now,
         timeoutMs: input.listenerTimeoutMs,
         supplied: input.listenerEvidence,
-        ...(prior.lease && !prior.lease.released ? { offsets: new Set([prior.lease.offset]) } : {}),
+        ...(prior.lease && (!prior.lease.released || input.adoptUnheld && prior.holders.length === 0)
+            ? { offsets: new Set([prior.lease.offset]) } : {}),
     })
     if (observed.refusal) return observed.refusal
     type LeaseTransactionComplete = Readonly<{
@@ -1077,6 +1086,7 @@ export async function leasePortFamily(supplied: {
         const added = addCoordinationHolder(currentValue, { holderId: input.holderId, checkoutId: input.checkoutId, ...input.holderProcess }, input.now)
         if (!added) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination holder set cannot accept the requested holder', input.holderId))
         const currentLease = currentValue.lease
+        const adopted = input.adoptUnheld && currentLease !== null && currentValue.holders.length === 0
 
         const inventoryResult = await readRootPortInventory(input.namespace)
         if (inventoryResult.kind !== 'complete') return abortStateTransaction(inventoryResult)
@@ -1109,13 +1119,13 @@ export async function leasePortFamily(supplied: {
         // listener there is the stack itself. Probing them refused every repeated `up` and every
         // co-tenant joining a running stack with PORT_FAMILY_COLLISION on its own ports. A lease no
         // holder retains belongs to a stopped stack, and a listener there is someone else's.
-        const retained = currentLease !== null && !currentLease.released && currentValue.holders.length > 0
+        const retained = currentLease !== null && !currentLease.released && currentValue.holders.length > 0 || adopted
         let sawListenerCollision = false
         const occupiedFamilies: string[] = []
         for (const evidence of observed.evidence) {
             const { offset, ports: portMap } = evidence
             const ports = Object.values(portMap)
-            if (currentLease && !currentLease.released) {
+            if (currentLease && (!currentLease.released || adopted)) {
                 if (offset !== currentLease.offset || !sameValues(portMap, currentLease.ports)) continue
             }
             if (ports.some((port) => occupied.has(port))) {
