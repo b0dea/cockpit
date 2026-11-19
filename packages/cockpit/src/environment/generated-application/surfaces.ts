@@ -333,7 +333,8 @@ export async function prepareSurfaces(
     }
     // Every sibling directory relative to the cockpit root, whether or not a grant names it.
     const siblingDirectories = [...prepared.siblingRoots.siblings].map(([slug, sibling]) => ({ slug, path: relative(prepared.root, sibling.root) }))
-    const generatedNativeSources = nativeSources(mcp, projection.grants, siblingDirectories, prepared.registry.secretPaths, config.guards.secret_paths)
+    const generatedNativeSources = nativeSources(mcp, projection.grants, siblingDirectories, prepared.registry.secretPaths, config.guards.secret_paths,
+        config.environment.machine?.cold_start_seconds)
     const generatedSources = [...mergedSources, ...generatedNativeSources]
         .sort((left, right) => compareCodeUnits(left.path, right.path))
     if (new Set(generatedSources.map(source => source.path)).size !== generatedSources.length) {

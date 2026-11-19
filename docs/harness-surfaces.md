@@ -256,6 +256,13 @@ Required variables remain in `env`, with same-name references such as `"TOKEN": 
 cannot be both. The approval digest covers optional names and whether a variable is required. Doctor
 reports missing required variables only.
 
+A server whose command runs `cockpit session` answers its harness only once `up` has started the
+stack. Codex gives up on a server after 10 seconds by default, so its generated entry for such a
+server sets `startup_timeout_sec` to `environment.machine.cold_start_seconds` plus 60. The field is
+generated, not measured: it is the one Codex 0.170.0 reads for a server's start, and no run has
+checked that Codex waits for it. Claude Code's `.mcp.json` documents no per-server start timeout;
+its start timeout is an environment variable for every server, which cockpit does not set.
+
 A harness with no applicable MCP server receives no MCP-only output; its instructions, skills and
 permissions still publish.
 

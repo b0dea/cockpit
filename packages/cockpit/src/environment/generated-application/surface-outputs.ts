@@ -1,11 +1,11 @@
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml'
 import { parseDocument } from 'yaml'
 import { SURFACE_TARGETS, type SurfaceFeature, type SurfaceSourceFile, type SurfaceTarget } from '../../surfaces/contract.js'
 import { harnessFact, isGuardSurfaceTarget } from '../../surfaces/harness-registry.js'
 import { RULESYNC_VERSION, type SurfaceGenerationOutcome } from '../../surfaces/generator-adapter.js'
 import { expectsCodexSkillSidecar } from '../../surfaces/skill-contract.js'
-import { hasTargetMcpServers, type McpCollectionOutcome, type McpHarnessServer } from '../../surfaces/mcp.js'
+import { hasTargetMcpServers, type McpCollectionOutcome, type McpHarnessServer, type McpServer } from '../../surfaces/mcp.js'
 import { codexWritableRoot, shippedInstructionCapabilities } from '../../surfaces/projection.js'
 import { surfaceModelSha256, type NativeFragmentSet } from '../../surfaces/render.js'
 import { GUARD_LOCAL_PATHS } from '../../guards/local-identity.js'
@@ -251,12 +251,27 @@ export const GUIDE_LOAD_CHARACTERIZATIONS = Object.freeze(Object.fromEntries(shi
         provenance: fact.provenance,
     }])))
 
+// Codex gives an MCP server 10 s to answer before it gives up on it, and a server that runs
+// `cockpit session` answers only once up has started the stack. It gets the declared cold start, plus
+// a minute for up's own reads and for joining a stack another session is still starting.
+const SESSION_STARTUP_MARGIN_SECONDS = 60
+
+function runsCockpitSession(server: McpServer | undefined): boolean {
+    if (!server || !('command' in server)) return false
+    const argv = [server.command, ...server.args]
+    const end = argv.indexOf('--')
+    const words = end === -1 ? argv : argv.slice(0, end)
+    const launcher = words.findIndex(word => ['cockpit', 'cockpit.mjs'].includes(basename(word)) || word === '@b00dea/cockpit')
+    return launcher !== -1 && words.slice(launcher + 1).includes('session')
+}
+
 export function nativeSources(
     mcp: Extract<McpCollectionOutcome, { kind: 'complete' }>,
     grants: readonly { slug: string; target: SurfaceTarget; path: string }[],
     siblings: readonly { slug: string; path: string }[],
     instances: readonly { slug: string; path: string }[],
     secretPaths: readonly string[] = [],
+    coldStartSeconds?: number,
 ): readonly SurfaceSourceFile[] {
     const sources: SurfaceSourceFile[] = []
     const transports = mcp.result.harnesses.flatMap(row => row.servers)
@@ -273,10 +288,15 @@ export function nativeSources(
                 .map(server => [server.name, null] as const)
             // Codex spells Claude Code's headersHelper http_headers_helper; Rulesync passes an unknown
             // key through to config.toml unchanged.
+            const sessionTimeout = (server: McpHarnessServer) => coldStartSeconds !== undefined
+                && runsCockpitSession(mcp.result.servers.find(model => model.name === server.name))
+                ? coldStartSeconds + SESSION_STARTUP_MARGIN_SECONDS : undefined
             const respelled = row.target === 'codexcli'
-                ? row.servers.filter(server => server.allowedTools !== undefined || 'url' in server && server.headersHelper !== null)
+                ? row.servers.filter(server => server.allowedTools !== undefined || 'url' in server && server.headersHelper !== null
+                    || sessionTimeout(server) !== undefined)
                     .map(server => [server.name, { ...native(server, 'http_headers_helper'),
-                        ...(server.allowedTools === undefined ? {} : { enabled_tools: server.allowedTools }) }] as const)
+                        ...(server.allowedTools === undefined ? {} : { enabled_tools: server.allowedTools }),
+                        ...(sessionTimeout(server) === undefined ? {} : { startup_timeout_sec: sessionTimeout(server) }) }] as const)
                 : []
             return removed.length + respelled.length > 0 ? [[harnessFact(row.target).rulesyncTarget, {
                 mcpServers: Object.fromEntries([...removed, ...respelled]),
