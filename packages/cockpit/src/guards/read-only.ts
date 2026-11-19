@@ -146,6 +146,8 @@ const FD: OptionTable = {
     values: set('-t', '--type', '-e', '--extension', '-d', '--max-depth', '--min-depth', '-E', '--exclude', '--max-results', '--color'),
     cluster: /^-[HIsigFap01]+$/,
 }
+// File metadata only. BSD `-f` and `-t` take a format; GNU reads them as flags, so the word after one is a file whose metadata alone is printed.
+const STAT: OptionTable = { flags: set('--dereference', '--terse', '--file-system'), values: set('-f', '-t', '-c', '--format', '--printf'), cluster: /^-[LFnqrsxlH]+$/ }
 // Byte comparison of two files: `-i` and `-n` take only counts, and the skips after the files are counts too.
 const CMP: OptionTable = { flags: set('-b', '-l', '-s', '--print-bytes', '--verbose', '--quiet', '--silent'), values: set('-i', '-n', '--ignore-initial', '--bytes'),
     countValues: set('-i', '-n', '--ignore-initial', '--bytes'), cluster: /^-[bls]+$/ }
@@ -163,19 +165,46 @@ const FIND_VALUE = set('-name', '-iname', '-path', '-ipath', '-wholename', '-iwh
     '-mtime', '-mmin', '-atime', '-amin', '-ctime', '-cmin', '-size', '-user', '-group', '-perm', '-newer')
 const FIND_FLAG = set('-print', '-print0', '-prune', '-empty', '-not', '!', '-a', '-and', '-o', '-or', '(', ')', '-depth', '-xdev', '-mount', '-true', '-false', '-quit')
 
-function find(argv: readonly string[]): Classified {
+// Each runs a command on the paths find selects, up to a `;` or a `{} +`.
+const FIND_EXEC = set('-exec', '-execdir', '-ok', '-okdir')
+// What a found path becomes in the command find runs: never a path of the tree, so its place in the access is plain.
+const FOUND = '\0found'
+
+/**
+ * find lists its roots; a command it runs on each found path is read-only only when the profile classifies it so with
+ * that path in place of `{}`, and then whatever it does with the path, reading or listing, reaches every path below the roots.
+ */
+function find(argv: readonly string[], cwd: string, environment: { readonly ripgrepConfigActive: boolean }): Classified {
     let index = 0
     const roots: string[] = []
     while (index < argv.length && !argv[index]!.startsWith('-') && argv[index] !== '!' && argv[index] !== '(') roots.push(argv[index++]!)
-    const listings = roots.length ? [...roots] : ['.']
+    const tree = roots.length ? [...roots] : ['.']
+    const access: { reads: string[]; trees: string[]; listings: string[]; followsLinks?: true } = { reads: [], trees: [], listings: [...tree] }
     for (; index < argv.length; index++) {
         const word = argv[index]!
         if (FIND_FLAG.has(word)) continue
+        if (FIND_EXEC.has(word)) {
+            const end = argv.findIndex((item, at) => at > index && (item === ';' || item === '+' && argv[at - 1] === '{}'))
+            const [program, ...args] = argv.slice(index + 1, end)
+            if (end < 0 || program === undefined || program.includes('{}') || args.some(arg => arg !== '{}' && arg.includes('{}'))) return undefined
+            const ran = classifyReadOnlyInvocation({ executable: program, argv: args.map(arg => arg === '{}' ? FOUND : arg), cwd, wrapped: false, words: [], redirects: [] },
+                { ripgrepConfigActive: environment.ripgrepConfigActive })
+            const found = (paths: readonly string[]) => paths.filter(path => path !== FOUND)
+            // `-execdir` runs in each found path's directory, where any other path the command names resolves.
+            if (!ran || ran.requires || ran.trackedContent || ran.followsLinks || word.endsWith('dir') && found([...ran.reads, ...ran.trees, ...ran.listings]).length) return undefined
+            access.reads.push(...found(ran.reads))
+            access.trees.push(...found(ran.trees))
+            // find lists a link without following it, but the program it hands the link to reads what it names.
+            if ([...ran.reads, ...ran.trees].includes(FOUND)) { access.trees.push(...tree); access.followsLinks = true }
+            access.listings.push(...found(ran.listings))
+            index = end
+            continue
+        }
         if (!FIND_VALUE.has(word) || argv[index + 1] === undefined) return undefined
-        if (word === '-newer') listings.push(argv[index + 1]!)
+        if (word === '-newer') access.listings.push(argv[index + 1]!)
         index++
     }
-    return { reads: [], trees: [], listings }
+    return access
 }
 
 function search(argv: readonly string[], table: OptionTable, recursiveByDefault: boolean, piped = false): Classified {
@@ -273,6 +302,13 @@ function jqWords(argv: readonly string[]): Classified {
 }
 
 const GIT_READ_VERBS = set('status', 'diff', 'log', 'show')
+// Git takes a long option by any unique prefix.
+const abbreviates = (word: string, option: string, shortest: number) => word.length >= shortest && option.startsWith(word)
+const GIT_GREP_IGNORED = (word: string) => abbreviates(word, '--no-index', 8) || abbreviates(word, '--untracked', 3) || abbreviates(word, '--no-exclude-standard', 8)
+/** Whether git grep reads files Git ignores: `--no-index`, or `--untracked` with `--no-exclude-standard`. */
+export function gitGrepReadsIgnored(args: readonly string[]): boolean {
+    return args.some(arg => abbreviates(arg, '--no-index', 8)) || args.some(arg => abbreviates(arg, '--untracked', 3)) && args.some(arg => abbreviates(arg, '--no-exclude-standard', 8))
+}
 const GIT_GREP: OptionTable = {
     flags: set('--line-number', '--ignore-case', '--word-regexp', '--invert-match', '--count', '--files-with-matches', '--name-only', '--files-without-match',
         '--extended-regexp', '--fixed-strings', '--basic-regexp', '--perl-regexp', '--full-name', '--heading', '--break', '--show-function', '--column', '--only-matching',
@@ -446,6 +482,14 @@ function git(argv: readonly string[], cwd: string): ReadOnlyAccess | undefined {
     // Without `-e` or `-f` the first operand is the pattern. Every other operand names a path, or before
     // `--` a revision it searches, whose `rev:path` names a path in it; each is inspected as a read.
     if (verb === 'grep') {
+        // Reading ignored files, it searches below the working directory as `grep -r` does, so its pathspecs are judged
+        // as the trees it searches, and the whole directory when one is a pattern.
+        if (gitGrepReadsIgnored(args)) {
+            const parsed = parseOptions(args.filter(arg => !GIT_GREP_IGNORED(arg)), GIT_GREP)
+            if (!parsed) return undefined
+            const operands = parsed.positionals.slice(parsed.present.has('-e') || parsed.present.has('-f') ? 0 : 1)
+            return { cwd: directory, reads: parsed.files, trees: !operands.length || operands.some(spec => spec.startsWith(':') || /[*?[\\]/.test(spec)) ? ['.'] : operands, listings: [] }
+        }
         const parsed = parseOptions(args, GIT_GREP)
         if (!parsed) return undefined
         const pathspecs = parsed.terminator < 0 ? null : args.slice(parsed.terminator + 1)
@@ -614,6 +658,10 @@ function classify(invocation: ParsedInvocation, environment: { readonly ripgrepC
         case 'jq': return shape(jq(argv))
         case 'wc': return shape(files(argv, WC))
         case 'cmp': return shape(cmp(argv))
+        case 'stat': {
+            const parsed = parseOptions(argv, STAT)
+            return parsed && parsed.positionals.length ? shape({ reads: [], trees: [], listings: parsed.positionals }) : undefined
+        }
         case 'diff': return shape(diff(argv))
         case 'shasum': {
             // Check mode reads filenames from a manifest, so only direct file hashing is classified.
@@ -635,7 +683,7 @@ function classify(invocation: ParsedInvocation, environment: { readonly ripgrepC
             const parsed = parseOptions(argv, FD)
             return parsed && shape({ reads: [], trees: [], listings: parsed.positionals.length > 1 ? parsed.positionals.slice(1) : ['.'] })
         }
-        case 'find': return shape(find(argv))
+        case 'find': return shape(find(argv, invocation.cwd, environment))
         case 'gh': return shape(gh(argv))
         case 'git': {
             const access = git(argv, invocation.cwd)

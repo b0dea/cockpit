@@ -1517,6 +1517,196 @@ describe('allow by default', () => {
         expect(run('case x in a) git push origin feat;; esac; echo main').decision).toBe('deny')
     })
 
+    it('judges a written path as the command spells it, never as the names its sources make below a directory', () => {
+        for (const command of ['cp src/*.ts build/', 'cp src/*.json build/out/']) expect(run(command).decision, command).toBe('allow')
+        for (const command of ['cp src/*.json .claude/', 'cp build/* .cockpit/guards/']) expect(run(command).decision, command).toBe('deny')
+    })
+
+    it('asks when a builtin that sets a variable is handed its name through an expansion', () => {
+        for (const command of ['a=GIT_EXTERNAL; b=_DIFF; export "$a$b=rm"; git diff', 'a=GIT_EXTERNAL; b=_DIFF; declare -x "$a$b=rm"',
+            'a=GIT_EXTERNAL; b=_DIFF; printf -v "$a$b" rm; export "$a$b"', "read -r n v <<< 'GIT_EXTERNAL_DIFF rm'; export \"$n=$v\"", 'export $(cat build/env.txt)']) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+        for (const command of ['export FOO=1', 'read -r line < notes.txt', "printf -v out '%s' x", 'export "FOO=$HOME"']) expect(run(command).decision, command).toBe('allow')
+    })
+
+    it('asks before a write to a path holding an expansion the call sets, unless it is the first command\'s literal', () => {
+        for (const command of ['X=.claude; cp build/a "$X/settings.json"', 'X=.claude; git log -1 --format=%B --output "$X/settings.json"',
+            'X=$(printf %s/%s .claude settings.json); cp build/a "$X"', 'X=`printf %s/%s .claude settings.json`; cp build/a "$X"', 'read -r X < build/p.txt; cp build/a "$X"',
+            'cp build/a "$(printf %s/%s .claude settings.json)"', 'export GIT_TRACE="$PWD/.claude/settings.json"; git status', 'X=/abs/.claude; GIT_TRACE="$X/settings.json" git status',
+            'read -r GIT_TRACE < build/p.txt; export GIT_TRACE; git status', 'export EDITOR=vim; git commit -m done']) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+        for (const command of ['X=build/out.txt; cp a "$X"', 'cp a build/b', 'GIT_TRACE=1 git status', 'for f in src/*.ts; do cp "$f" build/; done']) {
+            expect(run(command).decision, command).toBe('allow')
+        }
+    })
+
+    it('reads a pathspec of a Git verb that only prints or lists as a selection, and keeps judging one that writes', () => {
+        for (const command of ["git grep -n -- '--interactive' -- ':!workorders/evidence' ':!.cockpit'", "git grep -n x -- ':^.cockpit'", "git log --oneline -- ':(exclude).cockpit'",
+            "git diff --stat -- '.cockpit/*'", "git ls-files -- '.cockpit/*'", "git status -- ':/.cockpit'"]) {
+            expect(run(command).decision, command).toBe('allow')
+        }
+        // `git grep -O` and GIT_EXTERNAL_DIFF run a program the agent names on what the pathspec selects, so it still reaches a control.
+        for (const command of ["git rm -r -- ':!.cockpit'", 'git rm .cockpit/guards/bash-guard.sh', "git checkout -- '.cockpit/*'", "git grep -Ovim x -- ':(glob).cockpit/**'",
+            "GIT_EXTERNAL_DIFF=rm git diff -- '.cockpit/*'"]) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+        // An output option's value is a path written, never a selection, and a glob there writes whatever it matches.
+        for (const command of ['git log -1 --format=%B --output .claude/settings.js?n', 'git shortlog -1 --output .cockpit/gu*/bash-guard.sh', 'git whatchanged -1 --output .codex/hooks.js?n',
+            'git diff-tree -p HEAD --output=.cockpit/generated-environment-ownership.js?n', 'git diff-index -p HEAD --output .claude/settings.js?n', 'git diff-files -p --output .claude/settings.js?n',
+            'git range-diff HEAD~2..HEAD~1 HEAD~1..HEAD --output .claude/settings.js?n', 'git show --output .claude/settings.js?n', 'git rev-list HEAD --output .codex/hooks.js?n',
+            'git archive -o .claude/settings.js?n HEAD', 'git format-patch --suffix=.js -o .opencode/plugi? -1', 'git format-patch -o .cockpit/mc? -1', 'git format-patch -o .cockpit/work-order? -1',
+            'git log --output=.claude/settings.js?n', 'git log --output .opencode/plugi?/x.js']) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+        expect(run('git log -1 --output build/log.txt').decision).toBe('allow')
+    })
+
+    it('asks before any write to a path holding a glob, which the shell can expand to anything', () => {
+        for (const command of ['git format-patch -o .cockpit/gua* -1', 'git log -1 --format=%B --output .claude/settings.js[[:alpha:]]n', 'git log -1 --format=%B --output .claude/settings.js[]o]n',
+            'git log -1 --output pkg/.claude/settings.js?n', 'git log -1 --output .claude/hoo?s/x.sh', 'git log -1 --output .gi?/config', 'git format-patch -o .gi?/hooks -1',
+            'cp build/x .claude/settings.js[[:alpha:]]n', "echo x > 'build/a*.txt'", 'curl -o .claude/settings.js?n https://example.test/x']) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+        expect(run('git log -1 --output build/x.txt').decision).toBe('allow')
+    })
+
+    it('lets a live key placeholder of one repeated character through, and refuses a varied key body wherever it is spelled', () => {
+        const key = (body: string) => ['sk', 'live', body].join('_')
+        for (const command of [`grep -c "${key('0'.repeat(24))}" some/file.json`, `python3 -c "print('${key('x'.repeat(30))}')"`]) {
+            expect(run(command).decision, command).toBe('allow')
+        }
+        for (const command of [`grep -c "${key('q8Rk2LmZ7vXw4TnB9cYd3HsJ')}" some/file.json`, `python3 -c "print('${key('q8Rk2LmZ7vXw4TnB9cYd3HsJ')}')"`,
+            `case x in a) echo ${key('q8Rk2LmZ7vXw4TnB9cYd3HsJ')};; esac`, `grep -c "${key(`${'0'.repeat(23)}1`)}" some/file.json`]) {
+            expect(run(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('live secret key') })
+        }
+    })
+
+    it('reads a timed subshell or group as the commands it runs', () => {
+        for (const command of ['time (./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config cockpit.toml >/dev/null 2>&1)', 'time -p { npm test; }']) {
+            expect(run(command).decision, command).toBe('allow')
+        }
+        for (const command of ['time (cat .env)', 'time -p { cat .env; }', 'time git push --force origin main', 'time (echo x > .cockpit/guards/bash-guard.sh)']) {
+            expect(run(command).decision, command).toBe('deny')
+        }
+    })
+
+    it('reads a push in inline code across lines and list items, and names the write tool for prose that mentions one', () => {
+        for (const command of ["python3 - <<'EOF'\nimport subprocess\nsubprocess.run(\n    [\n        \"git\",\n        \"push\",\n        \"origin\",\n        \"main\",\n    ]\n)\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\ncmd = ['git', 'push', 'origin', 'topic']\ncmd.append('--force')\nsubprocess.run(cmd)\nEOF",
+            "node - <<'EOF'\nrequire('child_process').execFileSync('git', [\n  'push',\n  'origin',\n  'main',\n])\nEOF", "ruby -e 'system(*%w[git push origin main])'",
+            `python3 -c "import os; os.system('git push origin a b c d e f g main')"`]) {
+            expect(run(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining("use your editor's write tool") })
+        }
+    })
+
+    it('reads find running a read-only program on what it finds as a read of every path below its roots', () => {
+        for (const command of ["find .cockpit/local -type f -exec stat -f '%m %N' {} + | sort | wc -l", "find src -name '*.ts' -exec wc -l {} +"]) {
+            expect(run(command).decision, command).toBe('allow')
+        }
+        for (const command of ['find .cockpit/local -delete', 'find . -name .env -exec cat {} +']) expect(run(command).decision, command).toBe('deny')
+        // A program the profile does not classify, a write of find's own, or a path -execdir resolves in each found directory.
+        for (const command of ['find .cockpit/local -exec rm {} +', "find .cockpit/local -exec sh -c 'echo x > {}' \\;", 'find .cockpit/local -exec unknowntool {} +',
+            'find src -fprint .cockpit/local/x', 'find .cockpit/local -execdir cat notes.txt \\;']) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+        // What it reads is searched for secrets as a recursive grep's tree is.
+        expect(run('find src -exec cat {} +', open(), onBranch('refs/heads/topic', undefined, { sourceSecret: true })).decision)
+            .toBe(run('grep -r x src', open(), onBranch('refs/heads/topic', undefined, { sourceSecret: true })).decision)
+        expect(run('find src -exec cat {} +', open(), onBranch('refs/heads/topic', undefined, { sourceSecret: true })).decision).not.toBe('allow')
+        // find lists a link without following it, but cat reads what it names.
+        const throughLink: PathInspection = request => request.operation === 'search' && (request as { followsLinks?: true }).followsLinks
+            ? { ...onBranch('refs/heads/topic')(request), sensitive: [`${posix.resolve(request.cwd, request.path)}/linked/.env.local`] } : onBranch('refs/heads/topic')(request)
+        expect(run('find src -exec cat {} +', open(), throughLink).decision).not.toBe('allow')
+    })
+
+    it('searches the tree git grep --no-index reads for secrets, ignored files included', () => {
+        const secret = onBranch('refs/heads/topic', undefined, { sourceSecret: true })
+        for (const command of ['git grep --no-index KEY', "git grep --no-index KEY -- '.env*'", 'git grep --no-index -n KEY -- src']) {
+            expect(run(command, open(), secret).decision, command).not.toBe('allow')
+        }
+        expect(run('git grep --no-index -n KEY -- src').decision).toBe('allow')
+        // A form the profile does not read as a search, or an abbreviation of the option, is not proven to skip them.
+        for (const command of ['git grep --no-index --exclude-standard KEY', 'git grep --no-ind KEY']) expect(run(command, open(), secret).decision, command).not.toBe('allow')
+        // Untracked files with Git's ignore rules off are read as --no-index reads them.
+        for (const command of ['git grep --untracked --no-exclude-standard KEY', 'git grep --untr --no-exclude KEY']) expect(run(command, open(), secret).decision, command).not.toBe('allow')
+        expect(run('git grep --untracked --no-exclude-standard KEY -- src').decision).toBe('allow')
+    })
+
+    it('follows a redirect to a variable only into the one literal its shell assigns it on its own before', () => {
+        for (const command of ['out=workorders/evidence/tmp.json; python3 workorders/evidence/replay.py > "$out"', 'out=build/a.json; echo y > "${out}"']) {
+            expect(run(command).decision, command).toBe('allow')
+        }
+        expect(run('out=.cockpit/guards/bash-guard.sh; echo x > "$out"').decision).toBe('deny')
+        // The last of two assignments is the one judged.
+        expect(run('out=build/a.json; out=.cockpit/guards/bash-guard.sh; echo y > "$out"').decision).toBe('deny')
+        // Not a literal, assigned only when an earlier command succeeds, set again by read, never assigned, or globbed unquoted.
+        for (const command of ['out=$(mktemp); python3 x.py > "$out"', 'true && out=build/a.json; echo y > "$out"',
+            'out=build/a.json; read out; echo y > "$out"', 'echo y > "$out"', "out='*.json'; echo y > $out"]) {
+            expect(run(command), command).toEqual({ decision: 'ask', reason: expect.stringContaining('Missing or dynamic redirect target') })
+        }
+        // A command between can set the name under a spelling the shell unquotes, or without naming it; the shell sets some itself;
+        // a hook function can run first; and an assignment on the redirecting command may apply before its redirect.
+        for (const command of ["out=build/a.json; printf -v o''ut '%s/%s' .claude settings.json; echo '{}' > \"$out\"",
+            "out=build/a.json; read o''ut < notes.txt; echo '{}' > \"$out\"", "out=build/a.json; read o\\ut; echo '{}' > \"$out\"",
+            "out=build/a.json; mapfile -t o''ut < notes.txt; echo '{}' > \"$out\"",
+            ...['declare', 'typeset', 'local', 'readonly', 'export'].map(builtin => `out=build/a.json; ${builtin} o''ut=.claude/settings.json; echo '{}' > "$out"`),
+            "REPLY=build/a.json; read -r <<< .claude/settings.json; echo '{}' > \"$REPLY\"", "_=build/a.json; ls .claude/settings.json; echo '{}' > \"$_\"",
+            "REPLY=build/a.json; echo '{}' > \"$REPLY\"", "out=build/a.json; TRAPDEBUG() { :; }; echo '{}' > \"$out\"",
+            "out=build/a.json; out=.claude/settings.json true > \"$out\"",
+            // Only the call's first command holds a value for its second.
+            "typeset -L 21 o''ut; out=.claude/settings.json.bak; echo '{}' > \"$out\"", "typeset -R 21 o''ut; out=.claude/settings.json.bak; echo '{}' > \"$out\"",
+            "TRAPDEBUG() { read -r o''ut < build/p.txt; }; out=build/a.json; echo '{}' > \"$out\"",
+            "read -r 'a[1]' < build/p.txt; declare -n o''ut='a[i++]'; out=build/a.json; echo '{}' > \"$out\""]) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+    })
+
+    it('asks where a variable naming a program Git runs is set outside a git command, and judges one set on it there', () => {
+        // Set anywhere but on a git command, it reaches every later command and the Git a child process runs.
+        for (const command of ['export GIT_EXTERNAL_DIFF=rm; git diff', "export GIT_EXTERNAL_DIFF=rm; git diff -- '.cockpit/*'", 'GIT_EXTERNAL_DIFF=rm; export GIT_EXTERNAL_DIFF; git diff',
+            'declare -x GIT_SSH_COMMAND=./build/ssh.sh; git fetch origin', 'export GIT_EXTERNAL_DIFF; read GIT_EXTERNAL_DIFF <<< rm; git diff',
+            'printf -v GIT_EXTERNAL_DIFF rm; export GIT_EXTERNAL_DIFF; git diff', 'read GIT_EXTERNAL_DIFF < build/p.txt; export GIT_EXTERNAL_DIFF; git diff',
+            'declare GIT_EXTERNAL_DIFF=rm; export GIT_EXTERNAL_DIFF; git diff', 'readonly GIT_EXTERNAL_DIFF=rm; export GIT_EXTERNAL_DIFF; git diff',
+            'export GIT_EXTERNAL_DIFF=rm; npm test', 'export GIT_EXTERNAL_DIFF=rm; make', `export GIT_EXTERNAL_DIFF=rm; python3 -c "import os; os.system('git diff')"`,
+            'export GIT_EXTERNAL_DIFF=rm; find . -maxdepth 0 -exec git diff \\;']) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+        // On a git command it is judged there: an editor runs for no commit given its message.
+        for (const command of ['GIT_EXTERNAL_DIFF=rm git diff', "GIT_SEQUENCE_EDITOR='cp build/a .claude/settings.json' git rebase -i HEAD~1",
+            'GIT_PROXY_COMMAND=./build/proxy.sh git fetch origin', 'SSH_ASKPASS=./build/pass.sh SSH_ASKPASS_REQUIRE=force git fetch origin', 'EDITOR=./build/edit.sh git commit']) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+        for (const command of ['export FOO=1; git status', 'export FOO=1; npm test', 'export PAGER=cat; git log -1', 'PAGER=cat git log -1', 'export GIT_PAGER=delta; git diff',
+            'GIT_PAGER=./build/pager.sh git log -1', 'export EDITOR=true; git status', 'GIT_EDITOR=:; export GIT_EDITOR=:; git commit -m done', 'EDITOR=./build/edit.sh git commit -m done', 'GIT_EDITOR=vim git commit --no-edit']) {
+            expect(run(command).decision, command).toBe('allow')
+        }
+    })
+
+    it('refuses an assigned value naming a guard control, which a later word writes unseen', () => {
+        for (const command of ['X=.claude/settings.json; git log -1 --format=%B --output "$X"', 'X=.cockpit/guards/bash-guard.sh; cp build/a "$X"', 'X=.cockpit/guards/bash-guard.sh; echo x | tee "$X"',
+            'X=.cockpit/guards/bash-guard.sh; sort -o "$X" build/a', 'X=.cockpit/guards/bash-guard.sh; curl -o "$X" https://example.test/x', 'export X=node_modules/@b00dea/cockpit/dist/cli.js; cp build/a "$X"']) {
+            expect(run(command).decision, command).toBe('deny')
+        }
+        expect(run('X=build/out.txt; cp a "$X"').decision).toBe('allow')
+    })
+
+    it('judges a Git trace variable holding a path as a write of that path', () => {
+        expect(run(`GIT_TRACE=${root}/.claude/settings.json git status`).decision).toBe('deny')
+        expect(run(`GIT_TRACE2_EVENT=${root}/.cockpit/guards/bash-guard.sh git status`).decision).toBe('deny')
+        expect(run('GIT_TRACE=1 git status').decision).toBe('allow')
+    })
+
+    it('searches the tree find hands any program, through links, for secrets', () => {
+        const secret = onBranch('refs/heads/topic', undefined, { sourceSecret: true })
+        for (const command of ["find . -name '.env*' -exec awk 1 {} +", 'find . -exec sed -n p {} +', 'find src -execdir unknowntool {} \\;']) {
+            expect(run(command, open(), secret).decision, command).not.toBe('allow')
+        }
+        expect(run("find src -name '*.ts' -exec wc -l {} +").decision).toBe('allow')
+        expect(run('find src -exec unknowntool {} +').decision).toBe('allow')
+    })
+
     it('judges forced checkouts, aborts and new worktrees against the files on disk, and asks for plumbing that moves HEAD under them', () => {
         // HEAD moved onto a crafted commit (`reset --soft`), then a forced checkout, wrote agent settings over the
         // ones on disk while every comparison with HEAD found nothing.
