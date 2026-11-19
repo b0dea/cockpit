@@ -988,7 +988,8 @@ describe('built-in read-only profile', () => {
         // A shell glob reaches a leading dot only where it spells one, so these match no protected name.
         // A pattern glued to an option is a pattern, and a middle folder cannot be a file-only name such as .npmrc.
         for (const command of ['cat .se/creds.json', 'cat src/*.json', 'cat ?secrets/creds.json', 'cat [.]secrets/creds.json', 'head -n5 notes.md', `find . -name '*.json' -print`,
-            'grep -e.env notes.md', 'git log -S.env --oneline', 'sed -es/a/b/ notes.md', 'grep -oe/api/v1 notes.md', 'cat .v*/settings.json', 'cat .g*/workflows/ci.yml', 'cat "$PWD"/src/*.json']) expect(judged(command), command).toBe('allow')
+            'grep -e.env notes.md', 'git log -S.env --oneline', 'sed -es/a/b/ notes.md', 'grep -oe/api/v1 notes.md', 'cat .v*/settings.json', 'cat .g*/workflows/ci.yml']) expect(judged(command), command).toBe('allow')
+        expect(judged('cat "$PWD"/src/*.json')).toBe('allow')
     })
 
     it('judges a spelling that names cockpit as cockpit, whichever Node or launcher starts it', () => {
