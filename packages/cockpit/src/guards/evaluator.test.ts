@@ -3258,11 +3258,11 @@ describe('everyday directory changes and held paths', () => {
         expect(run('cd api && ls').decision).toBe('ask')
     })
 
-    // CDPATH moves only a shell's cd, so a bare name reaches home only as a cd target or a word after one; in inline
-    // code, or in unread shell text with no cd, `.codex` is a jq field or a string.
-    it('reads a bare name as reached from home only after a cd', () => {
+    // Code and unread text can reach home without a cd, so a bare agent tool's home in them is refused, even where it is
+    // only a jq field or a printed string: every narrower reading the guard tried let a real read of it through.
+    it('reads a bare credential name in code or unread text as reached from home', () => {
         for (const command of ["python3 - <<'EOF'\nprint('.claude, .codex')\nEOF", "S=/x; echo 1 > $S/h.json; jq -c '.claude, .codex' h.json"]) {
-            expect(run(command).reason, command).not.toContain('credential store')
+            expect(run(command).reason, command).toContain('credential store')
         }
         for (const command of ['cat ~/.codex/auth.json', `python3 -c "open('$HOME/.codex/auth.json')"`, `python3 -c "import os; open(os.path.expanduser('~/.codex/auth.json'))"`,
             'cd ~ && cat .codex/auth.json', 'cd .aws && cat credentials', 'S=/x; echo 1 > $S/h.json; cd .aws && cat credentials',
@@ -3292,7 +3292,7 @@ describe('everyday directory changes and held paths', () => {
             expect(run(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('credential store') })
         }
         const consumer = String.raw`S=/private/tmp/x; sed -i '' 's/return {"holders": s\["state"\]\["holders"\], /return {"holders": s["state"]["holders"], "ended": s["state"].get("endedHolders"), /' $S/mcp-hold-test.py && grep -c '"ended"' $S/mcp-hold-test.py && python3 $S/mcp-hold-test.py > $S/headless-0131.json; jq -c '.claude, .codex | {before, mcp:(.run.mcp // .run.mcpStderr), seconds, afterExit, after5s}' $S/headless-0131.json`
-        expect(run(consumer).reason).not.toContain('credential store')
+        expect(run(consumer).reason).toContain('credential store')
     })
 
     // A CDPATH entry above home, such as `/`, puts `cd workspace` where home's own path runs through, as `cd Users`
@@ -3310,8 +3310,8 @@ describe('everyday directory changes and held paths', () => {
         }
     })
 
-    // Code finds home in more ways than any list of spellings holds, so every bare name in code or unread text is judged
-    // from home; only a bare agent-home directory, which names no credential until a login file inside it is named, is not.
+    // Code finds home in more ways than any list of spellings holds, and names a file in more ways than any list of its
+    // spellings holds, so every bare name in code or unread text is judged from home, an agent tool's home included.
     it('reads every bare credential name in code as reached from home, however the code finds home', () => {
         for (const command of [
             `python3 -c "import os; print(open(os.path.join(os.environ['HO'+'ME'], '.netrc')).read())"`,
@@ -3325,13 +3325,18 @@ describe('everyday directory changes and held paths', () => {
             `python3 -c "import os; print(open(os.path.join(os.environ['HO'+'ME'], '.codex', 'auth.json')).read())"`,
             // A slash before the name only joins it to whatever the code found.
             `python3 -c "import os; d=os.environ['HO'+'ME']; print(open(d+'/.aws/credentials').read())"`,
+            `node -e "console.log(['.claude','.codex'].join(','))"`,
+            // A login file's name built from pieces, or every file of the directory, read, copied or archived.
+            `python3 -c "import os; from os.path import join; d=os.environ['HO'+'ME']; print(open(join(d, '.codex', 'auth'+'.json')).read())"`,
+            `python3 -c "import os; from os.path import join; d=os.environ['HO'+'ME']; print(open(join(d, '.claude', '.cred'+'entials.json')).read())"`,
+            `python3 -c "import os; from os.path import join; d=join(os.environ['HO'+'ME'], '.codex'); print([open(join(d, f)).read() for f in os.listdir(d)])"`,
+            `python3 -c "import os, shutil; from os.path import join; shutil.copytree(join(os.environ['HO'+'ME'], '.codex'), 'build/out')"`,
+            `python3 -c "import os, tarfile; from os.path import join; tarfile.open('build/c.tar', 'w').add(join(os.environ['HO'+'ME'], '.codex'))"`,
         ]) {
             expect(run(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('credential store') })
         }
-        for (const command of [`node -e "console.log(['.claude','.codex'].join(','))"`,
-            `cat /tmp/a; tail -5 /tmp/b; cd workorders/x/evidence && jq '{a:.key, b:.claude.exit}' f.json`]) {
-            expect(run(command).decision, command).not.toBe('deny')
-        }
+        const parsed = `cat /tmp/a; tail -5 /tmp/b; cd workorders/x/evidence && jq '{a:.key, b:.claude.exit}' f.json`
+        expect(run(parsed).decision, parsed).not.toBe('deny')
     })
 
     // An expansion can name the home directory however it likes; the literal rest after it still names the file.

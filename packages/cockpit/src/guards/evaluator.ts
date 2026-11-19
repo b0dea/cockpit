@@ -2291,19 +2291,16 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const controlNameDenial = (folded: string): GuardDecision | undefined =>
         controlFiles.some(path => folded === fold(path)) || controlDirectories.some(path => within(folded, fold(path))) || guardScriptLocation(folded) ? controlDenial
         : nestedAgentConfiguration(folded, false) ? nestedConfigurationDenial : installedCode(folded, false) ? unreadInstalledCodeDenial : undefined
-    // In an agent tool's home only a login or key file is a credential. A bare `.codex` in code or unread text is a jq
-    // field or a string far more often than a read of that directory, so it names none until a login file is named too.
+    // In an agent tool's home only a login or key file is a credential.
     const agentHomeCredential = (folded: string) => credentialName(folded, resolved.homeDirectory)
         || agentHomes.some(item => within(folded, fold(item.path)) && folded !== fold(item.path)
             && classifyAgentHomeEntry(item.tool, posix.relative(fold(item.path), folded))?.kind === 'credential')
-    // Whether a run of names below home reaches a credential. An agent tool's home directory alone reaches one only when
-    // a login file inside it is among `others`, the other names beside it, as `join(d, '.codex', 'auth.json')` names one.
-    const reachesCredentialFromHome = (run: string, others: readonly string[] = []): boolean => {
+    // Whether the literal rest after an expansion names a credential from home. Below an agent tool's home only its login
+    // and key files do, as `$PWD/.claude/settings.json` is the cockpit's own; the home directory itself does.
+    const restNamesCredential = (run: string): boolean => {
         if (home === undefined) return false
         const directory = AGENT_HOME_DIRECTORIES.find(item => within(fold(run), item))
-        if (directory === undefined) return namesCredential(fold(posix.join(home, run)))
-        if (fold(run) !== directory) return agentHomeCredential(fold(posix.join(home, run)))
-        return others.some(other => [other, posix.basename(other)].some(name => agentHomeCredential(fold(posix.join(home, directory, name)))))
+        return directory !== undefined && fold(run) !== directory ? agentHomeCredential(fold(posix.join(home, run))) : namesCredential(fold(posix.join(home, run)))
     }
     const textDenial = (text: string, cwd: string, code = false): GuardDecision | undefined => {
         if (holdsLiveKey(text)) return liveKeyDenial
@@ -2331,7 +2328,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const runs = [...new Set([...tokens, ...text.replace(/['"\\]/g, '').split(/[^\w./@~+-]+/)])]
                 .filter(token => token !== '' && (code || !/^\.(?:pem|p12|pfx|key)$/i.test(token)))
                 .map(token => /^\/\.[^./]/.test(token) ? token.slice(1) : token).filter(token => !/^[/~.]\./.test(token) && !token.startsWith('/'))
-            if (runs.some(run => reachesCredentialFromHome(run, runs))) return credentialDenial
+            if (runs.some(run => namesCredential(fold(posix.join(home, run))))) return credentialDenial
         }
         if (fold(text).split(/[^\w./@~+-]+/).some(token => /^(?:sudo|doas|pkexec)$/.test(posix.basename(token)))) return deny('Refusing privilege escalation: it is a person\'s action. Ask them to run it in their own terminal.')
         if (/\b(?:curl|wget)\b[^|;&]*\|\s*(?:\S*\/)?(?:sh|bash|zsh|dash|source|\.|python[\d.]*|node|perl|ruby)(?![\w.-])/.test(fold(text))) return deny('Refusing to run downloaded text as code. Download the file into the cockpit, read it, then run it by path.')
@@ -3034,7 +3031,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         for (const word of invocation.words) {
             if (!word.dynamic || !['argument', 'environment-assignment-value', 'wrapper-option-value'].includes(word.role)) continue
             const rest = /\/[^$`(){}\s]*$/.exec(word.value)
-            if (rest && /[$`]/.test(word.value.slice(0, rest.index)) && reachesCredentialFromHome(rest[0].slice(1))) hold(credentialDenial)
+            if (rest && /[$`]/.test(word.value.slice(0, rest.index)) && restNamesCredential(rest[0].slice(1))) hold(credentialDenial)
         }
         for (const word of invocation.words) {
             if (!['executable', 'argument', 'environment-assignment-value', ...fetcher ? ['heredoc-body'] : []].includes(word.role)) continue
