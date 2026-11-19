@@ -258,7 +258,10 @@ reports missing required variables only.
 
 A server whose command runs `cockpit session` answers its harness only once `up` has started the
 stack. Codex gives up on a server after 10 seconds by default, so its generated entry for such a
-server sets `startup_timeout_sec` to `environment.machine.cold_start_seconds` plus 60. The field is
+server sets `startup_timeout_sec` to `environment.machine.cold_start_seconds`, plus the two minutes
+`up` may wait for a `sleep` or `down` of the stack to end, plus 30 seconds. A command is recognised
+through `npx`, `npm exec`, a path, a pinned package version or a shell line. Without
+`[environment.machine]`, `up` refuses at once, so no timeout is set. The field is
 generated, not measured: it is the one Codex 0.170.0 reads for a server's start, and no run has
 checked that Codex waits for it. Claude Code's `.mcp.json` documents no per-server start timeout;
 its start timeout is an environment variable for every server, which cockpit does not set.

@@ -12,6 +12,7 @@ import { GUARD_LOCAL_PATHS } from '../../guards/local-identity.js'
 import { claudeGuardFileDenials, openCodeGuardFileDenials } from '../../surfaces/guard-file-protection.js'
 import { RefusalError, tryParseJson } from '../contract.js'
 import { compareCodeUnits, ownRecord, sha256 } from './shared.js'
+import { STACK_TEARDOWN_WAIT_MS } from '../claims.js'
 import { splitRepositoryPath } from '../../repository-path.js'
 
 export function expectedSurfaceOutputs(
@@ -252,17 +253,20 @@ export const GUIDE_LOAD_CHARACTERIZATIONS = Object.freeze(Object.fromEntries(shi
     }])))
 
 // Codex gives an MCP server 10 s to answer before it gives up on it, and a server that runs
-// `cockpit session` answers only once up has started the stack. It gets the declared cold start, plus
-// a minute for up's own reads and for joining a stack another session is still starting.
-const SESSION_STARTUP_MARGIN_SECONDS = 60
+// `cockpit session` answers only once up has started the stack. It gets the declared cold start, the
+// longest up waits for a sleep or down of the stack to end first, and half a minute for up's own reads.
+const SESSION_STARTUP_MARGIN_SECONDS = STACK_TEARDOWN_WAIT_MS / 1_000 + 30
 
+// The launcher may be npx, npm exec or a path, a pinned package version, or a word in a shell line.
 function runsCockpitSession(server: McpServer | undefined): boolean {
     if (!server || !('command' in server)) return false
-    const argv = [server.command, ...server.args]
-    const end = argv.indexOf('--')
-    const words = end === -1 ? argv : argv.slice(0, end)
-    const launcher = words.findIndex(word => ['cockpit', 'cockpit.mjs'].includes(basename(word)) || word === '@b00dea/cockpit')
-    return launcher !== -1 && words.slice(launcher + 1).includes('session')
+    const words = [server.command, ...server.args].flatMap(word => word.split(/\s+/))
+        .map(word => word.replace(/^["']+|["';]+$/g, '')).filter(Boolean)
+    const launcher = words.findIndex(word => ['cockpit', 'cockpit.mjs'].includes(basename(word)) || /^@b00dea\/cockpit(?:@\S+)?$/.test(word))
+    if (launcher === -1) return false
+    const options = words.slice(launcher + 1)
+    const end = options.indexOf('--')
+    return (end === -1 ? options : options.slice(0, end)).includes('session')
 }
 
 export function nativeSources(
