@@ -538,7 +538,7 @@ or a URL; `gh api` is left out, because its `GET` returns any file the repositor
   `-execdir` it names no other path. Whatever program find hands `{}`, its roots are searched for
   secrets through links, unless every program it runs prints only names, sizes, counts, types or link
   targets (`ls`, `stat`, `du`, `basename`, `dirname`, `realpath`, `readlink`, `wc` with `-l`, `-w`,
-  `-c`, `-m` or `-L`, and `file` without `-z`, `-Z`, `-f` or `-m`; `--files0-from` reads a found file
+  `-c`, `-m` or `-L`, and `file` without `-z`, `-Z`, `-f` or `-m`; `--files0-from`, or any prefix of it, reads a found file
   as names) and find's own `-name` or `-path` names no secret, as `-name '.env*'` does. `git grep --no-index`, and `--untracked` with `--no-exclude-standard`, are
   judged as a recursive search of the paths they name, or of the working directory, since they read
   ignored files.
@@ -576,8 +576,11 @@ or a URL; `gh api` is left out, because its `GET` returns any file the repositor
   with no dot, is judged as the directory below when it exists there, the call sets no `CDPATH`, and
   no run of its names reaches a credential store from the home directory, where a `CDPATH` entry could
   send it; otherwise it asks, or is refused when it names a credential store, a file that runs programs, such as
-  a launch agent, or the home directory itself. After such a `cd`, a path or later `cd` whose `..` climbs back to
-  the directory it was named from asks, and one whose names reach those locations from home is refused. A `..` after a directory name, as in
+  a launch agent, or the home directory itself. After such a `cd` the rest of the call's text is read whole,
+  here-strings, heredocs, loop lists and inline code included: a `$` expansion asks, a value assigned anywhere in
+  the call that holds `..` asks, and a run of `..` that climbs back to the directory the `cd` was named from asks,
+  so `cd packages/cockpit && cat ../../package.json` asks where `cd ./packages/cockpit && cat ../../package.json`
+  runs. A shorter climb is refused when its names reach those locations from home. A `..` after a directory name, as in
   `cd ./a/../b` or `env -C a/..`, is refused too, as are `pushd`, `popd` and zsh's `chdir`. A `cd`
   may fail, and one after `||` may not run, so each later command is judged from every directory it
   may run in: in `pwd || cd ./dir && cat x` the `cat` is judged from both. A newline after `&&`,

@@ -65,6 +65,8 @@ export type GuardParseResult = {
      * was captured from it: the evaluator judges the text by the names it spells.
      */
     readonly unreadable?: Readonly<{ text: string; reason: string }>
+    /** The shell text of a call that changes directory by a name without `./`, judged as text after that cd. */
+    readonly cdByName?: string
 } | { readonly status: 'unavailable'; readonly reason: string }
 
 const parsedInputs = new WeakSet<object>()
@@ -651,7 +653,7 @@ function gitShellRefusal(argv: readonly string[]): string | undefined {
 }
 
 // What the whole command does beside its invocations: a job in the background, or a loop.
-interface Seen { background: boolean; loop: boolean; fetchedValue?: true }
+interface Seen { background: boolean; loop: boolean; fetchedValue?: true; cdByName?: true }
 // A word that sets a variable before the command it precedes, as `NAME=value cmd`.
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
 /**
@@ -890,7 +892,9 @@ function changedDirectory(tokens: readonly Token[], context: Context): string | 
     // starts with no dot is judged as the directory below; the evaluator holds it to one that exists there and whose
     // names reach no credential store from the home directory, which is where a CDPATH entry could send it instead.
     const byName = context.options.cdpath === undefined && !context.cdSteered && target.includes('/') && !target.startsWith('.')
-    if (context.options.cdpath !== '' && !/^(?:\/|\.\.?(?:\/|$))/.test(target) && !byName) refuse(CD_REFUSAL)
+    const explicit = /^(?:\/|\.\.?(?:\/|$))/.test(target)
+    if (context.options.cdpath !== '' && !explicit && !byName) refuse(CD_REFUSAL)
+    if (!explicit) context.seen.cdByName = true
     // Both shells resolve `cd` by spelling unless set to follow links (`set -P`, zsh's chase_links),
     // which the guard cannot see, as it cannot see CDPATH.
     if (climbsOutOfName(target)) refuse(`${CD_REFUSAL} A .. after a directory name is not: a shell set to follow links resolves it from wherever a link there leads.`)
@@ -1414,7 +1418,7 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
             Object.freeze(item)
         }
         const result: GuardParseResult = { status: 'parsed', tool, cwd, paths, removed, invocations,
-            ...content ? { content } : {}, ...seen.background ? { background: true as const } : {}, ...seen.loop ? { loop: true as const } : {}, ...unreadable ? { unreadable } : {} }
+            ...content ? { content } : {}, ...seen.cdByName && typeof fields.command === 'string' ? { cdByName: fields.command } : {}, ...seen.background ? { background: true as const } : {}, ...seen.loop ? { loop: true as const } : {}, ...unreadable ? { unreadable } : {} }
         parsedInputs.add(result)
         return result
     } catch (error) {

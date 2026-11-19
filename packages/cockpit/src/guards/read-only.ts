@@ -173,8 +173,9 @@ const FOUND = '\0found'
 // text, so what find finds is not searched for secrets as a reader's tree is. Each pattern admits the words that keep
 // it so: `--files0-from` and `file -f` read a found file as a list of names and echo the ones they cannot open, and
 // `file -z` and `-Z` look inside compressed files. `file` may still quote a few bytes some formats' magic describes.
-const ANY_BUT_NAME_LIST = /^(?!--files0-from)/
-const FOUND_METADATA: ReadonlyMap<string, RegExp> = new Map([
+// GNU tools take any unique prefix of a long option, so `--files0-fr` and `--fi` are `--files0-from` too.
+const ANY_BUT_NAME_LIST = { test: (word: string) => !abbreviates(word.split('=')[0]!, '--files0-from', 3) }
+const FOUND_METADATA: ReadonlyMap<string, { test(word: string): boolean }> = new Map([
     ['wc', /^(?:-[clmwL]+|--(?:lines|words|bytes|chars|max-line-length))$/],
     ['file', /^(?:-[bhiIkLnN0]+|--(?:brief|mime|mime-type|mime-encoding|extension|dereference|no-dereference|no-pad|no-buffer|keep-going|print0))$/],
     ...['ls', 'stat', 'du', 'basename', 'dirname', 'realpath', 'readlink'].map(name => [name, ANY_BUT_NAME_LIST] as const),

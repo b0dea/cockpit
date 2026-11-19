@@ -1719,6 +1719,11 @@ describe('allow by default', () => {
             'find . -exec file -f {} +', 'find . -exec wc --files0-from {} +', 'find . -exec du --files0-from {} +', 'find . -exec ls {} + -exec cat {} +']) {
             expect(run(command, open(), secret).decision, command).not.toBe('allow')
         }
+        // GNU reads any unique prefix of `--files0-from` as the option itself.
+        for (const command of ['find . -exec du --files0-fr {} \\;', 'find . -exec du --files0 {} \\;', 'find . -type f -exec du --files0-f {} \\;',
+            'find . -exec ls {} \\; -o -exec du --fi {} \\;']) {
+            expect(run(command, open(), secret).decision, command).not.toBe('allow')
+        }
         // find's own test naming a secret keeps the search, whatever the program prints.
         for (const command of ["find . -name '.env*' -exec wc -c {} +", "find . -iname '*.KEY' -exec ls {} +", "find . -path '*/.secrets/*' -exec stat {} +"]) {
             expect(run(command, open(), secret).decision, command).toBe('deny')
@@ -3273,6 +3278,33 @@ describe('everyday directory changes and held paths', () => {
             `cd ${agents} && echo x > evil.plist`]) {
             expect(judge(command).decision, command).not.toBe('allow')
         }
+    })
+
+    it('reads the whole text after a cd by name for a way back out of it: an expansion, a held value or a long enough run of ..', () => {
+        const made = new Set(['workorders/x', 'workorders/x/evidence', 'Library/Caches', 'src/lib', 'packages/cockpit', 'Documents/x', 'a/b/Documents/x']
+            .map(path => `${root}/${path}`))
+        const local: PathInspection = request => ({ ...withGit(request), ...made.has(posix.resolve(request.cwd, request.path)) ? { identity: '8:4' } : {} })
+        const judge = (command: string, cwd = root) => evaluateGuard(parseGuardInput(shellPayload(command, cwd), { home }), configured(), local)
+        for (const command of ['cd workorders/x && cat ../y/f.json', 'cd src/lib && npm test', 'cd src/lib && cd ../util && npm test',
+            'cd workorders/x/evidence && cat ../../y/notes.md', 'cd workorders/x && jq . f.json']) {
+            expect(judge(command), command).toMatchObject({ decision: 'allow' })
+        }
+        const startup = '.zsh' + 'rc'
+        for (const command of ['S=../..; cd Library/Caches && cat "$S/.aws/credentials"', 'S=../../.aws/credentials; cd Library/Caches && cat "$S"',
+            'cd Library/Caches && S=../..; cat "$S/.aws/credentials"', `cd Library/Caches && sort -o../../${startup} build/a`,
+            'cd Library/Caches && curl -o../../x http://example.invalid', `cd Library/Caches && tar -C../.. -cf ${root}/build/h.tar .aws`,
+            'cd Library/Caches && for f in ../../.netrc; do cat "$f"; done', 'cd Library/Caches && xargs cat <<< ../../.netrc',
+            'cd Documents/x && cd .. && cat ../.netrc', 'cd Documents/x && cd .. && cat ../notes.txt']) {
+            expect(judge(command).decision, command).not.toBe('allow')
+        }
+        // An expansion can build the climb out of short runs, and a value held in the environment reaches a program that
+        // reads it, from a session started deeper in the cockpit, where that value names a directory inside it.
+        expect(judge('cd Documents/x && cat "$(printf %s/%s .. ..)/.netrc"')).toMatchObject({ decision: 'ask', reason: expect.stringContaining('an expansion') })
+        expect(judge(`export S=../..; cd Documents/x && node -e "require('fs').readFileSync(process.env.S + '/.netrc')"`, `${root}/a/b`))
+            .toMatchObject({ decision: 'ask', reason: expect.stringContaining('a value the call holds') })
+        // Two names down and two back up reaches where the cd started, wherever a CDPATH entry put it; `cd ./` names the cockpit's own.
+        expect(judge('cd packages/cockpit && cat ../../package.json').decision).toBe('ask')
+        expect(judge('cd ./packages/cockpit && cat ../../package.json').decision).toBe('allow')
     })
 
     it('reads a jq program after cd as the program it is, not as key file names', () => {
