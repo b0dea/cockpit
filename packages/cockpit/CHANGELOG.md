@@ -13,6 +13,12 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.27
+
+### Patch Changes
+
+- 8dc8d93: The guard now refuses a glob that can match a secret even after an expansion, such as `cat "$PWD"/.se*/creds.json`. A leading `$PWD` or `$HOME` no longer hides a later `.secrets` or `.env` match.
+
 ## 0.1.26
 
 ### Patch Changes
