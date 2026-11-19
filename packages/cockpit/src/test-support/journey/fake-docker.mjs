@@ -187,6 +187,12 @@ function start(container) {
             if (Date.now() > deadline) fail(`Error response from daemon: the listener for ${HostIp}:${HostPort} did not start`)
             sleep(5)
         }
+        // The listener creates the file before it writes it. Read in between, the empty file failed
+        // the start as a port that was not available, with no reason, on a loaded machine.
+        while (readFileSync(ready, 'utf8') === '') {
+            if (Date.now() > deadline) fail(`Error response from daemon: the listener for ${HostIp}:${HostPort} did not report`)
+            sleep(5)
+        }
         const outcome = readFileSync(ready, 'utf8')
         rmSync(ready)
         if (outcome !== 'listening') fail(`Error response from daemon: ports are not available: ${HostIp}:${HostPort}: ${outcome}`)

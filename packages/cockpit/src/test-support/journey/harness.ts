@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -19,8 +20,32 @@ const yamlParser = pathToFileURL(join(repositoryRoot, 'node_modules/yaml/dist/in
 // One scratch directory per test file holds every product, home and fake daemon.
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-journey-')))
 
+// Each machine has its own fake daemon, but the ports its containers publish are this host's, and
+// test files run in parallel workers, often beside another checkout's suite. When every product
+// leased the same family, one journey's listener took a port another had just probed free, before
+// that one's `up` bound it, and its stack failed to start. A harness instance owns one slot: it
+// holds 127.0.0.1:19900+slot, which the kernel grants one process at a time and frees when that
+// process ends, and its products lease from 20000+slot upward in steps of 100, which no other slot's
+// family reaches.
+async function reservePortSlot(): Promise<{ base: number; release: () => void }> {
+    for (let slot = 1; slot < 100; slot += 1) {
+        const holder = createServer()
+        const held = await new Promise<boolean>((resolveHeld, rejectHeld) => {
+            holder.once('error', (error: NodeJS.ErrnoException) => error.code === 'EADDRINUSE' ? resolveHeld(false) : rejectHeld(error))
+            holder.listen(19_900 + slot, '127.0.0.1', () => resolveHeld(true))
+        })
+        if (!held) continue
+        // Holding the slot must not keep a worker alive once its file is done.
+        holder.unref()
+        return { base: 20_000 + slot, release: () => holder.close() }
+    }
+    throw new Error('every journey port slot, 127.0.0.1:19901-19999, is held by another process; let other journey runs finish')
+}
+const portSlot = await reservePortSlot()
+
 /** Removes the scratch tree; a fake container's port listener ends itself once its daemon's state is gone. */
 export function removeScratch(): void {
+    portSlot.release()
     rmSync(scratch, { recursive: true, force: true })
 }
 
@@ -236,6 +261,8 @@ export function createProduct(name: string, options: {
 } = {}): Product {
     const product = productAt(join(scratch, 'products', name), options.machine ?? createMachine(name))
     for (const [path, text] of Object.entries({ ...PRODUCT_FILES, ...options.files })) if (text !== null) product.write(path, text)
+    // The shared default port is swapped for this harness's own slot (see reservePortSlot).
+    if (exists(product, 'cockpit.toml')) product.write('cockpit.toml', product.read('cockpit.toml').replace('APP_PORT = 4100', `APP_PORT = ${portSlot.base}`))
     product.git('init', '--quiet', '--initial-branch=main')
     product.git('add', '--all')
     product.git('commit', '--quiet', '--message', 'Initial product')
