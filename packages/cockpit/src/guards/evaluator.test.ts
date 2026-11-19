@@ -3345,6 +3345,11 @@ describe('everyday directory changes and held paths', () => {
             expect(run(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('credential store') })
         }
         expect(run('tar -C build -cf out.tar dist')).toMatchObject({ decision: 'allow' })
+        // A relative -C is taken from the one before it, as tar changes directory step by step.
+        for (const command of ['tar -C / -C workspace/home -cf build/c.tar .codex', 'tar -C /workspace -C home -cf build/c.tar .aws',
+            'tar -C /workspace --directory=home -cf build/c.tar .netrc']) {
+            expect(run(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('credential store') })
+        }
     })
 
     // An expansion can name the home directory however it likes; the literal rest after it still names the file.

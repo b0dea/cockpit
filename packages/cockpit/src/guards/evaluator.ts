@@ -1002,6 +1002,8 @@ function tarWrites(args: readonly string[]): VisibleWrites & { readonly mode: st
     // A creation reads each source from the directory the -C before it names, so `tar -C ~ -cf x .codex` reads ~/.codex.
     const sources: string[] = []
     const source = (arg: string) => sources.push(destination === '.' || posix.isAbsolute(arg) ? arg : posix.join(destination, arg))
+    // tar changes directory step by step, so a relative -C is taken from the one before it: `-C / -C home` is /home.
+    const changeDirectory = (value: string) => posix.isAbsolute(value) || value.startsWith('~') ? value : posix.join(destination, value)
     const modes: Readonly<Record<string, string>> = { '--extract': 'x', '--get': 'x', '--create': 'c', '--list': 't', '--append': 'r', '--update': 'u' }
     for (let index = 0; index < args.length; index++) {
         const arg = args[index]!
@@ -1011,7 +1013,7 @@ function tarWrites(args: readonly string[]): VisibleWrites & { readonly mode: st
             for (const letter of cluster) {
                 if ('xctru'.includes(letter)) { if (mode && mode !== letter) uncertain = true; mode = letter }
                 else if (letter === 'f') { archive = args[++index]; if (archive === undefined) uncertain = true }
-                else if (letter === 'C') { const value = args[++index]; if (value === undefined) uncertain = true; else destination = value }
+                else if (letter === 'C') { const value = args[++index]; if (value === undefined) uncertain = true; else destination = changeDirectory(value) }
                 // Compression, verbosity and keeping permissions change nothing about where tar writes.
                 else if (!'zjJvpkm'.includes(letter)) uncertain = true
             }
@@ -1024,7 +1026,7 @@ function tarWrites(args: readonly string[]): VisibleWrites & { readonly mode: st
             const given = value ?? args[++index]
             if (!given) uncertain = true
             else if (option === '--file') archive = given
-            else destination = given
+            else destination = changeDirectory(given)
         } else if (!['--gzip', '--bzip2', '--xz', '--verbose', '--keep-old-files', '--preserve-permissions'].includes(arg)) uncertain = true
     }
     const writesArchive = mode === 'c' || mode === 'r' || mode === 'u'
