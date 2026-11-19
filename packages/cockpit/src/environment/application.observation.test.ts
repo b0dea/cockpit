@@ -489,6 +489,19 @@ describe('observation application runners', () => {
         })
     })
 
+    it('names what no longer held when the stage read before the checks changed after them', async () => {
+        applicationOwners.observations.aggregateObservations = vi.fn(() => passed) as never
+        applicationOwners.observations.projectDoctor = vi.fn(() => ({ verdict: 'pass', checks: [] })) as never
+        const source = await healthSourceFixture(context)
+        const bootstrap = (bound: PreflightContext | undefined) => bound && { ...bound, stages: bound.stages.map((stage) => ({ ...stage, stage: 'bootstrap' as const })) }
+        const load = (input: unknown, issue: (raw: HealthObservationSourceInput) => HealthObservationSource | undefined) => source.load(input,
+            (raw) => issue({ ...raw, refreshPreflight: async (previous: PreflightContext) => bootstrap(await raw.refreshPreflight(previous)) } as never))
+        await expect(runDoctor(source.input, { load, execute: vi.fn() } as never)).resolves.toMatchObject({
+            result: { verdict: 'unavailable' },
+            diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID', message: expect.stringContaining('the lifecycle stage changed from steady to bootstrap') }],
+        })
+    })
+
     it('rejects a preflight context issued for another configuration before producers or execution', async () => {
         const first = await healthSourceFixture(context)
         const producer = vi.fn(async () => [])

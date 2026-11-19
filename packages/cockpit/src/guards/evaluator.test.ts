@@ -2824,6 +2824,15 @@ describe('installed code, search path and secret links', () => {
         expect(evaluateGuard(parseGuardInput(shellPayload('node node_modules/.bin/tsc')), configured(), inspect).decision).toBe('allow')
     })
 
+    it('refuses unread code that names installed code with a reason naming the plain spellings, not a change', () => {
+        for (const command of [`node -p "require('./node_modules/@b00dea/cockpit/package.json').version"`,
+            'C=./node_modules/@b00dea/cockpit/bin/cockpit.mjs; $C check --config cockpit.toml']) {
+            const judged = evaluateGuard(parseGuardInput(shellPayload(command)), configured(), inspect)
+            expect(judged.decision, command).toBe('deny')
+            expect(judged.reason, command).toContain('npx --no -- cockpit --version')
+        }
+    })
+
     it('denies every write channel that would plant an .npmrc inside an allowed root', () => {
         // npm applies a project .npmrc to `npx --no cockpit`, so its script-shell or node-options would
         // run other code as the launcher the guard trusts, within the same compound command.
