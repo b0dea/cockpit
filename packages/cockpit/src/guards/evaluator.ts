@@ -2289,17 +2289,21 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const controlNameDenial = (folded: string): GuardDecision | undefined =>
         controlFiles.some(path => folded === fold(path)) || controlDirectories.some(path => within(folded, fold(path))) || guardScriptLocation(folded) ? controlDenial
         : nestedAgentConfiguration(folded, false) ? nestedConfigurationDenial : installedCode(folded, false) ? unreadInstalledCodeDenial : undefined
-    const textDenial = (text: string, cwd: string, code = false): GuardDecision | undefined => {
+    // Code reaches home without a shell cd: chdir in any language, a home lookup, or the home path spelled out.
+    const namesHome = (text: string) => /~|\bHOME\b|expanduser|homedir|Path\.home|Dir\.home|chdir/.test(text) || home !== undefined && text.includes(home)
+    const textDenial = (text: string, cwd: string, code = false, homeNamed = false): GuardDecision | undefined => {
         if (holdsLiveKey(text)) return liveKeyDenial
         if (resolved.hostedDatabaseHosts.some(host => hostUsed(text, host))) return deny('Refusing executable use of a declared hosted database host.')
         if (resolved.vendorHosts.some(host => hostUsed(text, host))) return deny('Refusing executable use of a declared vendor host.')
         const tokens = text.split(/[^\w./@~+-]+/).filter(Boolean)
-        // CDPATH moves only a shell's cd (and pushd, and zsh's chdir), so only its target and the words after it can
-        // stand in the home directory; elsewhere `.codex` is a jq field or a string in code. Quotes and backslashes
-        // still spell the command, as `\cd` and `c''d` do, so the text is read without them.
+        // In text that never names home, only a shell's cd (or pushd) can move there, through CDPATH, so only its target
+        // and the words after it can stand in the home directory; elsewhere `.codex` is a jq field or a string in code.
+        // Quotes and backslashes still spell the command, as `\cd` and `c''d` do, so the text is read without them.
+        // Text that names home, or the call around it, has every word judged from there.
         const bare = text.replace(/['"\\]/g, '')
-        const cd = /(?:^|[^\w.-])(?:cd|pushd|chdir)(?![\w.-])/.exec(bare)
-        const afterCd = cd ? bare.slice(cd.index + cd[0].length).split(/[^\w./@~+-]+/).filter(Boolean) : []
+        const cd = /(?:^|[^\w.-])(?:cd|pushd)(?![\w.-])/.exec(bare)
+        const afterCd = homeNamed || namesHome(text) ? [...tokens, ...bare.split(/[^\w./@~+-]+/).filter(Boolean)]
+            : cd ? bare.slice(cd.index + cd[0].length).split(/[^\w./@~+-]+/).filter(Boolean) : []
         for (const token of tokens) {
             // In shell text the guard does not read, a bare `.key` or `.pem` is a jq field or a file extension, as in
             // `jq '.[] | .key'`, far more often than a file; such text asks anyway, so only a named key file refuses it.
@@ -2982,6 +2986,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (hazard) hold(deny(`Refusing ${shownGuardWord(climb! + rest!)} after cd ${shownGuardWord(spelled)}: a shell with CDPATH set can resolve that name from the home directory, where the path reaches ${hazard}.`))
         }
     })
+    // An assignment or another command in the call, such as `HOME=… python3 -c …`, may move the code to home.
+    const callNamesHome = namesHome(invocations.flatMap(invocation => [...invocation.words.map(word => word.name === undefined ? word.value : `${word.name}=${word.value}`),
+        ...invocation.redirects.map(redirect => redirect.target)]).join(' '))
     for (const invocation of invocations) {
         // Redirects, heredocs, comments and definitions are not executable host use.
         // A host passed to printf is still an argument and remains a hard denial.
@@ -2989,7 +2996,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const fetcher = ['curl', 'wget'].includes(posix.basename(invocation.executable ?? ''))
         if (invocation.words.some(word => ['executable', 'argument', 'environment-assignment-value', 'wrapper-option-value'].includes(word.role) && holdsLiveKey(word.value))) hold(liveKeyDenial)
         // Inline interpreter code can do anything a command can, so its text meets the whole deny list.
-        for (const code of inlineCode(invocation)) { const refusal = textDenial(code, invocation.cwd, true); if (refusal) hold(refusal) }
+        for (const code of inlineCode(invocation)) { const refusal = textDenial(code, invocation.cwd, true, callNamesHome); if (refusal) hold(refusal) }
         for (const word of invocation.words) {
             if (!['executable', 'argument', 'environment-assignment-value', ...fetcher ? ['heredoc-body'] : []].includes(word.role)) continue
             if (resolved.hostedDatabaseHosts.some((host) => hostUsed(word.value, host))) hold(deny('Refusing executable use of a declared hosted database host.'))

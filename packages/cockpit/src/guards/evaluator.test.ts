@@ -3270,6 +3270,29 @@ describe('everyday directory changes and held paths', () => {
         }
     })
 
+    // Code moves to home without a shell cd, through chdir in any language, a home lookup or the home path itself, so
+    // text that names home in any of those ways has every bare name judged from there.
+    it('reads every bare name as reached from home when the call names the home directory', () => {
+        for (const command of [
+            `python3 -c "import os; os.chdir(os.path.expanduser('~')); print(open('.codex/auth.json').read())"`,
+            `python3 -c "import os; print(open(os.path.join(os.path.expanduser('~'), '.codex/auth.json')).read())"`,
+            `python3 -c "from pathlib import Path; print((Path.home() / '.aws' / 'credentials').read_text())"`,
+            `python3 -c "from pathlib import Path; print((Path.home() / '.netrc').read_text())"`,
+            `python3 -c "import os, subprocess; subprocess.run(['cat', '.codex/auth.json'], cwd=os.path.expanduser('~'))"`,
+            "python3 - <<'EOF'\nimport os\nos.chdir(os.environ['HOME'])\nprint(open('.aws/credentials').read())\nEOF",
+            `python3 -c "import os; os.chdir('${home}'); print(open('.netrc').read())"`,
+            `node -e "process.chdir(require('os').homedir()); console.log(require('fs').readFileSync('.codex/auth.json', 'utf8'))"`,
+            `node -e "const os = require('os'), path = require('path'); console.log(require('fs').readFileSync(path.join(os.homedir(), '.netrc'), 'utf8'))"`,
+            `ruby -e 'Dir.chdir(Dir.home); puts File.read(".netrc")'`,
+            `ruby -e 'puts File.read(File.join(Dir.home, ".aws/credentials"))'`,
+            `HOME=${home} python3 -c "print(open('.netrc').read())"`,
+        ]) {
+            expect(run(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining('credential store') })
+        }
+        const consumer = String.raw`S=/private/tmp/x; sed -i '' 's/return {"holders": s\["state"\]\["holders"\], /return {"holders": s["state"]["holders"], "ended": s["state"].get("endedHolders"), /' $S/mcp-hold-test.py && grep -c '"ended"' $S/mcp-hold-test.py && python3 $S/mcp-hold-test.py > $S/headless-0131.json; jq -c '.claude, .codex | {before, mcp:(.run.mcp // .run.mcpStderr), seconds, afterExit, after5s}' $S/headless-0131.json`
+        expect(run(consumer).reason).not.toContain('credential store')
+    })
+
     it('judges cd into an existing directory by a single name as it does a name with a slash', () => {
         const made = new Set(['workorders', 'workorders/WO-1/evidence', 'Library'].map(path => `${root}/${path}`))
         const local: PathInspection = request => ({ ...withGit(request), ...made.has(posix.resolve(request.cwd, request.path)) ? { identity: '8:5' } : {} })
