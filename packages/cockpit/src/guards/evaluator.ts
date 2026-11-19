@@ -1425,6 +1425,8 @@ function credentialStore(spelled: string, home: string | undefined): boolean {
 // Under native external writes the agent tool decides a write outside the roots, except where the write
 // would change what agents, the shell, Git or the system run later, or reach a credential: those stay
 // refused whatever the tool would allow. Matched folded, below the home directory or anywhere.
+// The agent tools' own home directories below home.
+const AGENT_HOME_DIRECTORIES = ['.claude', '.codex', '.config/opencode', '.local/share/opencode', '.local/state/opencode', '.cursor', '.grok', '.gemini', '.config/claude']
 const HOME_RUN_CONFIGURATION: readonly Readonly<{ path: string; what: string }>[] = [
     ...['.claude', '.claude.json', '.codex', '.config/opencode', '.local/share/opencode', '.local/state/opencode', '.cursor', '.grok', '.gemini',
         '.config/claude', '.config/github-copilot', '.agents', '.mcp.json'].map(path => ({ path, what: 'an agent tool\'s own configuration' })),
@@ -2289,21 +2291,25 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const controlNameDenial = (folded: string): GuardDecision | undefined =>
         controlFiles.some(path => folded === fold(path)) || controlDirectories.some(path => within(folded, fold(path))) || guardScriptLocation(folded) ? controlDenial
         : nestedAgentConfiguration(folded, false) ? nestedConfigurationDenial : installedCode(folded, false) ? unreadInstalledCodeDenial : undefined
-    // Code reaches home without a shell cd: chdir in any language, a home lookup, or the home path spelled out.
-    const namesHome = (text: string) => /~|\bHOME\b|expanduser|homedir|Path\.home|Dir\.home|chdir/.test(text) || home !== undefined && text.includes(home)
-    const textDenial = (text: string, cwd: string, code = false, homeNamed = false): GuardDecision | undefined => {
+    // In an agent tool's home only a login or key file is a credential. A bare `.codex` in code or unread text is a jq
+    // field or a string far more often than a read of that directory, so it names none until a login file is named too.
+    const agentHomeCredential = (folded: string) => credentialName(folded, resolved.homeDirectory)
+        || agentHomes.some(item => within(folded, fold(item.path)) && folded !== fold(item.path)
+            && classifyAgentHomeEntry(item.tool, posix.relative(fold(item.path), folded))?.kind === 'credential')
+    // Whether a run of names below home reaches a credential. An agent tool's home directory alone reaches one only when
+    // a login file inside it is among `others`, the other names beside it, as `join(d, '.codex', 'auth.json')` names one.
+    const reachesCredentialFromHome = (run: string, others: readonly string[] = []): boolean => {
+        if (home === undefined) return false
+        const directory = AGENT_HOME_DIRECTORIES.find(item => within(fold(run), item))
+        if (directory === undefined) return namesCredential(fold(posix.join(home, run)))
+        if (fold(run) !== directory) return agentHomeCredential(fold(posix.join(home, run)))
+        return others.some(other => [other, posix.basename(other)].some(name => agentHomeCredential(fold(posix.join(home, directory, name)))))
+    }
+    const textDenial = (text: string, cwd: string, code = false): GuardDecision | undefined => {
         if (holdsLiveKey(text)) return liveKeyDenial
         if (resolved.hostedDatabaseHosts.some(host => hostUsed(text, host))) return deny('Refusing executable use of a declared hosted database host.')
         if (resolved.vendorHosts.some(host => hostUsed(text, host))) return deny('Refusing executable use of a declared vendor host.')
         const tokens = text.split(/[^\w./@~+-]+/).filter(Boolean)
-        // In text that never names home, only a shell's cd (or pushd) can move there, through CDPATH, so only its target
-        // and the words after it can stand in the home directory; elsewhere `.codex` is a jq field or a string in code.
-        // Quotes and backslashes still spell the command, as `\cd` and `c''d` do, so the text is read without them.
-        // Text that names home, or the call around it, has every word judged from there.
-        const bare = text.replace(/['"\\]/g, '')
-        const cd = /(?:^|[^\w.-])(?:cd|pushd)(?![\w.-])/.exec(bare)
-        const afterCd = homeNamed || namesHome(text) ? [...tokens, ...bare.split(/[^\w./@~+-]+/).filter(Boolean)]
-            : cd ? bare.slice(cd.index + cd[0].length).split(/[^\w./@~+-]+/).filter(Boolean) : []
         for (const token of tokens) {
             // In shell text the guard does not read, a bare `.key` or `.pem` is a jq field or a file extension, as in
             // `jq '.[] | .key'`, far more often than a file; such text asks anyway, so only a named key file refuses it.
@@ -2317,9 +2323,16 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const control = controlNameDenial(folded)
             if (control) return control
         }
-        // A bare name may be reached from the home directory, as `cd .aws && cat credentials` reaches it through CDPATH.
-        if (home !== undefined && afterCd.some(token => (code || !/^\.(?:pem|p12|pfx|key)$/i.test(token)) && !/^[/~.]\./.test(token) && !token.startsWith('/')
-            && namesCredential(fold(posix.join(home, token))))) return credentialDenial
+        // Code finds the home directory in more ways than any list of spellings holds (an environment lookup built from
+        // pieces, the password database, a saved directory), and a shell cd reaches it through CDPATH, so every bare name
+        // is judged from home, read with and without quotes. A slash before a dot name, as in `d+'/.netrc'`, only joins
+        // it to what the code found.
+        if (home !== undefined) {
+            const runs = [...new Set([...tokens, ...text.replace(/['"\\]/g, '').split(/[^\w./@~+-]+/)])]
+                .filter(token => token !== '' && (code || !/^\.(?:pem|p12|pfx|key)$/i.test(token)))
+                .map(token => /^\/\.[^./]/.test(token) ? token.slice(1) : token).filter(token => !/^[/~.]\./.test(token) && !token.startsWith('/'))
+            if (runs.some(run => reachesCredentialFromHome(run, runs))) return credentialDenial
+        }
         if (fold(text).split(/[^\w./@~+-]+/).some(token => /^(?:sudo|doas|pkexec)$/.test(posix.basename(token)))) return deny('Refusing privilege escalation: it is a person\'s action. Ask them to run it in their own terminal.')
         if (/\b(?:curl|wget)\b[^|;&]*\|\s*(?:\S*\/)?(?:sh|bash|zsh|dash|source|\.|python[\d.]*|node|perl|ruby)(?![\w.-])/.test(fold(text))) return deny('Refusing to run downloaded text as code. Download the file into the cockpit, read it, then run it by path.')
         // Words keep `:` and `-`, so `HEAD:main`, `:topic` and `-uf` reach Git's push rules; an assignment's value, `cmd=git`, is a word.
@@ -3008,9 +3021,6 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (hazard) hold(deny(`Refusing ${shownGuardWord(climb! + rest!)} after cd ${shownGuardWord(spelled)}: a shell with CDPATH set can resolve that name from the home directory, where the path reaches ${hazard}.`))
         }
     })
-    // An assignment or another command in the call, such as `HOME=… python3 -c …`, may move the code to home.
-    const callNamesHome = namesHome(invocations.flatMap(invocation => [...invocation.words.map(word => word.name === undefined ? word.value : `${word.name}=${word.value}`),
-        ...invocation.redirects.map(redirect => redirect.target)]).join(' '))
     for (const invocation of invocations) {
         // Redirects, heredocs, comments and definitions are not executable host use.
         // A host passed to printf is still an argument and remains a hard denial.
@@ -3018,7 +3028,14 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const fetcher = ['curl', 'wget'].includes(posix.basename(invocation.executable ?? ''))
         if (invocation.words.some(word => ['executable', 'argument', 'environment-assignment-value', 'wrapper-option-value'].includes(word.role) && holdsLiveKey(word.value))) hold(liveKeyDenial)
         // Inline interpreter code can do anything a command can, so its text meets the whole deny list.
-        for (const code of inlineCode(invocation)) { const refusal = textDenial(code, invocation.cwd, true, callNamesHome); if (refusal) hold(refusal) }
+        for (const code of inlineCode(invocation)) { const refusal = textDenial(code, invocation.cwd, true); if (refusal) hold(refusal) }
+        // An expansion can name the home directory however it likes, as `$(getent passwd $USER | cut -d: -f6)` does, but
+        // the literal rest after it still names the file.
+        for (const word of invocation.words) {
+            if (!word.dynamic || !['argument', 'environment-assignment-value', 'wrapper-option-value'].includes(word.role)) continue
+            const rest = /\/[^$`(){}\s]*$/.exec(word.value)
+            if (rest && /[$`]/.test(word.value.slice(0, rest.index)) && reachesCredentialFromHome(rest[0].slice(1))) hold(credentialDenial)
+        }
         for (const word of invocation.words) {
             if (!['executable', 'argument', 'environment-assignment-value', ...fetcher ? ['heredoc-body'] : []].includes(word.role)) continue
             if (resolved.hostedDatabaseHosts.some((host) => hostUsed(word.value, host))) hold(deny('Refusing executable use of a declared hosted database host.'))
