@@ -73,7 +73,14 @@ derives: **stale** when the file or a source changed since acceptance, **blocked
 question waits or the attempt cap is reached, and **draft** before acceptance. `partial` and
 `abandoned` are closures. The work-in-progress cap, `work.wip_cap`, counts accepted orders that are
 not closed, and `work accept` refuses a new one past it. A grade whose verdict is `unmet` counts an
-attempt; a failed check does not, since its cause may be cockpit's. Under `checks` and `off` nothing
+attempt; a failed check does not, since its cause may be cockpit's. A grade that a cockpit or machine
+error ends before it reaches a verdict counts none: a check that could not run (its command is not on
+cockpit's search path, or the executor or a gate failed), an evaluator that could not run or whose
+answer cockpit could not read, a change that could not be read, or another command holding the
+order's lock. It answers `WORK_GRADE_INTERRUPTED` with that error's code and fix, and the record and
+`work status` keep it under `interrupted` until a grade reaches a verdict. Which errors count is
+decided by cockpit's own codes, so a check that times out, prints too much or names a command file
+the work removed still fails the grade. Under `checks` and `off` nothing
 judges, so there is no cap. At `work.attempt_cap` the order is blocked until it is closed or given
 fresh attempts. An amendment a person accepts resets the count. One the agent accepts keeps it, or
 reordering a list in its own contract would undo the cap. When the contract is right and the

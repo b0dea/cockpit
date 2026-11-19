@@ -62,7 +62,7 @@ You answer a question about this cockpit from what its commands report now, and 
    stack on the machine. Run two only when the question spans them.
    A question about one diagnostic code, or a refusal the person pasted, may need no command: read
    what `./node_modules/@b00dea/cockpit/docs/troubleshooting.md` says about the code, and for a guard
-   refusal, `./node_modules/@b00dea/cockpit/docs/safety-and-autonomy.md`. Done when you have the
+   refusal, *Guard refusals* below, then `./node_modules/@b00dea/cockpit/docs/safety-and-autonomy.md`. Done when you have the
    output, or the page, the answer rests on.
 2. **Answer from that output.** Name each relevant diagnostic code, what it means, and the fix it
    names; say which wired repositories, agent tools and gates are involved, and what is still a
@@ -79,3 +79,29 @@ in *On drift* of the cockpit-setup skill's procedure, `../../cockpit-setup/proce
 this file. For a secret question, follow its *Secret handling* section and distinguish the tracked
 schema, the encrypted or provider source, the redacted status, injection into a trusted child
 process, and the same-user read confinement that is unavailable.
+
+## Guard refusals
+
+Match the start of the pasted reason to a row, and answer with its rule and the spelling that runs.
+A reason that starts `Refusing` is a hard denial: no spelling passes it, so the next step is a
+different action or the person's. Any other reason asks because the guard cannot read the form; the
+spelling in its row says the same thing in a form the guard reads. Codex and OpenCode refuse what
+asks. `<dir>`, `<VAR>` and `<path>` stand for the words the reason quotes.
+
+| The reason starts | Rule | What runs instead |
+| --- | --- | --- |
+| `Refusing to read or write an environment file`, `Refusing <program>: it holds <word>, which names or can match an environment file, secrets directory, declared instance or credential store`, `Refusing to read, write, search or stage a path [guards] secret_paths declares` | Secrets, wherever the name sits: an argument, a redirect, a glob, inline code or a heredoc | Run the process through a declared project command or script that wraps Varlock; list names with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs env keys --config cockpit.toml`; name the files the command needs |
+| `Refusing to read, print or send a credential store`, `Refusing to print the environment or a variable named as a secret` | Credential stores and environment dumps | A person handles the store; print a non-secret variable by name, or list names with `env keys` |
+| `Refusing mutation of the guard, its hook registration or its ownership manifest`, `Refusing to change the installed cockpit, a node_modules/.bin directory or a command search path directory`, `Refusing code the guard does not read, such as a command held in a variable or inline script, that names the installed cockpit` | The guard itself and the code it runs | A person changes guard files; refresh dependencies with the package manager's clean install; run cockpit as a plain `npx --no cockpit <command>` and read its files with `cat` |
+| `Refusing a force push`, `Refusing push to a declared protected branch`, `Refusing a forced push, a remote branch deletion or a push that names a protected branch` | Branches and history; inline code and heredocs are read as one list of words | Push new commits to a work branch, and a person or CI merges; write prose that mentions a push with the editor's write tool |
+| ``cd is judged only as `cd <dir> && <command>` `` | `cd` alone in its command, with one literal directory | `cd ./<dir> && <command>`, or `git -C <dir>` for Git |
+| `Refusing cd <dir>: a shell with CDPATH set can resolve the name from the home directory`, `cd <dir> names nothing below the directory it runs from` | A bare name may resolve through `CDPATH` | `cd ./<dir>`, once the directory exists |
+| `After cd <dir>, a shell with CDPATH set may stand outside the cockpit` | After a bare `cd`, no `$` or backtick outside single quotes, no value holding `..`, no climbing pattern | `cd ./<dir>`, or name the path from the cockpit |
+| `Dynamic heredoc expansion is unsupported` | An unquoted delimiter expands the body | `<<'EOF'`; for a commit message, `git commit -F - <<'EOF'` |
+| `Missing or dynamic redirect target` | Only a literal path, or a `NAME=path` the call assigns first | Write the path out, or `NAME=path` on its own before `> "$NAME"` |
+| `Arithmetic expansion $((…)) is read only over numbers and operators` | bash evaluates a name's value as code | Compute the number and write it out |
+| `<command> runs with <VAR> set to <value>, a program Git runs`, `<command> sets <VAR>, a variable naming a program Git runs or a file it writes`, ``Refusing `git -c <key>` `` | Git program variables (`GIT_EXTERNAL_DIFF`, `GIT_SSH_COMMAND`, `GIT_ASKPASS`, `GIT_EDITOR` and the rest) and program keys | Run it without that variable or key; a variable set elsewhere goes as a prefix of the git command itself, where it is judged |
+| `<command> sets <VAR>, which changes where Git looks for its repository and configuration` | `GIT_DIR`, `GIT_WORK_TREE`, `GIT_CONFIG*`, `HOME`, `BASH_ENV` and the like | Run it without that assignment; use `git -C <dir>` |
+| `<command> writes to <path>, a path holding a glob`, `<command> writes to <path>, a path holding an expansion the call sets` | Write targets the shell expands | Write the path out, or assign it as the call's first command: `NAME=path; <command> "$NAME"` |
+
+A reason no row matches: quote it and read the section of `safety-and-autonomy.md` it names.

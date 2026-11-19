@@ -23,6 +23,16 @@ describe('independent grading answer', () => {
         expect(readGradingAnswer({ criteria: [{ id: 'AC1', verdict: 'met', note: '', evidence: [] }] }, subject)).toEqual({ problem: 'the grader did not answer each criterion exactly once' })
     })
 
+    it('says to quote the evidence verbatim from the source a met verdict cited when its quote is not found there', () => {
+        const read = readGradingAnswer({ criteria: [
+            { id: 'AC1', verdict: 'met', note: 'the check ran', evidence: [{ source: 'check:AC1', quote: 'add returned five' }] },
+            { id: 'AC2', verdict: 'met', note: 'exported', evidence: [] },
+        ] }, subject)
+        expect(read).toMatchObject({ criteria: [
+            { id: 'AC1', verdict: 'unclear', unquoted: true, note: expect.stringContaining('quote the evidence verbatim from check:AC1') },
+            { id: 'AC2', verdict: 'unclear', unquoted: true, note: expect.stringContaining('quote the evidence verbatim from a changed file or check output') }] })
+    })
+
     it('constrains the answer to the order\'s criterion ids', () => {
         expect(JSON.stringify(gradingSchema(subject.criteria))).toContain('"enum":["AC1","AC2"]')
     })

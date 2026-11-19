@@ -531,6 +531,9 @@ function workCommandOutcome(outcome: WorkApplicationOutcome, env: Readonly<Recor
         const unsatisfied = weakened.length === 0 || outcome.reason !== '' ? [unsatisfiedWorkDiagnostic(outcome.operation, outcome.reason)] : []
         return { status: 2, result: outcome.value, diagnostics: [...weakened, ...unsatisfied, ...sameToolGradeWarnings(outcome.value, env)] }
     }
+    if (outcome.kind === 'interrupted') return { status: 2, result: null, diagnostics: [{ severity: 'error', message: outcome.reason,
+        code: 'WORK_GRADE_INTERRUPTED' satisfies typeof ENVIRONMENT_CODES.WORK_GRADE_INTERRUPTED,
+        fix: 'no attempt was spent: a cockpit or machine error ended the grade before it judged the product. The message names that error\'s code and its own fix; follow it, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work grade --config <your cockpit.toml> --work-order <id>, and report it if the same error returns' }] }
     return usageOutcome('WORK_APPLICATION_REFUSED', outcome.kind === 'refusal' ? outcome.reason : 'this step needs a person at a terminal')
 }
 

@@ -751,6 +751,49 @@ describe('work-order lifecycle', () => {
         expect(record(root, 'WO-17')).toMatchObject({ attempts: 1 })
     }, 120_000)
 
+    it('spends no attempt on a grade a cockpit error ended, and records it with the error, while a product that fails still spends one', async () => {
+        const root = await cockpit('[work]\nevaluators = ["claudecode"]\nattempt_cap = 1')
+        const tools = syntheticEvaluator()
+        const env = { ...process.env, CLAUDECODE: undefined, CODEX_THREAD_ID: undefined, PATH: [tools, ...(process.env.PATH ?? '').split(':')].join(':') }
+        const grade = (id: string, environment = env) => work(root, ['work', 'grade', '--work-order', id], environment)
+        const interrupted = (cause: RegExp) => ({ status: 2, result: null, diagnostics: [{ code: 'WORK_GRADE_INTERRUPTED', message: expect.stringMatching(cause) }] })
+        writeFileSync(join(root, 'workorders/WO-50.md'), order('WO-50', '  - id: AC1\n    text: add(2, 3) returns 5.\n    check: [cockpit-absent-tool]'))
+        writeFileSync(join(root, 'workorders/WO-51.md'), order('WO-51'))
+        writeFileSync(join(root, 'workorders/WO-52.md'), order('WO-52', '  - id: AC1\n    text: add(2, 3) returns 5.\n    check: [./bin/absent.mjs]'))
+        for (const id of ['WO-50', 'WO-51', 'WO-52']) expect((await work(root, ['work', 'accept', '--work-order', id], env)).status).toBe(0)
+        // A check whose command is not on cockpit's search path never ran, so nothing judged the product.
+        expect(await grade('WO-50')).toMatchObject(interrupted(/^EVIDENCE_UNAVAILABLE: check AC1 did not run: .*cockpit-absent-tool.*No attempt was spent/))
+        expect(record(root, 'WO-50')).toMatchObject({ state: 'accepted', attempts: 0, interrupted: { code: 'EVIDENCE_UNAVAILABLE' },
+            checks: { results: [{ criterion: 'AC1', passed: false, cockpitError: true }] } })
+        expect(record(root, 'WO-50').grade).toBeUndefined()
+        expect((await work(root, ['work', 'status', '--work-order', 'WO-50'], env)).result).toMatchObject({ orders: [{ state: 'accepted', attempts: 0, interrupted: { code: 'EVIDENCE_UNAVAILABLE' } }] })
+        // A command file in the tree is the product's, so removing it fails the grade and spends an attempt.
+        expect(await grade('WO-52')).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_GRADE_UNSATISFIED' }] })
+        expect(record(root, 'WO-52')).toMatchObject({ attempts: 1 })
+        // An evaluator cockpit could not run to an answer, or whose answer it could not read, judged nothing either.
+        const broken = (name: string, from: string, to: string) => {
+            const directory = realpathSync(mkdtempSync(join(tmpdir(), `cockpit-work-${name}-`)))
+            roots.push(directory)
+            symlinkSync(process.execPath, join(directory, 'node'))
+            writeFileSync(join(directory, 'claude'), readFileSync(join(tools, 'claude'), 'utf8').replace(from, to), { mode: 0o700 })
+            return { ...env, PATH: [directory, process.env.PATH].join(':') }
+        }
+        expect(await grade('WO-51', broken('exits', 'const request = JSON.parse', "process.stderr.write('signed out\\n'); process.exit(1)\nconst request = JSON.parse")))
+            .toMatchObject(interrupted(/^EVALUATOR_RUN_FAILED: .*signed out.*No attempt was spent/))
+        expect(record(root, 'WO-51')).toMatchObject({ attempts: 0, interrupted: { code: 'EVALUATOR_RUN_FAILED' } })
+        expect(await grade('WO-51', broken('garbles', 'process.stdout.write(JSON.stringify({', "process.stdout.write('not json'); (({"))).toMatchObject(interrupted(/^EVALUATOR_ANSWER_INVALID: .*No attempt was spent/))
+        expect(record(root, 'WO-51')).toMatchObject({ attempts: 0, interrupted: { code: 'EVALUATOR_ANSWER_INVALID' } })
+        // Another command holding the order's lock keeps the grade from being recorded at all.
+        writeFileSync(join(root, '.cockpit/work-orders/WO-51.lock'), '{}\n')
+        expect(await grade('WO-51')).toMatchObject(interrupted(/^STATE_LOCKED: work order WO-51 is locked by another cockpit command.*No attempt was spent, and the interruption is not recorded/))
+        rmSync(join(root, '.cockpit/work-orders/WO-51.lock'))
+        expect(record(root, 'WO-51')).toMatchObject({ attempts: 0 })
+        // A verdict about the product spends the attempt, and clears the interruption it supersedes.
+        expect(await grade('WO-51')).toMatchObject({ status: 2, diagnostics: [{ code: 'WORK_GRADE_UNSATISFIED' }] })
+        expect(record(root, 'WO-51')).toMatchObject({ attempts: 1 })
+        expect(record(root, 'WO-51').interrupted).toBeUndefined()
+    }, 120_000)
+
     it('grants a capped order fresh attempts only on a person\'s word, keeping what failed, and an agent\'s amendment keeps the count', async () => {
         const root = await cockpit('[work]\ngrading = "self"\nattempt_cap = 1')
         const run = (args: readonly string[]) => work(root, args)

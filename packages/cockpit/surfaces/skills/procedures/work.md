@@ -140,7 +140,9 @@ not the thinking: reuse the planning skills the harness already has.
    grade", "use Claude for everything"), pass `--evaluator <tool>` (`codexcli`, `claudecode` or
    `opencode`) on every grade for the rest of the session; only that tool runs, with no fallback.
    Done when the grade passes.
-7. **Attempt cap.** Each failed check or grade counts an attempt; at `work.attempt_cap` the order is
+7. **Attempt cap.** Each grade that reaches a failing verdict on the product counts an attempt; one that answers
+   `WORK_GRADE_INTERRUPTED` hit a cockpit error before any verdict and counts none: follow the fix it
+   names, rerun, and report it if it returns. At `work.attempt_cap` the order is
    blocked. Record the root cause with `work note`, then do what the refusal names: close it with
    `work signoff --partial` or `--abandon`, yourself; or, when the contract is right and the cause is fixed,
    run `work retry --note <the root cause>`, which records it, and hand the person `npx --no cockpit approve`: a retry is always theirs. An

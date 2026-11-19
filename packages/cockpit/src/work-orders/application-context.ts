@@ -56,6 +56,9 @@ export type WorkApplicationOutcome =
     // unmet criterion); the result is the evidence to act on.
     // `weakening` is the part of the failure that is test weakening, which has its own diagnostic and fix.
     | Readonly<{ kind: 'unsatisfied'; operation: Operation; value: unknown; reason: string; weakening?: string }>
+    // A cockpit or machine error ended a grade before it reached a verdict on the product, so it spent no attempt.
+    // `reason` names the diagnostic code of that error, what failed and its own fix; the order's record keeps it.
+    | Readonly<{ kind: 'interrupted'; operation: Operation; reason: string }>
 
 export const refusal = (operation: Operation | 'invalid', reason: string): WorkApplicationOutcome => ({ kind: 'refusal', operation, reason })
 export const complete = (operation: Operation, value: unknown): WorkApplicationOutcome => ({ kind: 'complete', operation, value })

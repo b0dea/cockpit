@@ -74,7 +74,7 @@ async function work(request: WorkRequest, composition: WorkApplicationCompositio
             orders: await Promise.all(rows.map(async row => ({
                 id: row.id, state: displayState(row, attemptCap),
                 ...row.record?.closure ? { closedAs: row.record.closure.how, closedBy: row.record.closure.by } : {},
-                ...row.record ? { attempts: row.record.attempts, acceptedBy: row.record.accepted.by, openQuestions: openQuestions(row.record),
+                ...row.record ? { attempts: row.record.attempts, ...row.record.interrupted ? { interrupted: row.record.interrupted } : {}, acceptedBy: row.record.accepted.by, openQuestions: openQuestions(row.record),
                     acknowledgements: row.record.acknowledgements.map(({ by, note, findings }) => ({ by, note, findings })),
                     ...row.record.grade ? { grade: { mode: row.record.grade.mode, passed: row.record.grade.passed,
                         criteria: row.record.grade.criteria, outOfScope: row.record.grade.outOfScope,
