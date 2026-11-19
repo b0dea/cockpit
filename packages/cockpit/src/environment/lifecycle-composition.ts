@@ -738,8 +738,11 @@ export function createLifecycleCommandAdapters(
                 declarations: context.entrypointDerivatives,
                 // Services were started and never stopped (sleep clears them, down marks the teardown),
                 // so the containers may still run on the recorded family with no session holding them.
-                ...(progress !== undefined && progress.teardownComplete !== true && progress.completedServices.length > 0
-                    ? { adoptUnheld: true } : {}),
+                adoptUnheld: async () => {
+                    const now = await readState(context.namespace.paths.lifecycle(context.stackId))
+                    const value = now.kind === 'complete' ? decodeLifecycleRecord(now.value, context)?.value : undefined
+                    return value !== undefined && value.teardownComplete !== true && value.completedServices.length > 0
+                },
                 ...(holderProcess === undefined ? {} : { holderProcess }),
             })
         }

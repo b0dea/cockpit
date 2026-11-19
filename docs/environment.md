@@ -355,8 +355,9 @@ stops it when it ends; or an `up` run outside any session from this checkout, wi
 releases it. A stack another checkout holds is not this checkout's to release, so the session adds no
 such guidance. A session whose `up` refused gives its hold back, except the last hold on a stack whose
 services may be running, which its closing `sleep` then stops, so the stack does not keep running with no
-holder. An `up` that meets a `sleep`, `down` or `reset` of the stack waits for it, then joins or
-starts the stack it leaves. If a running stack has no holder anyway, the next `up` takes it over on
+holder. An `up` or `sleep` that meets a `sleep`, `down` or `reset` of the stack waits for it, up to
+two minutes, then acts on the stack it leaves. A `sleep` run where this checkout's command holds none
+of the stack releases nothing, reports `not-held`, and names the sessions that hold it. If a running stack has no holder anyway, the next `up` takes it over on
 the ports it runs on.
 
 A wrapper that dies without its closing `sleep`, from SIGKILL, a crash or a closed terminal, leaves

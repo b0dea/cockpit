@@ -210,7 +210,8 @@ export type UpCommandResult = EnvironmentCommandOutcome<Readonly<{
 
 export type SleepCommandResult = EnvironmentCommandOutcome<Readonly<{
     stackId: StackId
-    change: 'retained' | 'released' | 'stopped' | 'unchanged'
+    /** `not-held`: this command held none of the stack, and the holders the diagnostic names keep it. */
+    change: 'retained' | 'released' | 'stopped' | 'unchanged' | 'not-held'
     /**
      * With `retained`: whether only this checkout's own other holds keep the stack, or none is left
      * because another holder left meanwhile. Absent when it could not be read.
@@ -218,6 +219,8 @@ export type SleepCommandResult = EnvironmentCommandOutcome<Readonly<{
     remainingHolders?: 'this-checkout' | 'other-checkouts' | 'none'
     /** With `retained`: the processes of the sessions still holding the stack. */
     remainingProcesses?: readonly number[]
+    /** With `retained` and `remainingProcesses`: how many remaining holds no process ties, as up outside a session takes. */
+    remainingWithoutProcess?: number
 }>>
 
 export type SessionCommandResult =

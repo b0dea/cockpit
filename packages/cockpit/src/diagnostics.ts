@@ -167,6 +167,7 @@ const LIFECYCLE_CHANGES: Readonly<Record<string, Readonly<Record<string, string>
         stopped: 'Stack stopped',
         retained: "Released this checkout's hold; another holder keeps the stack running",
         unchanged: 'Nothing to stop: no session holds the stack',
+        'not-held': 'Nothing released: this command held none of the stack, and another holder keeps it running',
     }),
     down: Object.freeze({ removed: 'Stack removed' }),
     reset: Object.freeze({ unchanged: 'Nothing to reset' }),
