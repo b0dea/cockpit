@@ -712,8 +712,12 @@ export function createLifecycleCommandAdapters(
     const withAcquiredPorts: LifecycleCommandAdapterComposition['withAcquiredPorts'] = async (context, use, refuse) => {
         if (!bindings.has(context)) return undefined
         const holderProcess = input?.holderProcess
+        // An up starts a service only after replacing the record down left, so a stack whose record
+        // still says down completed runs nothing its dead holders started.
+        const recorded = await readState(context.namespace.paths.lifecycle(context.stackId))
         const reaped = await releaseDeadSessionHolders({
             namespace: context.namespace, stackId: context.stackId,
+            removed: recorded.kind === 'complete' && decodeLifecycleRecord(recorded.value, context)?.value.teardownComplete === true,
             successor: { holderId: context.holderId, checkoutId: context.checkoutId, ...holderProcess },
             now: new Date().toISOString(), observe: (pid) => observeProcessStart(pid, processHost(execute)),
         })

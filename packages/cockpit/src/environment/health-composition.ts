@@ -10,7 +10,7 @@ import { type DoctorCommandAdapters, type WorkGradingInspection } from './applic
 import { ObservationProducerRefusal, type HealthObservationProducers, type LoadedCockpitConfigResult, type PreflightCommandAdapters } from './application/health.js'
 import { decodeLifecycleRecord, revalidateService } from './application/lifecycle.js'
 import { type RuntimeReadiness } from './application/lifecycle-context.js'
-import { decodeCoordinationRecord, listenerHost, observeClaimState, readRootPortInventory } from './claims.js'
+import { decodeCoordinationRecord, isProcessGone, listenerHost, observeClaimState, observeProcessStart, processHost, readRootPortInventory } from './claims.js'
 import { inspectCodexHookTrust } from './codex-hook-trust.js'
 import { observeEnvSchemas } from './env-schema-observation.js'
 import {
@@ -135,12 +135,32 @@ async function sleepingStack(
     if (stored.kind !== 'complete') return undefined
     const coordination = decodeCoordinationRecord(stored.value, stack)
     if (!coordination || coordination.holders.length > 0) return undefined
-    const fix = cockpitCommand('up', { config: configPath })
+    return asleep(stack, configPath, 'no session holds it and its services are stopped')
+}
+
+function asleep(stack: ReturnType<typeof stackId>, configPath: string, why: string): EnvironmentDiagnostic {
     return {
         severity: 'error' as const, code: ENVIRONMENT_CODES.STACK_NOT_RUNNING, target: stack,
-        message: 'the stack is asleep: no session holds it and its services are stopped, so there is nothing running to check; run up to start it, then rerun this command',
-        fix,
+        message: `the stack is asleep: ${why}, so there is nothing running to check; run up to start it, then rerun this command`,
+        fix: cockpitCommand('up', { config: configPath }),
     }
+}
+
+// A session killed before its closing sleep, or one whose up refused, leaves its hold behind. A hold
+// counts as ended only once its process is confirmed gone: one without a process, or whose process
+// cannot be read (a sandbox can refuse ps), may still be running.
+async function heldOnlyByEndedSessions(
+    namespace: Extract<Awaited<ReturnType<typeof selectStateRoot>>, { readonly kind: 'complete' }>['value'],
+    stack: ReturnType<typeof stackId>,
+    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
+): Promise<boolean> {
+    const stored = await readState(namespace.paths.coordination(stack))
+    const coordination = stored.kind === 'complete' ? decodeCoordinationRecord(stored.value, stack) : undefined
+    if (!coordination || coordination.holders.length === 0) return false
+    for (const { pid, processStart } of coordination.holders) {
+        if (pid === undefined || !isProcessGone(processStart, await observeProcessStart(pid, processHost(execute)))) return false
+    }
+    return true
 }
 
 // Before the first `up` doctor still measures the machine, so a missing runtime is named there
@@ -246,11 +266,13 @@ function producers(input: {
             (diagnostics) => input.refuse?.(diagnostics))
         return readiness ? { adapters, context: loaded.result, readiness, lifecycle, ports,
             lifecycleSnapshot: JSON.stringify(stored.value) } : undefined
-    })().then((session) => {
+    })().then(async (session) => {
         // A session that ended without sleep or down still holds the stack, so it reads as running.
-        if (!session) input.notice([{ severity: 'error', code: ENVIRONMENT_CODES.STACK_NOT_RUNNING, target: input.stack,
-            message: 'a session holds this stack, but its running services could not be read, so the checks that need a running stack have no evidence; run up to resume it, or down to release it if the session that holds it has ended',
-            fix: cockpitCommand('up', { config: input.config.result.source.path }) }])
+        if (!session) input.notice([await heldOnlyByEndedSessions(input.namespace, input.stack, execute)
+            ? asleep(input.stack, input.config.result.source.path, 'every session that held it has ended and none of its services could be read')
+            : { severity: 'error', code: ENVIRONMENT_CODES.STACK_NOT_RUNNING, target: input.stack,
+                message: 'a session holds this stack, but its running services could not be read, so the checks that need a running stack have no evidence; run up to resume it, or down to release it if the session that holds it has ended',
+                fix: cockpitCommand('up', { config: input.config.result.source.path }) }])
         return session
     }) : undefined
     const stableSession = async () => {

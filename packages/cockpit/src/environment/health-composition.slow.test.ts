@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
@@ -12,6 +14,7 @@ import { runPreflight } from './application/health.js'
 import { runUp } from './application/lifecycle.js'
 import { checkoutId, cockpitId, holderId, stackId } from './identity.js'
 import { transactState } from './state.js'
+import { observeProcessStart, processHost } from './claims.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
 import { createHealthCommandAdapters } from './health-composition.js'
 import { observeGeneratedApplicationSurfaces } from './generated-application/surface-observation.js'
@@ -253,6 +256,58 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         expect(doctor.diagnostics.map(({ code }) => code)).not.toContain('LIFECYCLE_EVIDENCE_INVALID')
         expect(doctor.diagnostics).toContainEqual(expect.objectContaining({ code: 'STACK_NOT_RUNNING', target: candidate.stack,
             message: expect.stringContaining('a session holds this stack') }))
+    })
+
+    // A session whose up refused exits without its closing sleep, and its hold stays behind with
+    // nothing running; doctor read that stack as held by a session that no longer exists.
+    it('says a stack is asleep when every session holding it has ended, and not while one runs or cannot be confirmed gone', async () => {
+        const candidate = await fixture({ configuredRuntime: true })
+        const checkout = checkoutId({ checkoutPath: candidate.checkout })
+        const session = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+        const exited = once(session, 'exit')
+        try {
+            const started = await observeProcessStart(session.pid!, processHost(executeProbe))
+            if (started.state !== 'present') throw new Error(JSON.stringify(started))
+            const address = candidate.namespace.paths.coordination(candidate.stack)
+            const held = await transactState(candidate.namespace, address, { ownerId: holderId({ stackId: candidate.stack, checkoutId: checkout, sessionId: 'ended-session' }) }, () => ({
+                format: 'cockpit-state/v1' as const, kind: 'coordination' as const, cockpitId: address.cockpitId,
+                subjectId: candidate.stack, revision: 0, updatedAt: new Date().toISOString(),
+                value: { holders: ['ended-session', 'other-ended-session'].map((sessionId) => ({
+                    holderId: holderId({ stackId: candidate.stack, checkoutId: checkout, sessionId }), checkoutId: checkout,
+                    claimedAt: new Date().toISOString(), pid: session.pid!, processStart: started.start })),
+                lastReleasedHolder: null,
+                lease: { offset: 0, ports: { APP_PORT: 61230 }, released: false, declaration: { step: 10, count: 1, bases: { APP_PORT: 61230 } } } },
+            }))
+            expect(held.kind).toBe('complete')
+            const doctor = (execute: typeof executeProbe) => runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
+                configPath: candidate.configPath,
+                env: { PATH: `${candidate.root}:${process.env.PATH}`, HOME: candidate.home },
+                timeoutMs: 5_000,
+            }, execute))
+            // A presence probe that answers nothing, as under a sandbox, leaves the session unconfirmed.
+            const unconfirmed: typeof executeProbe = async (step) => step.id.startsWith('process:presence:')
+                ? { kind: 'refusal' } as unknown as Awaited<ReturnType<typeof executeProbe>> : executeProbe(step)
+
+            for (const execute of [executeProbe, unconfirmed]) {
+                if (execute === unconfirmed) {
+                    session.kill('SIGKILL')
+                    await exited
+                }
+                const reported = await doctor(execute)
+                expect(reported.diagnostics).toContainEqual(expect.objectContaining({ code: 'STACK_NOT_RUNNING',
+                    message: expect.stringContaining('a session holds this stack') }))
+                expect(reported.diagnostics.map(({ message }) => message)).not.toContainEqual(expect.stringContaining('is asleep'))
+            }
+
+            const ended = await doctor(executeProbe)
+            expect(ended).toMatchObject({ kind: 'complete', status: 0 })
+            expect(ended.diagnostics).toContainEqual(expect.objectContaining({ code: 'STACK_NOT_RUNNING', target: candidate.stack,
+                message: expect.stringContaining('is asleep'),
+                fix: `./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config ${candidate.configPath}` }))
+            expect(ended.diagnostics.map(({ message }) => message)).not.toContainEqual(expect.stringContaining('a session holds this stack'))
+        } finally {
+            session.kill('SIGKILL')
+        }
     })
 
     it('names a runtime probe that ran out of time on a busy machine instead of telling the reader to start Docker', async () => {

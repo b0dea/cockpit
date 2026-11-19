@@ -433,11 +433,14 @@ const MAX_CONCURRENT_HOLDER_PROBES = 4
  * SIGKILL, a crash or a closed terminal never runs its closing `sleep`, and its hold then made
  * `down`, `reset` and `sleep` refuse forever while naming a session nobody could end. When every
  * holder is dead, the requesting holder takes the stack over in the same transaction: the stack is
- * still running, and a lease no holder retains reads as a stopped stack whose ports are free.
+ * still running, and a lease no holder retains reads as a stopped stack whose ports are free. A
+ * stack down removed runs nothing, so its lease is released with its last dead holder instead, as
+ * down leaves it; a takeover there read to up as a claim an earlier command left.
  */
 export async function releaseDeadSessionHolders(input: {
     readonly namespace: StateNamespace
     readonly stackId: StackId
+    readonly removed?: boolean
     readonly successor: { readonly holderId: HolderId; readonly checkoutId: CheckoutId } & HolderProcess
     readonly now: string
     readonly observe: (pid: number) => Promise<ProcessStartObservation>
@@ -475,7 +478,8 @@ export async function releaseDeadSessionHolders(input: {
         committed = released
         const remaining = latest.holders.filter((holder) => !released.some(({ holderId }) => holderId === holder.holderId))
         const reduced: CoordinationRecord = { ...latest, holders: remaining, lastReleasedHolder: released.at(-1)!.holderId }
-        const next = remaining.length > 0 ? reduced : addCoordinationHolder(reduced, input.successor, input.now)?.value
+        const next = remaining.length > 0 ? reduced : input.removed ? { ...reduced, lease: { ...latest.lease, released: true } }
+            : addCoordinationHolder(reduced, input.successor, input.now)?.value
         if (!next) return abortStateTransaction(refuse(ENVIRONMENT_CODES.STATE_RECORD_MALFORMED, 'coordination holder set cannot accept the successor holder', input.successor.holderId))
         return coordinationStateRecord(input.namespace, input.stackId, current, input.now, next)
     })
