@@ -179,7 +179,7 @@ function find(argv: readonly string[], cwd: string, environment: { readonly ripg
     const roots: string[] = []
     while (index < argv.length && !argv[index]!.startsWith('-') && argv[index] !== '!' && argv[index] !== '(') roots.push(argv[index++]!)
     const tree = roots.length ? [...roots] : ['.']
-    const access = { reads: [] as string[], trees: [] as string[], listings: [...tree] }
+    const access: { reads: string[]; trees: string[]; listings: string[]; followsLinks?: true } = { reads: [], trees: [], listings: [...tree] }
     for (; index < argv.length; index++) {
         const word = argv[index]!
         if (FIND_FLAG.has(word)) continue
@@ -193,7 +193,9 @@ function find(argv: readonly string[], cwd: string, environment: { readonly ripg
             // `-execdir` runs in each found path's directory, where any other path the command names resolves.
             if (!ran || ran.requires || ran.trackedContent || ran.followsLinks || word.endsWith('dir') && found([...ran.reads, ...ran.trees, ...ran.listings]).length) return undefined
             access.reads.push(...found(ran.reads))
-            access.trees.push(...found(ran.trees), ...[...ran.reads, ...ran.trees].includes(FOUND) ? tree : [])
+            access.trees.push(...found(ran.trees))
+            // find lists a link without following it, but the program it hands the link to reads what it names.
+            if ([...ran.reads, ...ran.trees].includes(FOUND)) { access.trees.push(...tree); access.followsLinks = true }
             access.listings.push(...found(ran.listings))
             index = end
             continue
@@ -300,6 +302,8 @@ function jqWords(argv: readonly string[]): Classified {
 }
 
 const GIT_READ_VERBS = set('status', 'diff', 'log', 'show')
+/** `--no-index` as Git accepts it, abbreviated to any unique prefix. */
+export const GIT_NO_INDEX = /^--no-ind(?:ex?)?$/
 const GIT_GREP: OptionTable = {
     flags: set('--line-number', '--ignore-case', '--word-regexp', '--invert-match', '--count', '--files-with-matches', '--name-only', '--files-without-match',
         '--extended-regexp', '--fixed-strings', '--basic-regexp', '--perl-regexp', '--full-name', '--heading', '--break', '--show-function', '--column', '--only-matching',
@@ -473,6 +477,14 @@ function git(argv: readonly string[], cwd: string): ReadOnlyAccess | undefined {
     // Without `-e` or `-f` the first operand is the pattern. Every other operand names a path, or before
     // `--` a revision it searches, whose `rev:path` names a path in it; each is inspected as a read.
     if (verb === 'grep') {
+        // `--no-index` searches the files below the working directory, ignored ones included, as `grep -r` does,
+        // so its pathspecs are judged as the trees it searches, and the whole directory when one is a pattern.
+        if (args.some(arg => GIT_NO_INDEX.test(arg))) {
+            const parsed = parseOptions(args.filter(arg => !GIT_NO_INDEX.test(arg)), GIT_GREP)
+            if (!parsed) return undefined
+            const operands = parsed.positionals.slice(parsed.present.has('-e') || parsed.present.has('-f') ? 0 : 1)
+            return { cwd: directory, reads: parsed.files, trees: !operands.length || operands.some(spec => spec.startsWith(':') || /[*?[\\]/.test(spec)) ? ['.'] : operands, listings: [] }
+        }
         const parsed = parseOptions(args, GIT_GREP)
         if (!parsed) return undefined
         const pathspecs = parsed.terminator < 0 ? null : args.slice(parsed.terminator + 1)

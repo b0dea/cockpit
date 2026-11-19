@@ -1525,8 +1525,17 @@ describe('allow by default', () => {
         // `git grep -O` and GIT_EXTERNAL_DIFF run a program the agent names on what the pathspec selects, so it still reaches a control.
         for (const command of ["git rm -r -- ':!.cockpit'", 'git rm .cockpit/guards/bash-guard.sh', "git checkout -- '.cockpit/*'", "git grep -Ovim x -- ':(glob).cockpit/**'",
             "GIT_EXTERNAL_DIFF=rm git diff -- '.cockpit/*'"]) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+        // An output option's value is a path written, never a selection, and a glob there writes whatever it matches.
+        for (const command of ['git log -1 --format=%B --output .claude/settings.js?n', 'git shortlog -1 --output .cockpit/gu*/bash-guard.sh', 'git whatchanged -1 --output .codex/hooks.js?n',
+            'git diff-tree -p HEAD --output=.cockpit/generated-environment-ownership.js?n', 'git diff-index -p HEAD --output .claude/settings.js?n', 'git diff-files -p --output .claude/settings.js?n',
+            'git range-diff HEAD~2..HEAD~1 HEAD~1..HEAD --output .claude/settings.js?n', 'git show --output .claude/settings.js?n', 'git rev-list HEAD --output .codex/hooks.js?n',
+            'git archive -o .claude/settings.js?n HEAD', 'git format-patch --suffix=.js -o .opencode/plugi? -1', 'git format-patch -o .cockpit/mc? -1', 'git format-patch -o .cockpit/work-order? -1',
+            'git log --output=.claude/settings.js?n', 'git log --output .opencode/plugi?/x.js']) {
             expect(run(command).decision, command).toBe('deny')
         }
+        expect(run('git log -1 --output build/log.txt').decision).toBe('allow')
     })
 
     it('lets a live key placeholder of one repeated character through, and refuses a varied key body wherever it is spelled', () => {
@@ -1549,12 +1558,12 @@ describe('allow by default', () => {
         }
     })
 
-    it('reads a push in inline code only in a command\'s shape, so prose naming a push and a branch runs', () => {
-        expect(run("python3 - <<'EOF'\ns = \"A bare `git push` is allowed on a branch whose upstream is not `main`.\"\nopen(\"notes.md\", \"w\").write(s)\nEOF").decision).toBe('allow')
-        for (const command of [`python3 -c 'import subprocess; subprocess.run(["git","push","origin","main"])'`, `python3 -c "import os; os.system('git push --force origin feature')"`,
-            "python3 - <<'EOF'\nimport subprocess\nsubprocess.run(['git', 'push', '-f', 'origin', 'topic'])\nEOF", 'sh -c "git push origin :main"',
-            `python3 -c "import os; os.system('git push -v -v -v -v -v -v -q -q origin main')"`]) {
-            expect(run(command).decision, command).toBe('deny')
+    it('reads a push in inline code across lines and list items, and names the write tool for prose that mentions one', () => {
+        for (const command of ["python3 - <<'EOF'\nimport subprocess\nsubprocess.run(\n    [\n        \"git\",\n        \"push\",\n        \"origin\",\n        \"main\",\n    ]\n)\nEOF",
+            "python3 - <<'EOF'\nimport subprocess\ncmd = ['git', 'push', 'origin', 'topic']\ncmd.append('--force')\nsubprocess.run(cmd)\nEOF",
+            "node - <<'EOF'\nrequire('child_process').execFileSync('git', [\n  'push',\n  'origin',\n  'main',\n])\nEOF", "ruby -e 'system(*%w[git push origin main])'",
+            `python3 -c "import os; os.system('git push origin a b c d e f g main')"`]) {
+            expect(run(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining("use your editor's write tool") })
         }
     })
 
@@ -1572,6 +1581,21 @@ describe('allow by default', () => {
         expect(run('find src -exec cat {} +', open(), onBranch('refs/heads/topic', undefined, { sourceSecret: true })).decision)
             .toBe(run('grep -r x src', open(), onBranch('refs/heads/topic', undefined, { sourceSecret: true })).decision)
         expect(run('find src -exec cat {} +', open(), onBranch('refs/heads/topic', undefined, { sourceSecret: true })).decision).not.toBe('allow')
+        // find lists a link without following it, but cat reads what it names.
+        const throughLink: PathInspection = request => request.operation === 'search' && (request as { followsLinks?: true }).followsLinks
+            ? { ...onBranch('refs/heads/topic')(request), sensitive: [`${posix.resolve(request.cwd, request.path)}/linked/.env.local`] } : onBranch('refs/heads/topic')(request)
+        expect(run('find src -exec cat {} +', open(), throughLink).decision).not.toBe('allow')
+        expect(run('find src -exec stat {} +', open(), throughLink).decision).toBe('allow')
+    })
+
+    it('searches the tree git grep --no-index reads for secrets, ignored files included', () => {
+        const secret = onBranch('refs/heads/topic', undefined, { sourceSecret: true })
+        for (const command of ['git grep --no-index KEY', "git grep --no-index KEY -- '.env*'", 'git grep --no-index -n KEY -- src']) {
+            expect(run(command, open(), secret).decision, command).not.toBe('allow')
+        }
+        expect(run('git grep --no-index -n KEY -- src').decision).toBe('allow')
+        // A form the profile does not read as a search, or an abbreviation of the option, is not proven to skip them.
+        for (const command of ['git grep --no-index --exclude-standard KEY', 'git grep --no-ind KEY']) expect(run(command, open(), secret).decision, command).not.toBe('allow')
     })
 
     it('follows a redirect to a variable only into the one literal its shell assigns it on its own before', () => {
@@ -1579,10 +1603,33 @@ describe('allow by default', () => {
             expect(run(command).decision, command).toBe('allow')
         }
         expect(run('out=.cockpit/guards/bash-guard.sh; echo x > "$out"').decision).toBe('deny')
-        // Not a literal, assigned twice or only when an earlier command succeeds, set again by read, never assigned, or globbed unquoted.
-        for (const command of ['out=$(mktemp); python3 x.py > "$out"', 'out=build/a.json; out=build/b.json; echo y > "$out"', 'true && out=build/a.json; echo y > "$out"',
+        // The last of two assignments is the one judged.
+        expect(run('out=build/a.json; out=.cockpit/guards/bash-guard.sh; echo y > "$out"').decision).toBe('deny')
+        // Not a literal, assigned only when an earlier command succeeds, set again by read, never assigned, or globbed unquoted.
+        for (const command of ['out=$(mktemp); python3 x.py > "$out"', 'true && out=build/a.json; echo y > "$out"',
             'out=build/a.json; read out; echo y > "$out"', 'echo y > "$out"', "out='*.json'; echo y > $out"]) {
             expect(run(command), command).toEqual({ decision: 'ask', reason: expect.stringContaining('Missing or dynamic redirect target') })
+        }
+        // A command between can set the name under a spelling the shell unquotes, or without naming it; the shell sets some itself;
+        // a hook function can run first; and an assignment on the redirecting command may apply before its redirect.
+        for (const command of ["out=build/a.json; printf -v o''ut '%s/%s' .claude settings.json; echo '{}' > \"$out\"",
+            "out=build/a.json; read o''ut < notes.txt; echo '{}' > \"$out\"", "out=build/a.json; read o\\ut; echo '{}' > \"$out\"",
+            "out=build/a.json; mapfile -t o''ut < notes.txt; echo '{}' > \"$out\"",
+            ...['declare', 'typeset', 'local', 'readonly', 'export'].map(builtin => `out=build/a.json; ${builtin} o''ut=.claude/settings.json; echo '{}' > "$out"`),
+            "REPLY=build/a.json; read -r <<< .claude/settings.json; echo '{}' > \"$REPLY\"", "_=build/a.json; ls .claude/settings.json; echo '{}' > \"$_\"",
+            "REPLY=build/a.json; echo '{}' > \"$REPLY\"", "out=build/a.json; TRAPDEBUG() { :; }; echo '{}' > \"$out\"",
+            "out=build/a.json; out=.claude/settings.json true > \"$out\""]) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+    })
+
+    it('judges a program Git runs from a variable exported earlier in the call as it judges one set on the command', () => {
+        for (const command of ['export GIT_EXTERNAL_DIFF=rm; git diff', "export GIT_EXTERNAL_DIFF=rm; git diff -- '.cockpit/*'", 'export GIT_PAGER=./build/pager.sh; git log',
+            'GIT_EXTERNAL_DIFF=rm; export GIT_EXTERNAL_DIFF; git diff', 'declare -x GIT_SSH_COMMAND=./build/ssh.sh; git fetch origin', 'GIT_EXTERNAL_DIFF=rm git diff']) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+        for (const command of ['export FOO=1; git status', 'export PAGER=cat; git log -1', 'PAGER=cat git log -1', 'export GIT_PAGER=cat; git log -3']) {
+            expect(run(command).decision, command).toBe('allow')
         }
     })
 
