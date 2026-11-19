@@ -13,6 +13,25 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.31
+
+### Patch Changes
+
+- 55af966: The guard refuses three everyday command shapes less often:
+  
+  - `cd sub/dir && <command>` runs when `sub/dir` exists in the cockpit, so the command is judged from that directory. A name with nothing there asks, a call that sets `CDPATH` asks, and a name that could reach a credential store from the home directory, such as `Library/Keychains`, or a file that runs programs, is still refused. After it, a `$` expansion, a value holding `..`, a pattern that can expand to `..`, a command reading its path names from a file or standard input, or a run of `..` that climbs back to where the `cd` started, however quoted, asks, since the shell may have put that directory elsewhere: `cd ./<dir>` avoids that. A single name such as `cd api` still needs `cd ./api`.
+  - In shell the guard does not read, such as `cd api && jq '.[] | .key' f.json`, a jq field such as `.key` no longer counts as a key file, so the call asks instead of being refused. A named key file, such as `server.key`, is still refused.
+  - `NAME=path; cp a "$NAME/file"` is judged as the written-out path, as `"$NAME"` already was. Another expansion or a glob after the variable still asks, and a redirect still follows only a plain `"$NAME"`.
+  - `find … -exec` running a program that prints only names, sizes, counts or types, such as `wc -l`, `ls`, `stat`, `du` or `file`, no longer has find's roots searched for secrets. A program that prints content, such as `cat`, `head` or `grep`, still does, and so does a find whose `-name` or `-path` names a secret.
+- 04ef89b: Sessions that start together, or end early, no longer strand or refuse the stack, and doctor names a start a killed session left unfinished.
+  
+  - Doctor's readiness summary no longer lists a check that had no evidence as a missing prerequisite. A running stack it could not read was listed under the container runtime, whose need names the Compose floor, so a current Compose such as 5.5.0 read as too old.
+  - A session killed during a cold start, as an agent tool does to an MCP server it stopped waiting for, leaves the stack partly started. Doctor now says so and how many of its services run, and `up` finishes starting it. `stacks` counts such holds in `state.endedHolders`.
+  - An `up` or `sleep` that meets a sibling session's `sleep` waits for it instead of refusing, so sessions that end together all release the stack. A `sleep` that holds none of the stack reports `not-held` and names who holds it, instead of saying nobody does. A session that joins while another holder leaves takes the stack over instead of refusing with `CLAIM_CO_TENANT`. A refused `up` keeps the last hold on a stack that may be running, so its session's closing `sleep` stops it instead of leaving it running with no holder. If a running stack has no holder anyway, the next `up` takes it over on the ports it runs on.
+  - When `up` refuses a running stack whose files are unchanged, it names what changed instead of the files: the Docker or Compose version, the docker command, or the ports.
+  - `SESSION_STACK_RETAINED` names what keeps the stack running: another session by process ID, or an `up` run outside any session.
+  - Codex gets `startup_timeout_sec` for an MCP server that runs `cockpit session`: the declared `cold_start_seconds` plus the two minutes `up` may wait for a sleep, plus 30 seconds, since Codex otherwise gives up after 10 seconds. It recognises `npx`, `npm exec`, pinned versions and shell lines. Run `cockpit sync` to regenerate `.codex/config.toml`.
+
 ## 0.1.30
 
 ### Patch Changes
