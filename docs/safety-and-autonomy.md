@@ -22,8 +22,8 @@ and the option values of a Git read are text, not names, so `git commit -m "Load
 `rg '\.env' docs` run. The guard reads `if`/`elif`/`else`, `for`, `while` and `until`, subshells and
 brace groups, `time` before either, judging every command inside as it would on its own. It also reads here-strings,
 `source FILE`, `${NAME:-word}` (its default word is name-checked wherever a word is) and arithmetic
-over numbers and operators. A plain `"$NAME"`, as a redirect or an operand, in a call's second command is read as the literal its
-first command, a plain `NAME=path`, assigns; any other variable in a redirect asks. Shell it does not read, such as `case`, `[[ … ]]`, `eval`, `watch`,
+over numbers and operators. A plain `"$NAME"` as a redirect or an operand, or `"$NAME/file"` with a literal rest as an operand, in a
+call's second command is read as the path its first command, a plain `NAME=path`, assigns; any other variable in a redirect asks. Shell it does not read, such as `case`, `[[ … ]]`, `eval`, `watch`,
 `xargs -I`, arithmetic over a name, a `cd` after `!` or an expanding heredoc, asks: what runs inside it
 is not known, and bash runs code from places such as a case pattern, a `[[` operand or a name's value in
 arithmetic. Its words are checked first, and it is refused when they name a secret, a credential store,
@@ -569,7 +569,10 @@ or a URL; `gh api` is left out, because its `GET` returns any file the repositor
   `env -C`.
 - A command may follow `cd ./dir`, `cd ../dir` or `cd /abs/dir` joined by `&&` or `;`, with the
   directory judged as its working directory. A bare `cd name` is refused, because `CDPATH` can send
-  it elsewhere: write `cd ./name`, or `git -C name`. A `..` after a directory name, as in
+  it elsewhere: write `cd ./name`, or `git -C name`. `cd sub/dir`, a path of several names that starts
+  with no dot, is judged as the directory below when it exists there, the call sets no `CDPATH`, and
+  no run of its names reaches a credential store from the home directory, where a `CDPATH` entry could
+  send it; otherwise it asks, or is refused when it names a credential store. A `..` after a directory name, as in
   `cd ./a/../b` or `env -C a/..`, is refused too, as are `pushd`, `popd` and zsh's `chdir`. A `cd`
   may fail, and one after `||` may not run, so each later command is judged from every directory it
   may run in: in `pwd || cd ./dir && cat x` the `cat` is judged from both. A newline after `&&`,

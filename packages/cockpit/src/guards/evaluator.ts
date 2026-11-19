@@ -2243,6 +2243,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (resolved.vendorHosts.some(host => hostUsed(text, host))) return deny('Refusing executable use of a declared vendor host.')
         const tokens = text.split(/[^\w./@~+-]+/).filter(Boolean)
         for (const token of tokens) {
+            // In shell text the guard does not read, a bare `.key` or `.pem` is a jq field or a file extension, as in
+            // `jq '.[] | .key'`, far more often than a file; such text asks anyway, so only a named key file refuses it.
+            if (!code && /^\.(?:pem|p12|pfx|key)$/i.test(token)) continue
             const lexical = posix.resolve(cwd, token.startsWith('~/') && home !== undefined ? home + token.slice(1) : token)
             const folded = fold(lexical)
             // A path the text reaches outside the roots is the agent tool's to permit, so the call gets no allow answer.
@@ -2828,7 +2831,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const unseenWrite = (invocation: ParsedInvocation, path: string, spelled = true) => {
         if (!spelled && !invocation.argv.some(word => word === path || word.endsWith(`=${path}`) || word.startsWith('-') && word.endsWith(path))) return
         if (/[*?[]/.test(path)) holdBoundary(invocation, ask(`${named(invocation)} writes to ${shownGuardWord(path)}, a path holding a glob, which the shell can expand to any file, a guard control included. Write the path out.`))
-        else if (/\$\(|`/.test(path) || references(path).some(name => setInCall.has(name))) holdBoundary(invocation, ask(`${named(invocation)} writes to ${shownGuardWord(path)}, a path holding an expansion the call sets and the guard cannot see. Write the path out, or assign it as the call's first command, \`NAME=path; <command> "$NAME"\`.`))
+        else if (/\$\(|`/.test(path) || references(path).some(name => setInCall.has(name))) holdBoundary(invocation, ask(`${named(invocation)} writes to ${shownGuardWord(path)}, a path holding an expansion the call sets and the guard cannot see. Write the path out, or assign it as the call's first command, \`NAME=path; <command> "$NAME"\` or \`"$NAME/file"\`.`))
     }
     // Whether a command makes a link, or moves or copies an existing one, which a later write could follow.
     const makesLink = (invocation: ParsedInvocation) => {
@@ -2881,7 +2884,21 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (resolved.hostedDatabaseHosts.some((host) => hostUsed(word.value, host))) hold(deny('Refusing executable use of a declared hosted database host.'))
             if (resolved.vendorHosts.some((host) => hostUsed(word.value, host))) hold(deny('Refusing executable use of a declared vendor host.'))
         }
-        inspectPath({ path: invocation.cwd, cwd: invocation.cwd, operation: 'cwd' })
+        const directory = inspectPath({ path: invocation.cwd, cwd: invocation.cwd, operation: 'cwd' })
+        // A `cd` by a name without `./` may land in a CDPATH entry instead, such as the home directory, and from there
+        // in a directory a later `cd` names, so every trailing run of the names below the root must reach no credential
+        // store from home. Where nothing exists below the root by that name, only a CDPATH entry can hold it.
+        const spelled = invocation.executable === null && invocation.words.length === 1 && invocation.words[0]!.role === 'directory'
+            && !/^(?:\/|\.\.?(?:\/|$))/.test(invocation.words[0]!.value) ? invocation.words[0]!.value : undefined
+        const below = spelled === undefined ? undefined : resolved.allowedRoots.find(root => within(invocation.cwd, root))
+        if (spelled !== undefined && below !== undefined && directory !== undefined) {
+            const names = posix.relative(below, invocation.cwd).split('/')
+            if (resolved.homeDirectory !== undefined && names.some((_, at) => namesCredential(fold(posix.join(resolved.homeDirectory!, ...names.slice(at)))))) {
+                hold(deny(`Refusing cd ${shownGuardWord(spelled)}: a shell with CDPATH set can resolve the name from the home directory, where it reaches a credential store. Write \`cd ./<dir>\` for the directory in the cockpit.`))
+            } else if (directory.identity === null) {
+                holdBoundary(invocation, ask(`cd ${shownGuardWord(spelled)} names nothing below the directory it runs from, so a shell with CDPATH set may find it elsewhere, which the guard cannot see. Write \`cd ./<dir>\` once it exists.`))
+            }
+        }
         // A redirect writes the file it names, whatever the command does to its operands.
         linking = false
         moving = false

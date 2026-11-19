@@ -3208,3 +3208,53 @@ describe('installed code, search path and secret links', () => {
         }
     })
 })
+
+describe('everyday directory changes and held paths', () => {
+    const home = '/workspace/home'
+    const session = '/workspace/tmp/claude-1000/-workspace-project/session-one'
+    const cockpit = './node_modules/@b00dea/cockpit/bin/cockpit.mjs'
+    // The directories this synthetic cockpit holds; every other path below the root names nothing yet.
+    const present = new Set(['workorders/x', 'workorders/WO-1-adoption/evidence', 'Library/Keychains', 'vendor/Library'].map(path => `${root}/${path}`))
+    const facts: PathInspection = request => ({ ...withGit(request), ...present.has(posix.resolve(request.cwd, request.path)) ? { identity: '8:3' } : {} })
+    const configured = () => ({ ...policy(), homeDirectory: home, agentReadAreas: [session],
+        cockpitInvocations: [candidate(cockpit, ['down', '--config', 'cockpit.toml'])] })
+    const run = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command), { home }), configured(), facts)
+
+    it('judges cd into an existing directory by a name with a slash as that directory, unless the name can reach a credential store', () => {
+        expect(run('cd workorders/x && jq . f.json')).toMatchObject({ decision: 'allow' })
+        // A name with nothing below the root can only be a CDPATH entry's.
+        expect(run('cd workorders/missing && jq . f.json')).toMatchObject({ decision: 'ask', reason: expect.stringContaining('CDPATH') })
+        // From the home directory these names reach the keychain, whatever a directory of the same name in the cockpit holds.
+        expect(run('cd Library/Keychains && cat login.keychain-db')).toMatchObject({ decision: 'deny', reason: expect.stringContaining('credential store') })
+        expect(run('cd vendor/Library && ls')).toMatchObject({ decision: 'deny' })
+        expect(run('cd .aws && cat credentials')).toMatchObject({ decision: 'deny' })
+        // A call that sets CDPATH chooses where the name leads.
+        expect(run('CDPATH=/workspace/home; cd workorders/x && jq . f.json').decision).toBe('ask')
+        expect(run('cd api && ls').decision).toBe('ask')
+    })
+
+    it('reads a jq program after cd as the program it is, not as key file names', () => {
+        const filter = "'{cockpitVersion, claude:{exit:.claude.exit, notRefused:[.claude.results|to_entries[]|select(.value.is_error|not)|.key]}, codex:{blocked:(.codex.blocked|length)}, leftovers}'"
+        expect(run(`cat ${session}/tasks/b1.output; tail -5 ${session}/scratchpad/probe.err; cd workorders/WO-1-adoption/evidence && jq ${filter} guard-parity.json`))
+            .toMatchObject({ decision: 'allow' })
+        expect(run("cd workorders/x && jq '.key' f.json")).toMatchObject({ decision: 'allow' })
+        // Shell the guard does not read asks about what it cannot read, rather than refusing a jq field as a key file.
+        expect(run("cd api && jq '{a:.key}' f.json")).toMatchObject({ decision: 'ask', reason: expect.stringContaining('CDPATH') })
+        for (const command of ['cd ~ && cat .codex/auth.json', 'cd && cat .aws/credentials', 'cat ~/.codex/auth.json', 'cd api && cat server.key', 'cat .key']) {
+            expect(run(command).decision, command).toBe('deny')
+        }
+    })
+
+    it('judges a path the first command holds, with a literal rest after it, as written out, beside a cockpit command', () => {
+        for (const command of [`S=build/out; cp build/a "$S/x"; ${cockpit} down --config cockpit.toml`, 'S=build/out; cp build/a "${S}/x/y.txt"']) {
+            expect(run(command), command).toMatchObject({ decision: 'allow' })
+        }
+        for (const command of [`S=.cockpit; cp build/a "$S/guards/bash-guard.sh"; ${cockpit} down --config cockpit.toml`, 'S=build; cp build/a "$S/../.claude/settings.json"']) {
+            expect(run(command), command).toMatchObject({ decision: 'deny' })
+        }
+        // Only a literal rest is followed: another expansion, a glob or a later command leaves the path unseen.
+        for (const command of ['S=build; cp build/a "$S/$T"', 'S=build; cp build/a $S/*.txt', 'S=build; true; cp build/a "$S/x"']) {
+            expect(run(command).decision, command).toBe('ask')
+        }
+    })
+})
