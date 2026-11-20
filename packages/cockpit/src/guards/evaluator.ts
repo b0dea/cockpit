@@ -814,7 +814,6 @@ function transferOperands(command: 'cp' | 'install' | 'mv' | 'ln', args: readonl
             if (valueLong.has(option!)) {
                 if (attached === undefined && args[++index] === undefined) uncertain = true
             } else if (!plainLong.has(option!)) uncertain = true
-            if (command === 'cp' && ['recursive', 'archive'].includes(option!)) uncertain = true
             continue
         }
         if (options && arg.startsWith('-') && arg !== '-') {
@@ -826,7 +825,6 @@ function transferOperands(command: 'cp' | 'install' | 'mv' | 'ln', args: readonl
                 // `ln -sft dir source` names the target directory inside a cluster.
                 else if (letters[valueAt] === 't') targetDirectory = value
             } else if ([...letters].some(letter => !plainShort.includes(letter))) uncertain = true
-            if (command === 'cp' && /[Rr]/.test(letters)) uncertain = true
             continue
         }
         operands.push(arg)
@@ -910,11 +908,14 @@ function writesUnseenMembers(invocation: ParsedInvocation, git: GitInvocation | 
     const name = posix.basename(invocation.executable)
     if (['rsync', 'unzip', 'cpio', 'pax', 'ditto', 'bsdtar', 'gtar', '7z', '7za', '7zz', 'scp'].includes(name)) return true
     if (name === 'tar') return createsLink(invocation, undefined)
-    if (name === 'cp') return invocation.argv.some(arg => /^--(?:archive|recursive)$/.test(arg) || /^-[A-Za-z]*[aRr]/.test(arg))
+    if (name === 'cp') return copiesRecursively(invocation.argv)
     if (name === 'gh') return materialisesRepository(invocation)
     if (name === 'wget') return invocation.argv.some(arg => /^--(?:recursive|mirror|page-requisites)$/.test(arg) || /^-[A-Za-z]*[rmp]/.test(arg))
     return false
 }
+
+/** `cp -R`, `-r` or `-a`: a copy of each source directory's whole tree. */
+const copiesRecursively = (argv: readonly string[]) => argv.some(arg => /^--(?:archive|recursive)$/.test(arg) || /^-[A-Za-z]*[aRr]/.test(arg))
 
 interface VisibleWrites {
     readonly paths: readonly string[]
@@ -1158,7 +1159,8 @@ function visibleWrites(invocation: ParsedInvocation): VisibleWrites | undefined 
         // `cp -s` and `cp -l` make each destination a symbolic or hard link to its source, as `ln` does, and so does BSD `install -l`.
         const linking = name === 'cp' && invocation.argv.some(arg => ['--symbolic-link', '--link'].includes(arg) || /^-[A-Za-z]*[sl]/.test(arg))
             || name === 'install' && invocation.argv.some(arg => /^-[A-Za-z]*l/.test(arg) && !arg.startsWith('--'))
-        return { paths: transfer.writes, reads: name === 'mv' ? [] : transfer.sources, removes: linking, uncertain: transfer.uncertain,
+        // A recursive copy's sources are trees, which sourceTrees reads.
+        return { paths: transfer.writes, reads: name === 'mv' || name === 'cp' && copiesRecursively(invocation.argv) ? [] : transfer.sources, removes: linking, uncertain: transfer.uncertain,
             ...linking ? { links: transfer.sources } : {} }
     }
     // `link <file> <name>` makes a hard link, as `ln` without options does.
@@ -1981,6 +1983,10 @@ function sourceTrees(invocation: ParsedInvocation): { readonly paths: readonly s
         followsLinks: flags.some(flag => /^--copy-(?:links|dirlinks|unsafe-links)$/.test(flag) || /^-[a-zA-Z]*[Lk]/.test(flag)) }
     if (['scp', 'ditto'].includes(name)) return { paths: operands.slice(0, -1).filter(local), followsLinks: name === 'scp' }
     if (name === 'diff') return { paths: operands, followsLinks: true }
+    // cp copies a link below a source as a link unless `-L` says to follow it (cp(1) on GNU and macOS); macOS reads `-r`
+    // as `-RL` (its cp(1), COMPATIBILITY), and which cp runs is not known, so `-r` follows too.
+    if (name === 'cp' && copiesRecursively(invocation.argv)) return { paths: transferOperands('cp', invocation.argv).sources,
+        followsLinks: flags.some(flag => flag === '--dereference' || /^-[A-Za-z]*[Lr]/.test(flag)) }
     return undefined
 }
 
@@ -2303,8 +2309,10 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     // and key files do, as `$PWD/.claude/settings.json` is the cockpit's own; the home directory itself does.
     const restNamesCredential = (run: string): boolean => {
         if (home === undefined) return false
-        const directory = AGENT_HOME_DIRECTORIES.find(item => within(fold(run), item))
-        return directory !== undefined && fold(run) !== directory ? agentHomeCredential(fold(posix.join(home, run))) : namesCredential(fold(posix.join(home, run)))
+        // `.aws/` names the directory `.aws` does.
+        const below = run.replace(/\/+$/, '')
+        const directory = AGENT_HOME_DIRECTORIES.find(item => within(fold(below), item))
+        return directory !== undefined && fold(below) !== directory ? agentHomeCredential(fold(posix.join(home, below))) : namesCredential(fold(posix.join(home, below)))
     }
     const textDenial = (text: string, cwd: string, code = false): GuardDecision | undefined => {
         if (holdsLiveKey(text)) return liveKeyDenial
@@ -2332,7 +2340,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const runs = [...new Set([...tokens, ...text.replace(/['"\\]/g, '').split(/[^\w./@~+-]+/)])]
                 .filter(token => token !== '' && (code || !/^\.(?:pem|p12|pfx|key)$/i.test(token)))
                 .map(token => /^\/\.[^./]/.test(token) ? token.slice(1) : token).filter(token => !/^[/~.]\./.test(token) && !token.startsWith('/'))
-            if (runs.some(run => namesCredential(fold(posix.join(home, run))))) return credentialDenial
+            // `.aws/`, as `glob('.aws/*')` leaves it, names the directory `.aws` does.
+            if (runs.some(run => namesCredential(fold(posix.resolve(home, run))))) return credentialDenial
         }
         if (fold(text).split(/[^\w./@~+-]+/).some(token => /^(?:sudo|doas|pkexec)$/.test(posix.basename(token)))) return deny('Refusing privilege escalation: it is a person\'s action. Ask them to run it in their own terminal.')
         if (/\b(?:curl|wget)\b[^|;&]*\|\s*(?:\S*\/)?(?:sh|bash|zsh|dash|source|\.|python[\d.]*|node|perl|ruby)(?![\w.-])/.test(fold(text))) return deny('Refusing to run downloaded text as code. Download the file into the cockpit, read it, then run it by path.')
@@ -2741,7 +2750,12 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const inspectReadOnly = (access: ReadOnlyAccess, chainReadOnly = false, approvedExternalRead = false): boolean => {
         let safe = true
         searchBlocker = undefined
-        const visit = (path: string, kind: 'read' | 'tree' | 'listing') => {
+        const visit = (spelled: string, kind: 'read' | 'tree' | 'listing') => {
+            // A glob searches every tree the shell expands it to, which the walk cannot expand: a walk of the literal
+            // `src/*` finds nothing, so it walks `src`, the directory before the first globbed component.
+            const parts = spelled.split('/')
+            const globbed = kind === 'tree' ? parts.findIndex(part => /[*?[]/.test(part)) : -1
+            const path = globbed < 0 ? spelled : parts.slice(0, globbed).join('/') || (spelled.startsWith('/') ? '/' : '.')
             if (descriptor(path)) return
             // Names xargs hands a reader are read, so a listing in such a call names what it reads.
             if (kind === 'listing' && feedsXargs) kind = 'read'
@@ -3143,7 +3157,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 hold(unavailable('Visible writer source is unavailable or unsafe to read.'))
             }
             if (writes.uncertain) hold(unavailable(`${named(invocation)} uses a form of this writer the guard does not model, so it cannot tell where it writes. `
-                + 'Use one it reads: `tar -xf <archive> -C <dir>`, `tar -czf <archive> <paths>` or `tar -tf <archive>`, `rsync -a <src>/ <dst>/` for a recursive copy, '
+                + 'Use one it reads: `tar -xf <archive> -C <dir>`, `tar -czf <archive> <paths>` or `tar -tf <archive>`, `cp -R <src> <dst>` or `rsync -a <src>/ <dst>/` for a recursive copy, '
                 + 'or `cp`, `mv`, `ln` and `install` with plain operands; otherwise a person runs it.'))
         } else if (!access && git?.verb !== 'add' && git?.verb !== 'commit') {
             // Staging writes the index, never the named file, and its operands, and a commit's, are inspected as staged below.
