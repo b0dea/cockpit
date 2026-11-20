@@ -26,6 +26,7 @@ const DOCUMENTED_SHELL_BLOCKS = new Map<string, readonly (typeof developer | typ
         runtime, runtime, runtime, operator, developer]],
     ['docs/harness-surfaces.md', [operator, operator]],
     ['docs/joining-a-team.md', [packageInstall, operator, operator]],
+    ['docs/migrating-an-existing-setup.md', [operator, operator]],
     ['docs/contributing/releasing.md', [operator, operator, developer, developer]],
     ['docs/troubleshooting.md', [operator, operator]],
     ['docs/contributing/testing.md', [developer, developer]],

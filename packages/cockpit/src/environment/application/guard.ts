@@ -44,7 +44,7 @@ import {
     guardExtraction,
 } from '../../guards/evaluator.js'
 import { agentMayRun, commandConfiguration, commandSpelling, type OrdinaryGrant } from '../../command-table.js'
-import { GUARD_INPUT_LIMITS, parseGuardInput } from '../../guards/invocation-parser.js'
+import { GUARD_INPUT_LIMITS, parseGuardInput, type ParsedInvocation } from '../../guards/invocation-parser.js'
 import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../../generated-environment/transaction.js'
 import { parseOwnershipManifest } from '../../surfaces/ownership.js'
 import { installedPackageMetadata } from '../../package-metadata.js'
@@ -1068,4 +1068,13 @@ export async function prepareGuardEvaluationPolicy(
     } catch (error) {
         return guardPolicyRefusal(`guard policy construction failed: ${errorCause(error)}`)
     }
+}
+
+/**
+ * The plain commands a shell command line runs, as the guard reads them for a Bash call in `cwd`;
+ * undefined for a line the guard does not read as plain commands.
+ */
+export function guardCommandInvocations(command: string, cwd: string): readonly ParsedInvocation[] | undefined {
+    const parsed = parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd, tool_input: { command } })
+    return parsed.status === 'parsed' && !parsed.unreadable ? parsed.invocations.filter(row => row.executable !== null) : undefined
 }

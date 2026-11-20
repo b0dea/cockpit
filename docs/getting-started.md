@@ -378,7 +378,9 @@ cold-start time of the services it started.
 
 For teams that already run a multi-repository product with their own scripts,
 moving one layer at a time. Keep the old path runnable until the cockpit path passes the
-same checks.
+same checks. To carry over an existing PreToolUse guard with its test cases, or a stack run with
+`make up`, `make down` and `make reset`, follow
+[Migrating an existing setup](migrating-an-existing-setup.md).
 
 ### Start from init
 

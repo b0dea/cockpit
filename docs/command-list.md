@@ -9,6 +9,7 @@ This generated index is for users choosing the command that owns their next oper
 - `cockpit init`: Preview a first cockpit setup for one or more agent tools, then write it from answers.
 - `cockpit setup`: Clone or locate the declared sibling repositories and link them.
 - `cockpit use`: Serve a sibling from another of its checkouts, such as a worktree.
+- `cockpit adopt`: Replay guard cases through an existing PreToolUse hook and cockpit's guard, and propose deny rules for the gaps.
 - `cockpit pull`: Fast-forward the cockpit and its siblings to their upstreams.
 - `cockpit sibling`: Add or remove a repository in cockpit.toml (sibling add, sibling remove).
 - `cockpit tool`: Add or remove an agent tool in cockpit.toml (tool add, tool remove).

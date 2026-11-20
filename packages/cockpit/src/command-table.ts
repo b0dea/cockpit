@@ -13,6 +13,7 @@ export type WorkHandlerIdentifier =
     | 'browser-drive' | 'browser-screenshot' | 'test-run'
 
 export type HandlerIdentifier = WorkHandlerIdentifier
+    | 'adopt'
     | 'approve'
     | 'check'
     | 'docs-check'
@@ -93,6 +94,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     abandon: 'Close the order as abandoned; --note says why',
     clear: 'Serve the sibling from its declared checkout again',
     answers: 'Path to the init answers file',
+    cases: 'With --import-guard: JSON array of guard cases, each {"id", "command", "cwd"?, "expect"?}, cwd relative to the cockpit root',
     ask: 'Record the note as an open question, which blocks the order until it is answered',
     apply: 'Apply the displayed reversible operation',
     command: 'With --scaffold-compose: the command that starts the app, as words separated by spaces',
@@ -107,6 +109,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     follow: 'Continue collecting logs until cancelled',
     from: 'Path to an existing local repository',
     gate: 'Declared product gate to run',
+    'import-guard': 'The existing PreToolUse hook program to compare with cockpit\'s guard; it is run once per case',
     'instruction-pointer': 'Offer a marked AGENTS.md link for this separate sibling',
     interactive: 'Ask the init questions in a terminal',
     json: 'Emit one machine-readable JSON response',
@@ -246,6 +249,16 @@ const sources = [
         // can point the stack at its own worktree but never widen its reach to a new directory.
         agent: { confined: 1 },
         flags: { config: configFlag, clear: bool(), json: jsonFlag },
+    },
+    {
+        name: 'adopt',
+        stage: 'set-up',
+        summary: 'Replay guard cases through an existing PreToolUse hook and cockpit\'s guard, and propose deny rules for the gaps',
+        handler: 'adopt',
+        visibility: 'public',
+        // It runs the named hook program, which no guard judges first.
+        agent: { person: 'adopt runs the hook program it names' },
+        flags: { config: configFlag, 'import-guard': str(), cases: str(), json: jsonFlag },
     },
     {
         name: 'pull',

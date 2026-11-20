@@ -21,6 +21,7 @@ import { type Diagnostic, renderHumanDiagnostics, renderHumanValue, renderJsonRe
 import { classifyEstateObservation, draftFromEstate, observeCockpitRoot, observePublicEstate } from './init/draft.js'
 import { runInitOperatorCommand, type UnattendedInit } from './init/command.js'
 import { composeFindings, deriveInferredFacts } from './init/derive.js'
+import { observeTakeover } from './init/takeover.js'
 import { runInitApplication, type InitApplicationInput, type InitApplicationOutcome, type InitResult } from './environment/init-application.js'
 import { nodeAuthority, readAnchoredBatches } from './generated-environment/transaction.js'
 import { setupCommand, type SetupCommandInput } from './setup/command.js'
@@ -106,6 +107,7 @@ import { inspectCodexHookTrust } from './environment/codex-hook-trust.js'
 import { loadOperatorPolicy, runResetOperatorApplication, runStacksPruneOperatorApplication, type StacksPruneOperatorSession } from './environment/operator-application.js'
 import { beginStacksPrune, type StacksPruneScope } from './environment/stack-inventory-prune.js'
 import { runStacksInventory } from './environment/stack-inventory-report.js'
+import { runGuardImportApplication } from './environment/application/adopt.js'
 
 import type { WorkApplicationOutcome, WorkApplicationRequest } from './work-orders/application.js'
 
@@ -139,6 +141,7 @@ export interface CommandOutcome {
 interface WorkCommandInput { readonly configPath: string; readonly request: WorkApplicationRequest; readonly evaluator?: EvaluatorTool }
 
 interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInput> {
+    adopt: Readonly<{ configPath: string; hookScript: string; casesFile: string }>
     approve: Readonly<{ configPath: string }>
     check: GeneratedEnvironmentCommandInput
     'docs-check': Readonly<{ configPath: string }>
@@ -644,6 +647,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
             classifyEstate: input => classifyEstateObservation(input, { observe: observePublicEstate }),
             observeRoot: observeCockpitRoot,
             infer: deriveInferredFacts,
+            observeTakeover,
             composeFindings,
             inspectReadiness: input => inspectInitReadiness(input, { env, timeoutMs: RUNTIME_STEP_TIMEOUT_MS, execute: executeProbe }),
             measureMachine: input => measureInitMachine(input, { env, timeoutMs: RUNTIME_STEP_TIMEOUT_MS, execute: executeProbe }),
@@ -740,6 +744,7 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         },
         stacks: (input) => runStacksInventory({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
         'docs-check': (input) => runDocsCheck({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
+        adopt: (input) => runGuardImportApplication({ ...input, configPath: resolve(input.configPath), env }, { execute: executeProbe }),
         'env-keys': (input) => runEnvKeys({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
         'env-schema': (input) => runEnvSchema({ configPath: resolve(input.configPath), reference: input.reference, ...input.replaceFrom === undefined ? {} : { replaceFrom: input.replaceFrom }, env }, { execute: executeProbe }),
         sibling: (request) => request.operation === 'add'
@@ -1183,6 +1188,13 @@ async function decodeRequest(
         return namedOnly(handler, parsed.positionals) ?? (values.config ? { handler, input: { configPath: values.config } } as HandlerRequest : missingConfig())
     }
 
+    if (handler === 'adopt') {
+        const values = parsed.values as { config?: string; 'import-guard'?: string; cases?: string }
+        if (!values.config) return missingConfig()
+        if (!values['import-guard'] || !values.cases) return usageOutcome('CLI_USAGE_INVALID', 'provide --import-guard <hook program> and --cases <file>', '--import-guard')
+        return namedOnly(handler, parsed.positionals) ?? { handler, input: { configPath: values.config, hookScript: resolve(values['import-guard']), casesFile: resolve(values.cases) } }
+    }
+
     if (handler === 'env-schema') {
         const values = parsed.values as { config?: string; path?: string; 'replace-from'?: string }
         if (!values.config) return missingConfig()
@@ -1371,6 +1383,7 @@ async function dispatchHandler(
     if (request.handler === 'check') return handlers.check?.(request.input) ?? unavailable()
     if (request.handler === 'docs-check') return handlers['docs-check']?.(request.input) ?? unavailable()
     if (request.handler === 'env-keys') return handlers['env-keys']?.(request.input) ?? unavailable()
+    if (request.handler === 'adopt') return handlers.adopt?.(request.input) ?? unavailable()
     if (request.handler === 'env-schema') return handlers['env-schema']?.(request.input) ?? unavailable()
     // A person at approve answers the install; an agent's run leaves it for them.
     if (request.handler === 'upgrade') return handlers.upgrade?.({ ...request.input,
