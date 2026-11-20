@@ -3188,6 +3188,19 @@ describe('installed code, search path and secret links', () => {
 
     // Agents copy directories constantly. A recursive cp reads each source as the tree it is, as rsync does, and its
     // destination is a write covering everything the copy may put below it.
+    // A recursive copy carries what the tree holds: a copy of the cockpit puts its guard files, agent settings and Git
+    // configuration and hooks wherever a session or Git then loads them, so it asks as rsync does.
+    it('asks before a recursive copy whose source holds guard files or a repository', () => {
+        const configured = { ...policy(), homeDirectory: '/workspace/home' }
+        const run = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command), { home: '/workspace/home' }), configured, withGit)
+        for (const command of ['cp -R . ../other/', 'cp -R ./ ../other', `cp -R ${root}/ ${other}/`, `cp -R . ${other}/pkg`, 'cp -R . sub/', 'cp -R . build/snapshot',
+            'cp -R ./* build/snapshot', `cp -R ${other} build/other`]) {
+            expect(run(command), command).toMatchObject({ decision: 'ask', reason: expect.stringContaining('holds') })
+        }
+        expect(run('cp -R . build/snapshot').reason).toBe(run('rsync -a . build/snapshot').reason?.replace('rsync -a', 'cp -R'))
+        for (const command of ['cp -r src build/out', 'cp -R src/* build/out/', 'cp -a assets dist/']) expect(run(command), command).toMatchObject({ decision: 'allow' })
+    })
+
     it('judges a recursive copy as rsync: its sources as trees read and its destination as a write', () => {
         const home = '/workspace/home'
         const upstream = '/workspace/upstream'

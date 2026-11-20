@@ -914,6 +914,13 @@ function writesUnseenMembers(invocation: ParsedInvocation, git: GitInvocation | 
     return false
 }
 
+/** The directory before a path's first globbed component, which holds every tree the glob can match; any other path as it is. */
+function globDirectory(path: string): string {
+    const parts = path.split('/')
+    const globbed = parts.findIndex(part => /[*?[]/.test(part))
+    return globbed < 0 ? path : parts.slice(0, globbed).join('/') || (path.startsWith('/') ? '/' : '.')
+}
+
 /** `cp -R`, `-r` or `-a`: a copy of each source directory's whole tree. */
 const copiesRecursively = (argv: readonly string[]) => argv.some(arg => /^--(?:archive|recursive)$/.test(arg) || /^-[A-Za-z]*[aRr]/.test(arg))
 
@@ -2752,10 +2759,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         searchBlocker = undefined
         const visit = (spelled: string, kind: 'read' | 'tree' | 'listing') => {
             // A glob searches every tree the shell expands it to, which the walk cannot expand: a walk of the literal
-            // `src/*` finds nothing, so it walks `src`, the directory before the first globbed component.
-            const parts = spelled.split('/')
-            const globbed = kind === 'tree' ? parts.findIndex(part => /[*?[]/.test(part)) : -1
-            const path = globbed < 0 ? spelled : parts.slice(0, globbed).join('/') || (spelled.startsWith('/') ? '/' : '.')
+            // `src/*` finds nothing, so it walks `src`.
+            const path = kind === 'tree' ? globDirectory(spelled) : spelled
             if (descriptor(path)) return
             // Names xargs hands a reader are read, so a listing in such a call names what it reads.
             if (kind === 'listing' && feedsXargs) kind = 'read'
@@ -3230,6 +3235,16 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         }
         // Archivers, copiers and recursive diffs read every file below a source, as a recursive search does.
         const sources = sourceTrees(invocation)
+        // A recursive copy carries everything below a source, so one that covers guard files places them where a
+        // session loads them, as rsync's operands are judged; one that covers a root's `.git` places its configuration
+        // and hooks where Git runs them.
+        if (executableName === 'cp') for (const path of sources?.paths ?? []) {
+            const tree = globDirectory(path)
+            inspectPossibleControlOperand(invocation, tree, invocation.cwd, true)
+            const folded = fold(posix.resolve(invocation.cwd, tree))
+            if (resolved.allowedRoots.some(root => within(fold(`${root}/.git`), folded))) holdBoundary(invocation, ask(`${named(invocation)} names ${shownGuardWord(path)}, which holds a repository's .git, and the copy carries its configuration and hooks where Git runs them. `
+                + 'Name the files it needs, or use `git worktree add` for another checkout; otherwise a person approves it or runs it.'))
+        }
         const othersReadOnly = invocations.every(other => other === invocation || accesses.get(other) !== undefined || other.executable === null && !other.redirects.some(redirect => redirect.write))
         if (sources?.paths.length && !inspectReadOnly({ cwd: invocation.cwd, reads: [], trees: sources.paths, listings: [], ...sources.followsLinks ? { followsLinks: true as const } : {} }, othersReadOnly)
             && searchBlocker && !approvalBarriers.has(invocation)) {
