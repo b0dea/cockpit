@@ -124,6 +124,11 @@ describe('policyChange', () => {
             config.environment.profiles = []
         }],
         ['an added tool', config => { config.surfaces.tools.push('opencode') }],
+        // It only sets how long Codex waits for the server to answer.
+        ['an MCP server declared to start the stack', config => {
+            config.environment.machine = { runtime_memory_mb: 1024, runtime_cpus: 1, free_disk_mb: 1024, cold_start_seconds: 90 }
+            config.mcp.starts_stack = { docs: true }
+        }],
     ])('does not widen on %s', (_name, edit) => {
         expect(changed(edit)).toEqual({ kind: 'non-widening' })
     })

@@ -538,7 +538,7 @@ const privileged = new Set(['sudo', 'sudoedit', 'doas', 'su', 'pkexec', 'run0', 
 // Builtins that move the shell as `cd` does, which only `cd` is judged as.
 const directoryChangers = new Set(['cd', 'pushd', 'popd', 'chdir'])
 const CD_REFUSAL = 'cd is judged only as `cd <dir> && <command>` (or `;`), alone in its command, with one literal directory that is absolute or starts '
-    + 'with ./ or ../. A bare name such as `cd api` may resolve through CDPATH, which the guard cannot see: write `cd ./api`, or `git -C api` for Git.'
+    + 'with ./ or ../, or a name that starts with no dot in a call that leaves CDPATH alone. Otherwise a name such as `cd .api` may resolve through CDPATH, which the guard cannot see: write `cd ./.api`, or `git -C .api` for Git.'
 const LOOP_REFUSAL = 'A for loop is parsed only as `for NAME in WORDS; do COMMANDS; done`, followed by redirects, a separator or the end of the command.'
 const WHILE_REFUSAL = 'A while or until loop is parsed only as `while COMMANDS; do COMMANDS; done`, followed by redirects, a separator or the end of the command.'
 const SUBSHELL_REFUSAL = 'A subshell is parsed only as `( COMMANDS )`, followed by redirects, a separator or the end of the command; `((` is arithmetic, which the guard does not read.'
@@ -888,10 +888,11 @@ function changedDirectory(tokens: readonly Token[], context: Context): string | 
     // Both shells search CDPATH before the working directory for any other relative spelling; an empty one leaves only the working directory.
     // `cd -` goes to OLDPWD, and `-P`, `-L` and zsh's `+N` and `-N` are options or stack entries, never a directory.
     if (target === undefined || /^[-+]/.test(target)) refuse(CD_REFUSAL)
-    // Agents write `cd sub/dir` constantly. With CDPATH unseen but not set by the call, a path of several names that
+    // Agents write `cd sub/dir` and `cd sub` constantly. With CDPATH unseen but not set by the call, a path of names that
     // starts with no dot is judged as the directory below; the evaluator holds it to one that exists there and whose
     // names reach no credential store from the home directory, which is where a CDPATH entry could send it instead.
-    const byName = context.options.cdpath === undefined && !context.cdSteered && target.includes('/') && !target.startsWith('.')
+    // What it reads after the cd holds a single name to the same climb, expansion and trailing-run checks as several.
+    const byName = context.options.cdpath === undefined && !context.cdSteered && !target.startsWith('.')
     const explicit = /^(?:\/|\.\.?(?:\/|$))/.test(target)
     if (context.options.cdpath !== '' && !explicit && !byName) refuse(CD_REFUSAL)
     if (!explicit) context.seen.cdByName = true

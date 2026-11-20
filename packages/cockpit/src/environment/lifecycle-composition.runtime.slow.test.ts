@@ -1457,6 +1457,50 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(finished, JSON.stringify(finished)).toMatchObject({ kind: 'complete', status: 0 })
     })
 
+    it('prints every finding doctor counts for a start a killed session left unfinished', async () => {
+        const first = await runStackScenario()
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const configPath = first.candidate.configPath
+        const env = { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home }
+        expect(await runDown({ configPath }, createDestructiveCommandAdapters({ configPath, env, sessionId: 'stack-production', timeoutMs: 5_000, dockerContext: 'default' }, executeProbe)))
+            .toMatchObject({ kind: 'complete', result: { change: 'removed' } })
+        await configureStackDocker(first.candidate, first.context)
+        const hang = join(first.candidate.root, 'health-reads-wait')
+        await writeFile(first.candidate.dockerPath, (await readFile(first.candidate.dockerPath, 'utf8')).replace('joined="$*"\n',
+            `joined="$*"\ncase "$joined" in *inspect*) if [ -f '${hang}' ]; then /bin/sleep 60; fi ;; esac\n`), { mode: 0o700 })
+        await writeFile(hang, '')
+        const stopped = join(first.candidate.root, 'runtime-stopped')
+        const wrapper = spawn(process.execPath, [resolve('packages/cockpit/bin/cockpit.mjs'), 'session', '--config', configPath, '--', '/usr/bin/true'],
+            { env, stdio: 'ignore' })
+        const exited = once(wrapper, 'exit')
+        try {
+            for (let waited = 0; await readFile(stopped).then(() => true, () => false); waited += 1) {
+                if (waited > 600) throw new Error('the session never started the stack')
+                await new Promise((settle) => setTimeout(settle, 100))
+            }
+            await new Promise((settle) => setTimeout(settle, 1_000))
+        } finally {
+            wrapper.kill('SIGKILL')
+            await exited
+        }
+        await rm(hang)
+
+        // The report's own stream must carry what its headline counts: read without stderr (piped, or
+        // captured by a tool), it listed only the findings a readiness gap names, and this one has none.
+        let stdout = ''
+        let stderr = ''
+        expect(await runCli(['doctor', '--config', configPath], {
+            stdout: { write: (text: string) => ((stdout += text), true) },
+            stderr: { write: (text: string) => ((stderr += text), true) },
+        }, {}, { env: { ...env, NO_UPDATE_NOTIFIER: '1' } })).toBe(0)
+        const counted = /Findings: (?:(\d+) errors?)?(?: and )?(?:(\d+) warnings?)?, listed below/.exec(stdout)
+        expect(counted, stdout).not.toBeNull()
+        expect(stdout).toMatch(/^ERROR STACK_NOT_RUNNING .*the session that was starting this stack ended before it finished/m)
+        expect(stdout.match(/^ERROR /gm)?.length ?? 0, stdout).toBe(Number(counted![1] ?? 0))
+        expect(stdout.match(/^WARNING /gm)?.length ?? 0, stdout).toBe(Number(counted![2] ?? 0))
+        expect(stderr).toBe('')
+    })
+
     // A wrapper whose server exits at once sleeps as soon as its up returns. The sessions that waited
     // behind its bring-up then tried to join while that sleep ran, and up refused them outright.
     it('starts sessions that begin together when one of them ends at once, and leaves the stack stopped after the last', async () => {

@@ -205,6 +205,12 @@ export async function prepareSurfaces(
         const row = mcp.diagnostics.find(candidate => candidate.code === 'MCP_APPROVAL_UNKNOWN')!
         return refuse(row.code, row.message, row.server)
     }
+    // A mark on a server no source declares, or on a remote one that runs no command, would set nothing.
+    for (const name of Object.keys(config.mcp.starts_stack)) {
+        const server = mcp.result.servers.find(row => row.name === name)
+        if (!server) return refuse('MCP_DECLARATION_INVALID', `[mcp.starts_stack] ${name} names a server that no MCP source declares; declare it, or delete that entry from cockpit.toml`, name)
+        if (!('command' in server)) return refuse('MCP_DECLARATION_INVALID', `[mcp.starts_stack] ${name} names a remote server, which runs no command that could start the stack; delete that entry from cockpit.toml`, name)
+    }
 
     const assetPaths = [EVALUATOR_ASSET, ...SKILL_ASSETS, ...REFERENCE_ASSETS, ...RESTRICTION_ASSETS, ...WORK_ASSETS]
     const assetReads = await readAnchoredBatches(SURFACE_ROOT, assetPaths.map(path => ({
@@ -334,7 +340,8 @@ export async function prepareSurfaces(
     // Every sibling directory relative to the cockpit root, whether or not a grant names it.
     const siblingDirectories = [...prepared.siblingRoots.siblings].map(([slug, sibling]) => ({ slug, path: relative(prepared.root, sibling.root) }))
     const generatedNativeSources = nativeSources(mcp, projection.grants, siblingDirectories, prepared.registry.secretPaths, config.guards.secret_paths,
-        config.environment.machine?.cold_start_seconds)
+        config.environment.machine?.cold_start_seconds,
+        Object.entries(config.mcp.starts_stack).filter(([, starts]) => starts).map(([name]) => name))
     const generatedSources = [...mergedSources, ...generatedNativeSources]
         .sort((left, right) => compareCodeUnits(left.path, right.path))
     if (new Set(generatedSources.map(source => source.path)).size !== generatedSources.length) {

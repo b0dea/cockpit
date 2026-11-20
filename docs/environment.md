@@ -6,8 +6,9 @@ recover. For the order to run them in, follow
 [CLI reference](cli-reference.md).
 
 Add `--json` to get the result and any diagnostics as one JSON document on stdout; otherwise the
-result is text and diagnostics go to stderr. Every refusal exits nonzero with a named diagnostic
-code, and unknown flags are refused.
+result is text and diagnostics go to stderr, except that `doctor` lists its findings under its
+report on stdout. Every refusal exits nonzero with a named diagnostic code, and unknown flags are
+refused.
 
 ## Input limits
 

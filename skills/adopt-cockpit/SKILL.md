@@ -271,7 +271,7 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
      `git add -A` that covers a secrets directory, and the first commit stages the guard's own
      files. Show them `git status --short` and hand them that fix to run in a terminal. To read
      Git state in another directory, use `git -C <dir> status` or `cd ./<dir> && <command>`; a bare
-     `cd <dir>` is refused.
+     `cd <dir>` passes only for a directory that exists there.
    Done when the result reports `environment-verified`, or, for a cockpit that declares no runtime,
    reports `surfaces-verified` with `ENVIRONMENT_NOT_DECLARED` as information and no bring-up. That
    stage verifies the surfaces only: step 7's `doctor` is what reports its env schemas.
@@ -304,6 +304,9 @@ it until the `cockpit-installed` gap is cleared; use it only where existing perm
      `npx --no cockpit approve` in a
      terminal outside the agent, which shows the servers a yes would enable and the fields that
      widen, and asks once. List the servers and fields in your report, and hand them the command.
+   - A server whose command runs a script that starts the stack through a cockpit session gets
+     `<server name> = true` under `[mcp.starts_stack]`, so Codex waits out the cold start
+     instead of giving up after 10 seconds; it needs `[environment.machine]`.
    Done when `doctor` reports no required gap and every other gap is cleared or reported. Report
    four things separately, because none implies another: **configuration generated** (`check`
    passes), **machine ready** (`doctor`, run where it can read this machine, has no required gap),

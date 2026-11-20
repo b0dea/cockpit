@@ -759,6 +759,17 @@
               "pattern": "^[a-f0-9]{64}$"
             }
           }
+        },
+        "starts_stack": {
+          "default": {},
+          "description": "Declared local MCP servers whose command brings up the stack through cockpit session, directly or inside a script it runs, each mapped to true, so Codex is given the cold start to wait for it. Needs [environment.machine].",
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^(?=[\\s\\S]{0,128}$)(?:^[a-zA-Z0-9][a-zA-Z0-9_-]*$)": {
+              "type": "boolean"
+            }
+          }
         }
       },
       "additionalProperties": false

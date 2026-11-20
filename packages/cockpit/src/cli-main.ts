@@ -17,7 +17,7 @@ import { commandGroups, commandSpelling, commandStages, commands, describePublic
 import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
 import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS, isGuardSurfaceTarget } from './surfaces/harness-registry.js'
 import { cockpitCommand, initCommand, type FixContext } from './fix-catalogue.js'
-import { type Diagnostic, renderHumanDiagnostics, renderHumanValue, renderJsonResponse } from './diagnostics.js'
+import { type Diagnostic, renderHumanDiagnostics, renderHumanValue, renderJsonResponse, reportListsDiagnostics } from './diagnostics.js'
 import { classifyEstateObservation, draftFromEstate, observeCockpitRoot, observePublicEstate } from './init/draft.js'
 import { runInitOperatorCommand, type UnattendedInit } from './init/command.js'
 import { composeFindings, deriveInferredFacts } from './init/derive.js'
@@ -1700,7 +1700,7 @@ export async function runCli(
     }
     if (outcome!.artifact && !outcome!.destination) io.stdout.write(outcome!.artifact)
     io.stdout.write(renderHumanDiagnostics([], { command: commandName, outcome: outcome! }, outcome!.fixContext))
-    io.stderr.write(renderHumanDiagnostics(outcome!.diagnostics, undefined, outcome!.fixContext, usageHint))
+    if (!reportListsDiagnostics(commandName, outcome!)) io.stderr.write(renderHumanDiagnostics(outcome!.diagnostics, undefined, outcome!.fixContext, usageHint))
     return finish(outcome!.status)
 }
 

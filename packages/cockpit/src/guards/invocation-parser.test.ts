@@ -75,7 +75,7 @@ describe('guard invocation capture', () => {
         ] })
         expect(literal.status === 'parsed' && literal.invocations.map((item) => Object.hasOwn(item, 'expandsStatus'))).toEqual([false, true, false, true])
         // zsh, the default macOS shell, expands a word starting with `=` to a command's path.
-        for (const command of ['printf {a,{b}}', 'printf ok > out$?', '$? push origin main', 'eval "git push origin main"', 'printf x\\', 'printf "x', 'echo x &&', '((x = 1))', 'cd tmp; git status', 'printf\vok',
+        for (const command of ['printf {a,{b}}', 'printf ok > out$?', '$? push origin main', 'eval "git push origin main"', 'printf x\\', 'printf "x', 'echo x &&', '((x = 1))', 'cd .tmp; git status', 'printf\vok',
             'env -C $? cat x', 'env --chdir=$? cat x', 'env -C ./link/.. cat x', 'builtin cd .. && ls']) {
             expect(parseGuardInput(shellPayload(command)), command).toMatchObject({ status: 'unavailable', reason: expect.any(String) })
         }
@@ -98,7 +98,9 @@ describe('guard invocation capture', () => {
         expect(at('pwd || cd ./api && ls')).toEqual([['pwd', root], [null, `${root}/api`], ['ls', root], ['ls', `${root}/api`]])
         // A newline after `&&`, `||` or `|` continues the list.
         expect(at('cd ./api &&\nls')).toEqual([[null, `${root}/api`], ['ls', `${root}/api`]])
-        expect(at('cd api && ls')).toEqual(expect.stringContaining('may resolve through CDPATH'))
+        // A single name is read like `a/b`; the evaluator holds it to a directory that exists below and reaches nothing from home.
+        expect(at('cd api && ls')).toEqual([[null, `${root}/api`], ['ls', `${root}/api`]])
+        expect(at('cd .aws && ls')).toEqual(expect.stringContaining('may resolve through CDPATH'))
         for (const command of ['cd && ls', 'cd - && ls', 'cd ./a ./b', 'cd "$HOME" && ls', 'cd ~/a && ls', 'cd ./a | ls', 'ls | cd ./a', 'ls |\ncd ./a && ls', 'cd ./a & ls',
             'CDPATH=/x cd ./a', 'command cd ./a', 'cd ./a > out', 'cd ./link/../b && ls', 'pushd .. && ls', 'popd && ls', 'chdir .. && ls']) {
             expect(at(command), command).toEqual(expect.stringContaining('cd is judged only as'))
