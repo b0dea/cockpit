@@ -299,4 +299,95 @@ describe('cockpit upgrade for an agent and a person', () => {
         expect(edited.git('log', '-1', '--format=%s').trim()).toBe('Create synthetic cockpit')
         expect(edited.git('diff', '--cached', '--name-only')).toBe('')
     })
+
+    // A branch made with `git switch -c` has no upstream until its first push; it is still a branch to commit on.
+    it('asks for no new branch on a clean named branch that has no upstream yet', async () => {
+        const f = repository()
+        f.git('switch', '--quiet', '-c', 'fresh-topic')
+        const agent = await f.cli(['upgrade', '--config', f.config, '--json'], { ...f.env, CLAUDECODE: '1' })
+        expect(agent.json().result.next).toBe(`run \`npx --no cockpit approve\` in ${f.project}, in a terminal outside the agent`)
+        expect(JSON.stringify(agent.json().diagnostics)).not.toContain('start a branch')
+    })
+
+    // Without origin's HEAD the default branch is unknown, so a local protected branch is what says one is needed.
+    it('asks for a new branch on a protected branch when origin names no default branch', async () => {
+        const f = repository()
+        f.git('remote', 'set-head', 'origin', '--delete')
+        f.git('switch', '--quiet', '-c', 'release-line')
+        writeFileSync(f.config, '[guards]\nprotected_branches = ["release-line"]\n')
+        f.git('commit', '--quiet', '-am', 'Protect the release line')
+        const agent = (await f.cli(['upgrade', '--config', f.config, '--json'], { ...f.env, CLAUDECODE: '1' })).json()
+        expect(agent.result.next.split('\n')[0]).toBe('start a branch first: git switch -c cockpit-9.9.9 origin/<default branch>')
+        // The schema's own default protects main when the configuration names none.
+        const plain = repository()
+        plain.git('remote', 'set-head', 'origin', '--delete')
+        const onMain = (await plain.cli(['upgrade', '--config', plain.config, '--json'], { ...plain.env, CLAUDECODE: '1' })).json()
+        expect(onMain.result.next).toContain('start a branch first')
+    })
+
+    // Safe Chain wraps the person's `npx` in a process whose own proxy filters every fetch, so the exemption
+    // approve sets on the install it starts never reaches the filter. The person's line names it instead, a
+    // failed install says so, and the step stays queued for the rerun.
+    it('names the age exemption on the approve line under Safe Chain, keeps a failed install queued and applies it on a later approve', async () => {
+        const f = repository({ branch: 'topic' })
+        const wrapped = join(f.project, '..', 'wrapped-bin')
+        mkdirSync(wrapped)
+        writeFileSync(join(wrapped, 'safe-chain'), '#!/bin/sh\nexit 0\n')
+        chmodSync(join(wrapped, 'safe-chain'), 0o755)
+        const underSafeChain = { ...f.env, PATH: `${wrapped}:${f.env.PATH}` }
+        const line = `cd ${f.project} && ${EXEMPTION}=@b00dea/cockpit npx --no cockpit approve`
+        const agent = (await f.cli(['upgrade', '--config', f.config, '--json'], { ...underSafeChain, CLAUDECODE: '1' })).json()
+        expect(agent.result.next).toBe(`run \`${EXEMPTION}=@b00dea/cockpit npx --no cockpit approve\` in ${f.project}, in a terminal outside the agent`)
+        expect(agent.diagnostics[0].message).toContain(`For the person: run \`${line}\` in a terminal of your own`)
+        // An agent that runs approve itself is told the same line to hand over.
+        const refusedApprove = await f.cli(['approve', '--config', f.config, '--json'], { ...underSafeChain, CLAUDECODE: '1' })
+        expect(refusedApprove.json().diagnostics[0]).toMatchObject({ code: 'APPROVE_TERMINAL_REQUIRED', message: expect.stringContaining(line) })
+
+        // The filter hides the new release, so the package manager finds no matching version.
+        writeFileSync(join(wrapped, 'npm'), '#!/bin/sh\necho "npm error code ETARGET" >&2\necho "npm error notarget No matching version found for @b00dea/cockpit@9.9.9." >&2\nexit 1\n')
+        chmodSync(join(wrapped, 'npm'), 0o755)
+        const failed = await f.cli(['approve', '--config', f.config], underSafeChain, { confirm: async () => true })
+        expect(failed.status).toBe(2)
+        expect(failed.stderr).toContain('UPGRADE_INSTALL_FAILED')
+        expect(failed.stderr).toContain(`Safe Chain's minimum package age check refused @b00dea/cockpit@9.9.9`)
+        expect(failed.stderr).toContain(line)
+        expect(f.pending()).toEqual([expect.objectContaining({ argv: ['upgrade', '9.9.9', '--config', f.config] })])
+        expect(failed.stdout + failed.stderr).toContain('still waits')
+
+        const retried = await f.cli(['approve', '--config', f.config], f.env, { confirm: async () => true })
+        expect(retried.status).toBe(0)
+        expect(f.calls().at(-2)).toBe('npm install --save-dev --save-exact @b00dea/cockpit@9.9.9 exempt=@b00dea/cockpit')
+        expect(f.pending()).toEqual([])
+    })
+
+    // Once the release is installed, a rerun finds it current and would rerun nothing, so a failed sync is
+    // not kept as a retry; its own message says to run sync.
+    it('does not keep an upgrade whose install finished and whose sync failed', async () => {
+        const f = repository({ branch: 'topic' })
+        await f.cli(['upgrade', '--config', f.config, '--json'], { ...f.env, CLAUDECODE: '1' })
+        const broken = join(f.project, '..', 'broken-sync-bin')
+        const entry = join(f.project, 'node_modules', '@b00dea', 'cockpit', 'bin')
+        mkdirSync(broken)
+        writeFileSync(join(broken, 'npm'), `#!/bin/sh\nmkdir -p '${entry}'\necho 'process.exit(1)' > '${join(entry, 'cockpit.mjs')}'\n`)
+        chmodSync(join(broken, 'npm'), 0o755)
+        const run = await f.cli(['approve', '--config', f.config], { ...f.env, PATH: `${broken}:${f.env.PATH}` }, { confirm: async () => true })
+        expect(run.status).toBe(2)
+        expect(run.stderr).toContain('UPGRADE_SYNC_FAILED')
+        expect(f.pending()).toEqual([])
+        expect(run.stdout).not.toMatch(/still waits|Dropped/)
+    })
+
+    // A step that fails before the person is asked would fail the same way on every approve, so it is
+    // dropped, and the summary says how to queue it again.
+    it('drops a step that failed before asking and names the command that queues it again', async () => {
+        const f = repository({ branch: 'topic' })
+        await f.cli(['upgrade', '--config', f.config, '--json'], { ...f.env, CLAUDECODE: '1' })
+        writeFileSync(join(f.project, 'yarn.lock'), '')
+        const asked: Approval[] = []
+        const run = await f.cli(['approve', '--config', f.config], f.env, { confirm: async approval => (asked.push(approval), true) })
+        expect(run.status).toBe(2)
+        expect(asked).toEqual([])
+        expect(f.pending()).toEqual([])
+        expect(run.stdout).toContain(`Dropped "Upgrade cockpit": it failed before asking you; to queue it again, an agent runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade 9.9.9 --config ${f.config}`)
+    })
 })

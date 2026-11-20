@@ -16,7 +16,7 @@ import { createInvocationRecord, EXIT_CODES } from './invocation.js'
 import { commandGroups, commandSpelling, commandStages, commands, describePublicOption, internalCommands, isWorkHandler, isRecordedAnswerField, schemaFileReference, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
 import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS, isGuardSurfaceTarget } from './surfaces/harness-registry.js'
-import { bindConfigPath, cockpitCommand, initCommand, type FixContext } from './fix-catalogue.js'
+import { bindConfigPath, cockpitCommand, formatShellCommand, initCommand, type FixContext } from './fix-catalogue.js'
 import { type Diagnostic, renderHumanDiagnostics, renderHumanValue, renderJsonResponse, reportListsDiagnostics } from './diagnostics.js'
 import { classifyEstateObservation, draftFromEstate, observeCockpitRoot, observePublicEstate } from './init/draft.js'
 import { runInitOperatorCommand, type UnattendedInit } from './init/command.js'
@@ -103,7 +103,7 @@ import {
     type GeneratedEnvironmentCommandOutcome,
 } from './generated-environment/command.js'
 import type { GeneratedStaleRemovalApproval, GeneratedStaleRemovalApprovalRequest } from './environment/generated-application/shared.js'
-import { runUpgrade } from './environment/upgrade-application.js'
+import { personApproveCommand, runUpgrade } from './environment/upgrade-application.js'
 import { inspectCodexHookTrust } from './environment/codex-hook-trust.js'
 import { loadOperatorPolicy, runResetOperatorApplication, runStacksPruneOperatorApplication, type StacksPruneOperatorSession } from './environment/operator-application.js'
 import { beginStacksPrune, type StacksPruneScope } from './environment/stack-inventory-prune.js'
@@ -196,8 +196,11 @@ interface OperatorResetBinding {
     decide(decision: 'approve' | 'decline'): Promise<CommandOutcome>
 }
 
-/** Where `cockpit approve` stands, as "1 of 3", and whether the person stopped it on this step. */
-type Approving = { readonly progress: string; stopped: boolean }
+/**
+ * Where `cockpit approve` stands, as "1 of 3", whether the person stopped it on this step, whether they said
+ * yes in it, and whether it got far enough that running it again would not redo it.
+ */
+type Approving = { readonly progress: string; stopped: boolean; approved?: boolean; applied?: boolean }
 
 interface OperatorWorkBinding { readonly approval: Approval; approve(): Promise<CommandOutcome> }
 
@@ -1357,6 +1360,7 @@ async function dispatchHandler(
         const answer = io.confirm ? await io.confirm(approval) : await askApproval(io, approval, approving.progress)
         // A stop declines this step, so nothing is applied, and tells approve to keep it and the rest.
         if (answer === undefined) approving.stopped = true
+        if (answer === true) approving.approved = true
         return answer === true
     }
     if (isWorkHandler(request.handler) && 'request' in request.input) {
@@ -1398,8 +1402,12 @@ async function dispatchHandler(
     if (request.handler === 'guard-prove') return handlers['guard-prove']?.(request.input) ?? unavailable()
     if (request.handler === 'env-schema') return handlers['env-schema']?.(request.input) ?? unavailable()
     // A person at approve answers the install; an agent's run leaves it for them.
-    if (request.handler === 'upgrade') return handlers.upgrade?.({ ...request.input,
-        ...confirm ? { confirm } : agentSessionVariable(options.env) ? { agent: true } : {} }) ?? unavailable()
+    if (request.handler === 'upgrade') {
+        const outcome = await handlers.upgrade?.({ ...request.input, ...confirm ? { confirm } : agentSessionVariable(options.env) ? { agent: true } : {} })
+        // Past the install, a rerun finds the release current and reruns nothing, so only a failed install is worth retrying.
+        if (approving && outcome && !outcome.diagnostics.some(row => row.code === ENVIRONMENT_CODES.UPGRADE_INSTALL_FAILED)) approving.applied = true
+        return outcome ?? unavailable()
+    }
     if (request.handler === 'up') return handlers.up?.(request.input) ?? unavailable()
     if (request.handler === 'sleep') return handlers.sleep?.(request.input) ?? unavailable()
     if (request.handler === 'session') return handlers.session?.(request.input) ?? unavailable()
@@ -1471,7 +1479,7 @@ async function canonicalConfig(configPath: string): Promise<string> {
 
 // What an agent hands the person for a step left waiting: one line to copy, and where it runs. Claude Code's `!` runs a
 // command inside the agent's session, where approve finds no person to answer it.
-const APPROVE_HAND_OFF = 'run `cd <the cockpit root> && npx --no cockpit approve` in a terminal of your own, not with `!` in this session, which can\'t take your answer'
+const approveHandOff = (command = 'npx --no cockpit approve') => `run \`cd <the cockpit root> && ${command}\` in a terminal of your own, not with \`!\` in this session, which can't take your answer`
 
 /** Records a step that waits for a person, as the command to run again, with its configuration made canonical. */
 async function recordForPerson(handler: HandlerIdentifier, configured: string, args: readonly string[], outcome: CommandOutcome): Promise<CommandOutcome> {
@@ -1484,7 +1492,9 @@ async function recordForPerson(handler: HandlerIdentifier, configured: string, a
     const argv = handler === 'upgrade' && typeof resolved === 'string' && words.slice(1).every(word => word.startsWith('-'))
         ? [words[0]!, resolved, ...words.slice(1)] : words
     const failed = await recordPendingApproval(dirname(config), { argv: [...argv, '--config', config], config, title, at: new Date().toISOString() })
-    const handOff = bindConfigPath(APPROVE_HAND_OFF, { resolvedConfigPath: config, generatedTargets: [] })
+    // An upgrade names the command the person runs, which may carry Safe Chain's age exemption.
+    const command = handler === 'upgrade' ? (outcome.result as { approve?: unknown } | null)?.approve : undefined
+    const handOff = bindConfigPath(approveHandOff(typeof command === 'string' ? command : undefined), { resolvedConfigPath: config, generatedTargets: [] })
     return failed === undefined ? { ...outcome, diagnostics: outcome.diagnostics.map(row => waitsForPerson(row) ? { ...row, message: `${row.message}. For the person: ${handOff}` } : row) }
         : { ...outcome, diagnostics: [...outcome.diagnostics, { severity: 'error', target: 'approve',
         code: 'APPROVAL_NOT_RECORDED', message: `this step could not be left for a person to approve: ${failed}`,
@@ -1503,9 +1513,14 @@ async function runApprove(configPath: string, io: CliIo, overrides: CliHandlerOv
         diagnostics: [{ severity: 'error', target: 'approve', code, message, fix }], fixContext: { resolvedConfigPath: config, generatedTargets: [] } })
     // A test answers through io.confirm in place of a terminal; it still must not be an agent, CI or JSON run.
     const absent = personAbsence(io.confirm ? undefined : io, runtime.env ?? process.env, json)
-    if (absent) return refused('APPROVE_TERMINAL_REQUIRED', `approve asks a person, and this run has none: ${absent}`,
-        'open a terminal outside the agent and, in <the cockpit root>, run: npx --no cockpit approve; as one line, run `cd <the cockpit root> && npx --no cockpit approve` in a terminal of your own, not with `!` in this session, which can\'t take your answer')
     const read = readPendingApprovals(root)
+    if (absent) {
+        // An agent relays this to the person, so a waiting upgrade gets the line that installs it.
+        const upgrade = read.kind === 'complete' && read.items.some(item => item.config === config && item.argv[0] === 'upgrade')
+            ? `; for the waiting upgrade, the person runs \`cd ${formatShellCommand([root])} && ${await personApproveCommand(runtime.env ?? process.env, root)}\`` : ''
+        return refused('APPROVE_TERMINAL_REQUIRED', `approve asks a person, and this run has none: ${absent}${upgrade}`,
+            'open a terminal outside the agent and, in <the cockpit root>, run: npx --no cockpit approve; as one line, run `cd <the cockpit root> && npx --no cockpit approve` in a terminal of your own, not with `!` in this session, which can\'t take your answer')
+    }
     if (read.kind === 'refusal') return refused('PENDING_APPROVALS_INVALID', read.message,
         'delete that file; each step an agent runs again that needs a person is recorded again')
     const policy = await loadPolicy(config)
@@ -1517,7 +1532,8 @@ async function runApprove(configPath: string, io: CliIo, overrides: CliHandlerOv
         items.unshift({ argv: ['sync', '--config', config], config, title: PERSON_TITLES.sync!, at: new Date().toISOString() })
     }
     if (!items.length) return { artifact: 'Nothing waits for a person.\n', destination: null, status: 0, diagnostics: [], result: { steps: [] } }
-    const steps: { title: string; outcome: 'approved' | 'declined' | 'failed' }[] = []
+    const steps: { title: string; outcome: 'approved' | 'declined' | 'failed'; kept?: true }[] = []
+    const dropped: string[] = []
     for (const [index, item] of items.entries()) {
         const approving: Approving = { progress: `${index + 1} of ${items.length}`, stopped: false }
         let argv: readonly string[] = item.argv
@@ -1535,14 +1551,21 @@ async function runApprove(configPath: string, io: CliIo, overrides: CliHandlerOv
             return { artifact: `\nStopped; ${left} ${left === 1 ? 'step still waits' : 'steps still wait'} for npx --no cockpit approve.\n`, destination: null,
                 diagnostics: [], result: { steps, stopped: true }, status: EXIT_CODES.cancelled }
         }
+        const outcome = status === EXIT_CODES.success ? 'approved' : status === EXIT_CODES.cancelled ? 'declined' : 'failed'
+        // A step the person said yes to and that then failed stays, so the next approve retries it. One that
+        // failed before asking would fail the same way each time, so it goes, with the command that records it again.
+        const kept = outcome === 'failed' && approving.approved === true && approving.applied !== true
+        if (outcome === 'failed' && approving.approved !== true) dropped.push(`Dropped ${JSON.stringify(item.title)}: it failed before asking you; to queue it again, an agent runs ${formatShellCommand([`./node_modules/${installedPackageMetadata.name}/bin/cockpit.mjs`, ...item.argv])}`)
         // Answered: a declined step is not asked again until an agent's run records it anew.
-        const removed = read.items.includes(item) ? await removePendingApproval(root, item.argv) : undefined
+        const removed = read.items.includes(item) && !kept ? await removePendingApproval(root, item.argv) : undefined
         if (removed) return refused('PENDING_APPROVALS_INVALID', `the answered step could not be removed: ${removed}`,
             'make .cockpit/local in the cockpit root a plain directory you can write, then run npx --no cockpit approve in <the cockpit root> again', { steps })
-        steps.push({ title: item.title, outcome: status === EXIT_CODES.success ? 'approved' : status === EXIT_CODES.cancelled ? 'declined' : 'failed' })
+        steps.push({ title: item.title, outcome, ...kept ? { kept: true as const } : {} })
     }
     const count = (outcome: string) => steps.filter(step => step.outcome === outcome).length
-    return { artifact: `\nApproved ${count('approved')}, declined ${count('declined')}, failed ${count('failed')}.\n`, destination: null, diagnostics: [],
+    const kept = steps.filter(step => step.kept).length
+    const after = [...kept ? [`${kept} failed ${kept === 1 ? 'step still waits' : 'steps still wait'}: fix what ${kept === 1 ? 'it' : 'they'} reported, then run npx --no cockpit approve again, or answer n there to drop ${kept === 1 ? 'it' : 'them'}.`] : [], ...dropped]
+    return { artifact: `\nApproved ${count('approved')}, declined ${count('declined')}, failed ${count('failed')}.\n${after.map(line => `${line}\n`).join('')}`, destination: null, diagnostics: [],
         result: { steps }, status: count('failed') ? 2 : 0 }
 }
 

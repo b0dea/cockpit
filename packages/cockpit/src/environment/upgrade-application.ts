@@ -13,6 +13,9 @@
  */
 import { lstat, readFile, readlink, realpath, stat } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'node:path'
+import { parse as parseToml, TomlError } from 'smol-toml'
+import { readBoundedInput } from '../config/load.js'
+import { Guards } from '../schema.js'
 import type { ExecuteProbeOutcome, ForegroundProcessInput, ForegroundProcessOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { readLatestRelease, type ReleaseMetadataTransport } from '../freshness.js'
@@ -24,7 +27,7 @@ import type { Approval } from '../operator-confirmation.js'
 import { installedPackageMetadata } from '../package-metadata.js'
 import { sha256Hex } from '../sha256.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, tryParseJson, type ExecutionStep } from './contract.js'
-import { GIT_CHILD_CONFIG, resolveExecutable, resolveExecutablePath, type ResolvedExecutable } from './executable.js'
+import { GIT_CHILD_CONFIG, locateExecutable, resolveExecutable, resolveExecutablePath, type ResolvedExecutable } from './executable.js'
 
 export interface UpgradeInput {
     readonly configPath: string
@@ -62,6 +65,9 @@ const INSTALL_CAUSE = /ERR_PNPM_|npm error|npm ERR!|\b404\b|E404|No matching ver
 const INSTALL_NOISE = /\(node:\d+\)|DeprecationWarning|--trace-deprecation|disable this check|--[a-z-]*skip[a-z-]*/i
 // Safe Chain's list of packages its minimum package age check skips.
 const AGE_EXEMPTION = 'SAFE_CHAIN_MINIMUM_PACKAGE_AGE_EXCLUSIONS'
+// What npm and pnpm print when no published version satisfies the request, which is how a release an
+// age filter hid looks to the package manager when the filter's notice went to another process's output.
+const NO_MATCHING_VERSION = /ERR_PNPM_NO_MATCHING_VERSION|ETARGET|No matching version/i
 const LOOKUP_TIMEOUT_MS = 60_000
 const INSTALL_TIMEOUT_MS = 600_000
 
@@ -148,11 +154,11 @@ function publishedVersion(stdout: string): string | undefined {
 }
 
 /**
- * The Git state an upgrade is judged against: the branch, its upstream, origin's default branch, what
+ * The Git state an upgrade is judged against: the branch, origin's default branch, what
  * is staged, and a digest of every changed or untracked file, keyed by its path from the cockpit root.
  * Comparing two of these names exactly the files the upgrade wrote.
  */
-type Tree = Readonly<{ git: ResolvedExecutable; branch: string | null; upstream: string | null; defaultRef: string | undefined
+type Tree = Readonly<{ git: ResolvedExecutable; branch: string | null; defaultRef: string | undefined
     staged: readonly string[]; files: ReadonlyMap<string, string> }>
 
 const MAX_HASHED_BYTES = 16_777_216
@@ -174,7 +180,6 @@ async function observeTree(root: string, env: Readonly<Record<string, string>>,
     const status = await run('upgrade:git-status', ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], top)
     if (status === undefined) return `git status did not answer in ${top}`
     let branch: string | null = null
-    let upstream: string | null = null
     const staged: string[] = []
     const paths: string[] = []
     const records = status.split('\0')
@@ -182,7 +187,6 @@ async function observeTree(root: string, env: Readonly<Record<string, string>>,
         const record = records[index]!
         const fields = record.split(' ')
         if (record.startsWith('# branch.head ')) branch = record === '# branch.head (detached)' ? null : record.slice(14)
-        else if (record.startsWith('# branch.upstream ')) upstream = record.slice(18)
         // Ordinary, renamed (its source follows in the next record), unmerged and untracked entries.
         else if (/^[12u] /.test(record)) {
             const path = fields.slice({ 1: 8, 2: 9, u: 10 }[fields[0] as '1' | '2' | 'u']).join(' ')
@@ -212,8 +216,40 @@ async function observeTree(root: string, env: Readonly<Record<string, string>>,
         files.set(relative(real, absolute), digest)
     }
     const origin = (await run('upgrade:git-default', ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], top))?.trim()
-    return { git: git.value, branch, upstream, defaultRef: origin && PLAIN_REF.test(origin) ? origin : undefined,
+    return { git: git.value, branch, defaultRef: origin && PLAIN_REF.test(origin) ? origin : undefined,
         staged: staged.map(path => relative(real, join(top, path))), files }
+}
+
+/**
+ * The command a person runs to approve a queued upgrade. Safe Chain's shell functions run `npx` inside
+ * a safe-chain process that filters every package fetch through its own local proxy, configured from
+ * that process's environment; the install approve starts reaches the registry through that proxy, so an
+ * exemption set on the install alone is never read. The functions wrap only while `safe-chain` is on
+ * PATH, so the same lookup decides when the person's command must carry the exemption itself.
+ */
+/**
+ * The branches `[guards] protected_branches` names, with the schema's default when it names none. The field
+ * is read alone, so a configuration this version would refuse elsewhere still answers; undefined when the
+ * file or the field cannot be read.
+ */
+async function branchesNotToCommitOn(configPath: string): Promise<readonly string[] | undefined> {
+    let parsed: unknown
+    try {
+        const read = await readBoundedInput(configPath)
+        if (read.kind === 'too-large') return undefined
+        parsed = parseToml(read.bytes.toString('utf8'))
+    } catch (error) {
+        if (error instanceof TomlError || hasErrorCode(error, 'ENOENT', 'EISDIR')) return undefined
+        throw error
+    }
+    const guards = (parsed as { guards?: unknown }).guards
+    const field = Guards.shape.protected_branches.safeParse(guards !== null && typeof guards === 'object' ? (guards as { protected_branches?: unknown }).protected_branches : undefined)
+    return field.success ? field.data : undefined
+}
+
+export async function personApproveCommand(env: Readonly<Record<string, string | undefined>>, root: string): Promise<string> {
+    const safeChain = await locateExecutable('safe-chain', env, root)
+    return `${safeChain.state === 'present' ? `${AGE_EXEMPTION}=${installedPackageMetadata.name} ` : ''}npx --no cockpit approve`
 }
 
 export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDependencies): Promise<UpgradeOutcome> {
@@ -290,13 +326,19 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
         fix: 'unstage what the upgrade does not write, by path, or run it where Git reads the cockpit root, then run the upgrade again; or drop --commit and commit the files its next steps name' })
     // The consumer's branch is made before the upgrade: once its files are dirty, switching to a branch
     // from the default branch refuses wherever a changed file also differs there.
-    const branch = typeof before !== 'string' && (before.branch === null || before.upstream === null || before.files.size > 0
-        || before.defaultRef !== undefined && `origin/${before.branch}` === before.defaultRef)
+    // A branch with no upstream yet is still a branch: one made with `git switch -c` has none until it is pushed.
+    // A protected branch counts as the default does, which covers a local main when origin names no default;
+    // one whose protection cannot be read is treated as protected.
+    const guarded = typeof before !== 'string' && before.branch !== null ? await branchesNotToCommitOn(configPath) : undefined
+    const branch = typeof before !== 'string' && (before.branch === null || before.files.size > 0
+        || before.defaultRef !== undefined && `origin/${before.branch}` === before.defaultRef
+        || guarded === undefined || guarded.includes(before.branch))
         ? `start a branch first: git switch -c cockpit-${target} ${typeof before !== 'string' && before.defaultRef || 'origin/<default branch>'}` : undefined
 
     // The install and its age exemption are a person's: an agent's run leaves them for approve.
-    const approve = `run \`npx --no cockpit approve\` in ${root}, in a terminal outside the agent`
-    if (input.agent) return { status: 2, result: { ...result, next: [branch, approve].filter(Boolean).join('\n') },
+    const approveCommand = await personApproveCommand(input.env, root)
+    const approve = `run \`${approveCommand}\` in ${root}, in a terminal outside the agent`
+    if (input.agent) return { status: 2, result: { ...result, approve: approveCommand, next: [branch, approve].filter(Boolean).join('\n') },
         diagnostics: [{ severity: 'error' as const, code: 'UPGRADE_PERSON_REQUIRED' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_PERSON_REQUIRED,
             message: `upgrading cockpit from ${installed} to ${target} installs a new package version, which a person approves; nothing was installed${branch ? `; ${branch}` : ''}`,
             fix: 'run `npx --no cockpit approve` in <the cockpit root>, in a terminal outside the agent' }] }
@@ -315,10 +357,20 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
     const installOutput = installOutcome?.kind === 'complete' ? '' : installOutcome ? `${installOutcome.stdout.toString('utf8')}\n${installOutcome.stderr.toString('utf8')}` : ''
     const installLines = installOutput.split('\n').map(line => line.trim()).filter(line => line !== '' && !INSTALL_NOISE.test(line))
     const installCause = (installLines.some(line => INSTALL_CAUSE.test(line)) ? installLines.filter(line => INSTALL_CAUSE.test(line)) : installLines).slice(-4)
-    if (installOutcome?.kind !== 'complete') return refused({ severity: 'error' as const, code: 'UPGRADE_INSTALL_FAILED' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_INSTALL_FAILED,
-        message: `${result.install} failed (${installOutcome ? `${installOutcome.code}, exit ${installOutcome.execution.exitCode}: ${installCause.join(' | ').slice(0, 512)}` : 'the outcome could not be authenticated'})`
-            + (AGE_FILTER_NOTICE.test(installOutput) ? `; the package manager's package-age filter refused ${spec}, a release that is too new: wait until it is older than the filter's minimum age, or exempt ${name} in your package manager's age-filter settings` : ''),
-        fix: 'fix what the package manager reported (is the version published?), then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version>' })
+    if (installOutcome?.kind !== 'complete') {
+        // Under Safe Chain the age notice may print in the process wrapping approve, outside this output, so a
+        // missing release while Safe Chain is on PATH is read as its refusal too.
+        const safeChain = (await locateExecutable('safe-chain', input.env, root)).state === 'present'
+        const ageRefused = AGE_FILTER_NOTICE.test(installOutput) || safeChain && NO_MATCHING_VERSION.test(installOutput)
+        // Approve keeps the step after a failed install, so its rerun carries the exemption to the wrapper's filter.
+        const rerun = `cd ${formatShellCommand([root])} && ${AGE_EXEMPTION}=${name} `
+            + (input.confirm ? 'npx --no cockpit approve' : formatShellCommand([`./node_modules/${name}/bin/cockpit.mjs`, 'upgrade', target, '--config', configPath]))
+        return refused({ severity: 'error' as const, code: 'UPGRADE_INSTALL_FAILED' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_INSTALL_FAILED,
+            message: `${result.install} failed (${installOutcome ? `${installOutcome.code}, exit ${installOutcome.execution.exitCode}: ${installCause.join(' | ').slice(0, 512)}` : 'the outcome could not be authenticated'})`
+                + (safeChain && ageRefused ? `; Safe Chain's minimum package age check refused ${spec}, a release younger than its minimum age. It reads the exemption only from the command it wraps, so ${input.confirm ? 'the step still waits; ' : ''}run it again as: ${rerun}`
+                    : ageRefused ? `; the package manager's package-age filter refused ${spec}, a release that is too new: wait until it is older than the filter's minimum age, or exempt ${name} in your package manager's age-filter settings` : ''),
+            fix: 'fix what the package manager reported (is the version published?), then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version>' })
+    }
 
     const node = await resolveExecutablePath(process.execPath)
     if (node.state !== 'available') return refused({ severity: 'error' as const, code: 'UPGRADE_SYNC_FAILED' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_SYNC_FAILED,
