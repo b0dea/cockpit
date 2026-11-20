@@ -155,13 +155,27 @@ for (const id of [...RUNNING_STACK_ROWS, ...RUNTIME_ROWS]) {
     }
 }
 
+const runningStackReason = (id: string) => `${id} is observed only while the stack runs; run up, then rerun this command to check it`
+
+/**
+ * The declaration a check names when it went unevaluated only because no stack runs: before the
+ * first bring-up its declaration says so, and afterwards {@link stoppedStackApplicability} does.
+ */
+export function awaitsRunningStack(check: Pick<EvaluatedObservation, 'verdict' | 'reason' | 'code'>): string | undefined {
+    if (check.verdict !== 'not-applicable') return undefined
+    const running = RUNNING_STACK_ROWS.find((id) => check.reason === runningStackReason(id))
+    if (running !== undefined) return running
+    const declaration = validatedProductionDeclarations.find(({ code }) => code === check.code)
+    const bootstrap = declaration?.stages.find(({ stage }) => stage === 'bootstrap')
+    return bootstrap?.disposition === 'not-applicable' && bootstrap.reason === check.reason ? declaration!.id : undefined
+}
+
 /**
  * Which rows cannot be observed when no stack runs, and why. The key is a declaration id, or the
  * posture-requirement owner for the posture checks.
  */
 export function stoppedStackApplicability(input: { readonly runtimeDeclared: boolean }): ReadonlyMap<string, string> {
-    const rows = new Map<string, string>(RUNNING_STACK_ROWS.map((id) =>
-        [id, `${id} is observed only while the stack runs; run up, then rerun this command to check it`]))
+    const rows = new Map<string, string>(RUNNING_STACK_ROWS.map((id) => [id, runningStackReason(id)]))
     if (!input.runtimeDeclared) {
         for (const id of [...RUNNING_STACK_ROWS, ...RUNTIME_ROWS]) rows.set(id, 'this cockpit declares no runtime, so there is nothing for it to measure')
     }

@@ -32,6 +32,7 @@ import { readSeededAt, recordSeeded, seedDue } from './seed.js'
 import { observeHostCapacity } from './host-observation.js'
 import { composeProjectName, holderId, stackId } from './identity.js'
 import {
+    ACTIVE_PROFILES_INPUT,
     decodeLifecycleRecord,
     projectLifecycleStage,
     resolveLifecycleStage,
@@ -196,7 +197,6 @@ interface LifecycleRuntimeReadiness {
 
 // The runtime input naming the profile set, so `up` refuses to change the set under a running stack
 // as it refuses any other change to what the stack was started from.
-const ACTIVE_PROFILES_INPUT = 'active Compose profiles'
 
 interface CompositionBinding {
     readonly config: ConsumedLoadedConfig['config']

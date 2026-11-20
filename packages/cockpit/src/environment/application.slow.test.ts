@@ -1056,6 +1056,39 @@ describe('guard policy construction', () => {
         }
     }, 120_000)
 
+    // After switching to a branch the upgrade had not reached, the committed generated files came from
+    // the earlier cockpit and an earlier cockpit.toml, while node_modules held the newer one. Every
+    // guarded call was held as "stale or unauthenticated", which named neither the versions nor the fix.
+    it('names both versions and the fix when the generated files come from another cockpit version and configuration', async () => {
+        const { root, configPath, request, adapters } = await installedGuardRequest()
+        const path = join(root, '.cockpit/generated-environment-ownership.json')
+        const original = readFileSync(path, 'utf8')
+        const generatedFrom = (version: string) => {
+            const { integrity: _integrity, ...payload } = JSON.parse(original)
+            payload.producer.version = version
+            payload.source.sha256 = 'e'.repeat(64)
+            const bytes = JSON.stringify({ ...payload, integrity: createHash('sha256').update(JSON.stringify(payload)).digest('hex') })
+            expect(parseOwnershipManifest(bytes, { root, configPath, cockpitId: payload.cockpitId }).kind).toBe('complete')
+            writeFileSync(path, bytes)
+            return JSON.parse(original).producer.version as string
+        }
+        try {
+            const installed = generatedFrom('0.0.1')
+            const drifted = (await runGuardEvaluationApplication(request, adapters)).decision
+            expect(drifted).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining(`${installed} is installed, newer than 0.0.1, which generated them`) })
+            expect(drifted.reason).toContain(`sync --config ${configPath}`)
+            expect(drifted.reason).toContain('check out the branch that upgraded cockpit')
+            expect(drifted.reason).not.toContain('stale or unauthenticated')
+            // The same version from another configuration is no version drift, and says what does not match.
+            generatedFrom(installed)
+            const stale = (await runGuardEvaluationApplication(request, adapters)).decision
+            expect(stale).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('stale or unauthenticated') })
+            expect(stale.reason).toContain('generated from a different cockpit.toml')
+        } finally {
+            writeFileSync(path, original)
+        }
+    }, 120_000)
+
     it.each(['v1', 'v2'] as const)('refuses obsolete ownership format %s before checkout observation', async format => {
         const { root, configPath, request, adapters } = await installedGuardRequest()
         const path = join(root, '.cockpit/generated-environment-ownership.json')

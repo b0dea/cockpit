@@ -166,8 +166,11 @@ async function heldOnlyByEndedSessions(
 
 // A session killed during a cold start, as an agent tool does to a server it gave up waiting for,
 // leaves its hold and a stack only partly started. Read as running, every check reported missing
-// evidence, and the missing runtime row read as an unusable Docker.
-async function unfinishedStart(
+// evidence, and the missing runtime row read as an unusable Docker. One none of whose services runs
+// is asleep. Deciding that only after the running-stack reads failed left about a dozen checks
+// reported as missing evidence, the machine floors and the agent surfaces among them, though none
+// of them needs a running stack.
+async function endedSessionsStack(
     namespace: Extract<Awaited<ReturnType<typeof selectStateRoot>>, { readonly kind: 'complete' }>['value'],
     stack: ReturnType<typeof stackId>,
     input: Readonly<{ configPath: string; env: Readonly<Record<string, string | undefined>>; timeoutMs: number }>,
@@ -181,16 +184,21 @@ async function unfinishedStart(
     const progress = stored.kind === 'complete' ? decodeLifecycleRecord(stored.value, loaded.result)?.value : undefined
     if (!progress || progress.teardownComplete) return undefined
     const started = new Set(progress.completedServices.map(({ service }) => service))
-    // Only containers Docker reports running make the stack partly started; a start that ended before
-    // any ran left a stack that is asleep.
-    const states = await adapters.withRuntimeReadiness(loaded.result, async (runtime) =>
-        runtime.topology.services.every(({ id }) => started.has(id)) ? undefined
-            : observeRuntimeServiceStates({ topology: runtime.topology, execute }))
-    const running = states?.kind === 'complete' ? states.services.filter(({ state }) => state === 'running').length : 0
-    if (!states || states.kind !== 'complete' || running === 0) return undefined
+    const states = await adapters.withRuntimeReadiness(loaded.result, async (runtime) => {
+        const observed = await observeRuntimeServiceStates({ topology: runtime.topology, execute })
+        return { observed, complete: runtime.topology.services.every(({ id }) => started.has(id)) }
+    })
+    // Docker could not say what runs, so the reads of a running stack get their chance and say why they failed.
+    if (!states || states.observed.kind !== 'complete') return undefined
+    const running = states.observed.services.filter(({ state }) => state === 'running').length
+    // A restarting or paused container is still there, so only a stack with none left is asleep.
+    const present = states.observed.services.filter(({ state }) => !['absent', 'created', 'exited', 'dead'].includes(state)).length
+    if (present === 0) return asleep(stack, input.configPath, 'every session that held it has ended and none of its services is running')
+    // A finished start whose sessions ended still runs; it is observed like any running stack.
+    if (states.complete || running === 0) return undefined
     return {
         severity: 'error' as const, code: ENVIRONMENT_CODES.STACK_NOT_RUNNING, target: stack,
-        message: `the session that was starting this stack ended before it finished (${running} of ${states.services.length} services running), so the stack is only partly running; run up to finish starting it, or down to remove it`,
+        message: `the session that was starting this stack ended before it finished (${running} of ${states.observed.services.length} services running), so the stack is only partly running; run up to finish starting it, or down to remove it`,
         fix: cockpitCommand('up', { config: input.configPath }),
     }
 }
@@ -635,7 +643,7 @@ export function createHealthCommandAdapters(
                             fix,
                         }
                     } else stopped = await sleepingStack(namespace.value, currentStack, loaded.result.source.path)
-                        ?? await unfinishedStart(namespace.value, currentStack,
+                        ?? await endedSessionsStack(namespace.value, currentStack,
                             { configPath: loaded.result.source.path, env: input.env, timeoutMs: input.timeoutMs }, execute) ?? null
                 }
                 return {

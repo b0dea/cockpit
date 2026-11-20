@@ -198,6 +198,27 @@ describe('lifecycle application contracts', () => {
         })] : [])
     })
 
+    // Beside an up's hold, the sessions still holding the stack were named by process with no way to
+    // tell which session each was; the command line is left out, as its arguments can carry credentials.
+    it('says how to look up the sessions that keep the stack running beside an up run outside any session', async () => {
+        const stack = `stack:${'8'.repeat(64)}` as StackId
+        const env = { PATH: '/usr/bin:/bin' }
+        const outcome = await runSession({
+            configPath: '/synthetic/cockpit.toml', argv: ['sh', '-c', 'exit 0'], cwd: tmpdir(), env,
+        }, {
+            up: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: {
+                stackId: stack, change: 'unchanged', ports: {}, entrypoints: [],
+            } }),
+            resolveExecutable: (name) => resolveExecutable(name, env),
+            executeForeground: executeForegroundProcess,
+            sleep: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: {
+                stackId: stack, change: 'retained', remainingHolders: 'this-checkout', remainingProcesses: [4242, 4343], remainingWithoutProcess: 1 } }),
+        })
+
+        expect(outcome.diagnostics).toEqual([expect.objectContaining({ code: 'SESSION_STACK_RETAINED',
+            message: expect.stringContaining('`ps -o pid,ppid,command -p 4242,4343` shows which session that is') })])
+    })
+
     // A session whose up refused gave its hold back already, so its closing sleep finds others holding
     // the stack and releases nothing; the session reports only why its up refused.
     it('reports only the refusal of a session whose up gave its hold back while others hold the stack', async () => {

@@ -245,6 +245,12 @@ function doctorSummary(
     const warnings = diagnostics.filter(({ severity }) => severity === 'warning').length
     const findings = [errors > 0 ? plural(errors, 'error') : '', warnings > 0 ? plural(warnings, 'warning') : ''].filter(Boolean)
     lines.push(`Doctor: ${result.verdict}. ${findings.length === 0 ? 'No findings.' : `Findings: ${findings.join(' and ')}, listed below.`}`)
+    // A script that gated on the exit code read every failing report as a pass. Said only when the
+    // verdict is not pass, where it changes what the reader does.
+    if (result.verdict !== 'pass') {
+        lines.push('Exit code: 0 for every verdict that produced a report. To gate a script, read .result.verdict from doctor --json, '
+            + 'or run preflight (the stack) or check (generated files), which exit nonzero on a failure.')
+    }
     const tally = new Map<string, number>()
     for (const check of result.checks as readonly { verdict?: unknown }[]) {
         const verdict = String(check?.verdict).replaceAll('-', ' ')

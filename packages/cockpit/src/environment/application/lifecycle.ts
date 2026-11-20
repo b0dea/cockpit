@@ -20,6 +20,7 @@ import {
     type CurrentLifecycleRecord,
     type LifecycleRecordValue,
     type RuntimeInputs,
+    ACTIVE_PROFILES_INPUT,
     type StartedWith,
     type LifecycleStageProjection,
 } from '../lifecycle-stage.js'
@@ -137,7 +138,19 @@ function changedRuntimeInputs(recorded: RuntimeInputs | undefined, current: Runt
     if (recorded && current) {
         const changed = [...new Set([...Object.keys(recorded), ...Object.keys(current)])]
             .filter((name) => recorded[name] !== current[name]).sort()
-        if (changed.length > 0) return `${names(changed, 'and')} changed since it started`
+        // A file added to or dropped from environment.compose_files read as one that "changed", which
+        // sent the reader looking for an edit inside a file the stack never started from.
+        const file = (name: string) => name !== ACTIVE_PROFILES_INPUT
+        const added = changed.filter((name) => file(name) && !Object.hasOwn(recorded, name))
+        const removed = changed.filter((name) => file(name) && !Object.hasOwn(current, name))
+        const edited = changed.filter((name) => !added.includes(name) && !removed.includes(name))
+        const was = (values: readonly string[]) => values.length === 1 ? 'was' : 'were'
+        const parts = [
+            ...edited.length > 0 ? [`${names(edited, 'and')} changed`] : [],
+            ...added.length > 0 ? [`${names(added, 'and')} ${was(added)} added to environment.compose_files`] : [],
+            ...removed.length > 0 ? [`${names(removed, 'and')} ${was(removed)} dropped from environment.compose_files`] : [],
+        ]
+        if (parts.length > 0) return `${parts.join(' and ')} since it started`
         // The files and profiles are the ones it started from, so what differs is what it runs under.
         if (started) {
             const before = started.recorded
@@ -369,6 +382,9 @@ async function executeUpRound(
                     `this checkout still holds a claim on the stack down removed, left by an earlier command, so up cannot start it afresh; run \`${lifecycleSuggestion(context, 'down')}\` to release the claim, then \`${lifecycleSuggestion(context, 'up')}\``, context.stackId,
                     'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config <your cockpit.toml> to release the claim, then ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml>') }
             }
+            const coHolders = freshSoleHolder ? [] : await otherLeaseHolders(context, ports.projection.ownership.holderIds)
+            if (coHolders.length > 0) return { kind: 'complete', result: lifecycleRefusal(ENVIRONMENT_CODES.CLAIM_CO_TENANT,
+                `up cannot start the stack down removed while another session holds it: ${liveHolderMessage(coHolders)}`, context.stackId) }
             if (!freshSoleHolder || !sourceCurrent || !currentProgress || 'status' in currentProgress
                 || !isDeepStrictEqual(currentProgress.record, stored.record)
                 || !await revalidatePortLeaseProjection({ projection: ports.projection, namespace: context.namespace })) {
@@ -388,9 +404,11 @@ async function executeUpRound(
             && previousHolderActive && currentHolderActive
         if (stored && stored.value.holderId !== context.holderId
             && (previousHolderActive || !currentHolderActive) && !completedCoTenant) {
+            const others = await otherLeaseHolders(context, ports.projection.ownership.holderIds)
             return { kind: 'complete' as const, result: lifecycleRefusal(
                 ENVIRONMENT_CODES.CLAIM_CO_TENANT,
-                `lifecycle progress belongs to another active session; run \`${lifecycleSuggestion(context, 'up')}\` to resume it or \`${lifecycleSuggestion(context, 'down')}\` to release it`,
+                others.length > 0 ? `lifecycle progress belongs to another active session: ${liveHolderMessage(others)}`
+                    : `lifecycle progress belongs to another active session; run \`${lifecycleSuggestion(context, 'up')}\` to resume it or \`${lifecycleSuggestion(context, 'down')}\` to release it`,
                 context.stackId,
             ) }
         }
@@ -740,6 +758,14 @@ async function coordinationHolders(context: LifecycleRunContext) {
     return stored.kind === 'complete' ? decodeCoordinationRecord(stored.value, context.stackId)?.holders : undefined
 }
 
+// The other sessions this round's lease names as holders, with their processes from the coordination
+// record. A refusal over another session's hold that named no session left the reader rerunning up
+// into the same hold, with no process to look up.
+async function otherLeaseHolders(context: LifecycleRunContext, holderIds: readonly string[]) {
+    return (await coordinationHolders(context) ?? [])
+        .filter(({ holderId }) => holderId !== context.holderId && holderIds.includes(holderId))
+}
+
 function releaseOwnHold(context: LifecycleRunContext) {
     return releasePortFamily({ namespace: context.namespace, stackId: context.stackId, requesterId: context.holderId,
         holderId: context.holderId, now: new Date().toISOString() })
@@ -849,7 +875,7 @@ function sessionStackRetained(sleep: Extract<SleepCommandResult, { kind: 'comple
     if (sleep.remainingHolders !== 'this-checkout') return []
     // A hold up took outside any session has no process, so no session's end releases it.
     if (processes.length > 0 && (sleep.remainingWithoutProcess ?? 0) > 0) return [{ ...base,
-        message: `the session released its hold, and the stack keeps running because another session (process ${processes.join(', ')}) and an up run outside any session from this checkout hold it; that up's hold stays after the sessions end`,
+        message: `the session released its hold, and the stack keeps running because another session (process ${processes.join(', ')}) and an up run outside any session from this checkout hold it; that up's hold stays after the sessions end, and \`ps -o pid,ppid,command -p ${processes.join(',')}\` shows which session that is`,
         fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sleep --config <your cockpit.toml> or ./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config <your cockpit.toml> from this checkout once the sessions end to release it' }]
     if (processes.length > 0) return [{ ...base,
         // The command a session runs is not repeated here: its arguments can carry credentials.
