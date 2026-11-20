@@ -173,7 +173,10 @@ function versionDrift(identity: GuardHandlerIdentity, generated: string | undefi
         const what = generated === undefined || generated === installed
             ? 'the installed cockpit version changed (its handler bytes differ) since the guards were generated'
             : `the installed cockpit version changed since the guards were generated: ${installedPackageMetadata.name} ${installed} is installed, newer than ${generated}, which generated them`
-        return guardHeld(identity, what, why)
+        // A newer cockpit installed over generated files from an older one is what a branch the upgrade
+        // has not reached looks like, so that branch is named beside the sync.
+        return generated === undefined || generated === installed ? guardHeld(identity, what, why)
+            : guardHeld(identity, what, why, `${guardRecovery(identity.root, identity.configPath, recoveryState(identity))} Or check out the branch that upgraded cockpit, whose generated files the installed version made.`)
     }
     const lockfile = LOCKFILE_INSTALLS.find(([file]) => recoveryFile(join(identity.root, file), constants.R_OK))
     const install = lockfile ? `\`${lockfile[1]}\`` : 'the repository\'s documented dependency install'
@@ -300,7 +303,19 @@ export async function runGuardEvaluationApplication(
                 root: identity.root, configPath: identity.configPath,
                 cockpitId: publicationCockpitId({ name: cockpitName }),
             })
-            if (ownership.kind !== 'complete' || ownership.manifest.source.sha256 !== identity.configSha256) return { held: unavailable('Installed guard publication is stale or unauthenticated.') }
+            if (ownership.kind !== 'complete' || ownership.manifest.source.sha256 !== identity.configSha256) {
+                // A branch the upgrade has not reached carries generated files from the earlier cockpit
+                // and cockpit.toml. Held only as stale, nothing named the versions or the fix; the
+                // producer is read here only to word that, and authorizes nothing.
+                const manifest = tryParseJson(manifestRead.bytes.toString('utf8'))
+                const producer = manifest && typeof manifest === 'object' ? (manifest as { producer?: { package?: unknown; version?: unknown } }).producer : undefined
+                if (producer?.package === installedPackageMetadata.name && typeof producer.version === 'string' && producer.version !== installedPackageMetadata.version) {
+                    return { held: unavailable(versionDrift(identity, producer.version)) }
+                }
+                return { held: unavailable(`Installed guard publication is stale or unauthenticated: ${ownership.kind !== 'complete'
+                    ? 'its ownership manifest does not parse or does not authenticate'
+                    : 'it was generated from a different cockpit.toml than the one the guard identity records'}.`) }
+            }
             const producer = ownership.manifest.producer
             if (producer.package !== installedPackageMetadata.name
                 || producer.version !== installedPackageMetadata.version

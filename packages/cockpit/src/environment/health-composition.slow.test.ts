@@ -366,6 +366,71 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         }
     })
 
+    // A stack whose sessions all ended read as running until its reads failed, so about a dozen checks
+    // that need no running stack, the machine floors and agent surfaces among them, were listed as
+    // missing-evidence errors. The checks only a running stack answers are named on one info line.
+    it.each(['never brought up', 'held only by ended sessions'] as const)('groups the checks a stack %s cannot answer on one line that is not an error', async (state) => {
+        const candidate = await fixture({ configuredRuntime: true, unseeded: state === 'never brought up' })
+        const session = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+        const exited = once(session, 'exit')
+        try {
+            if (state === 'held only by ended sessions') {
+                const checkout = checkoutId({ checkoutPath: candidate.checkout })
+                const started = await observeProcessStart(session.pid!, processHost(executeProbe))
+                if (started.state !== 'present') throw new Error(JSON.stringify(started))
+                const holder = holderId({ stackId: candidate.stack, checkoutId: checkout, sessionId: 'ended-session' })
+                const address = candidate.namespace.paths.coordination(candidate.stack)
+                expect((await transactState(candidate.namespace, address, { ownerId: holder }, () => ({
+                    format: 'cockpit-state/v1' as const, kind: 'coordination' as const, cockpitId: address.cockpitId,
+                    subjectId: candidate.stack, revision: 0, updatedAt: new Date().toISOString(),
+                    value: { holders: [{ holderId: holder, checkoutId: checkout, claimedAt: new Date().toISOString(), pid: session.pid!, processStart: started.start }],
+                        lastReleasedHolder: null,
+                        lease: { offset: 0, ports: { APP_PORT: 61230 }, released: false, declaration: { step: 10, count: 1, bases: { APP_PORT: 61230 } } } },
+                }))).kind).toBe('complete')
+                // Docker lists none of the stack's containers, as after a restart.
+                const docker = join(candidate.root, 'docker')
+                await writeFile(docker, (await readFile(docker, 'utf8'))
+                    .replace('if [ "$1" = "compose" ]; then', 'case " $* " in *" ps "*) exit 0 ;; esac\nif [ "$1" = "compose" ]; then'))
+            }
+            session.kill('SIGKILL')
+            await exited
+            const doctor = async (json: boolean) => {
+                let stdout = ''
+                expect(await runCli(['doctor', '--config', candidate.configPath, ...json ? ['--json'] : []], {
+                    stdout: { write: text => ((stdout += text), true) }, stderr: { write: () => true },
+                }, {}, { env: { PATH: `${candidate.root}:${process.env.PATH}`, HOME: candidate.home, NO_UPDATE_NOTIFIER: '1' } })).toBe(0)
+                return stdout
+            }
+
+            const report = JSON.parse(await doctor(true)) as { diagnostics: { severity: string; code: string; message: string }[]; result: { checks: { code: string; verdict: string }[] } }
+            const grouped = report.diagnostics.filter(({ code }) => code === 'CHECKS_NEED_RUNNING_STACK')
+            expect(grouped).toEqual([expect.objectContaining({ severity: 'info',
+                message: expect.stringMatching(/^not checked: needs a running stack \(\d+ checks: [^)]*running-checkout[^)]*\)$/) })])
+            expect(report.diagnostics.map(({ message }) => message)).not.toContainEqual(expect.stringContaining('evidence is missing'))
+            expect(report.diagnostics.map(({ code }) => code)).not.toContain('EVIDENCE_UNAVAILABLE')
+            expect(report.result.checks).toEqual(expect.arrayContaining([
+                expect.objectContaining({ code: 'MACHINE_MEMORY_BELOW_FLOOR', verdict: 'pass' }),
+                expect.objectContaining({ code: 'RUNNING_CHECKOUT_MISMATCH', verdict: 'not-applicable' }),
+            ]))
+            const errors = report.diagnostics.filter(({ severity }) => severity === 'error').length
+            const human = await doctor(false)
+            expect(human).toContain(`Findings: ${errors} error${errors === 1 ? '' : 's'}`)
+            expect(human).toContain('INFO CHECKS_NEED_RUNNING_STACK')
+        } finally {
+            session.kill('SIGKILL')
+        }
+    })
+
+    it('names no check as waiting for a running stack in a cockpit that declares no runtime', async () => {
+        const candidate = await fixture({ unseeded: true })
+        const doctor = await runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
+            configPath: candidate.configPath, env: { PATH: `${candidate.root}:${process.env.PATH}`, HOME: candidate.home }, timeoutMs: 5_000,
+        }, executeProbe))
+
+        expect(doctor.diagnostics).toContainEqual(expect.objectContaining({ code: 'ENVIRONMENT_NOT_DECLARED' }))
+        expect(doctor.diagnostics.map(({ code }) => code)).not.toContain('CHECKS_NEED_RUNNING_STACK')
+    })
+
     it('names a runtime probe that ran out of time on a busy machine instead of telling the reader to start Docker', async () => {
         const candidate = await fixture({ configuredRuntime: true, unseeded: true })
         const docker = join(candidate.root, 'docker')

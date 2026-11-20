@@ -20,6 +20,7 @@ import { consumeSetupCheckoutProjection, type SetupCheckoutProjection } from '..
 import { loadCockpitConfig, type LoadedConfigProjection } from '../../config/load.js'
 import {
     aggregateObservations,
+    awaitsRunningStack,
     stoppedStackApplicability,
     type EvaluatedObservation,
     type PreflightContext,
@@ -481,7 +482,20 @@ export function healthDiagnostics(health: HealthEvaluation): readonly Environmen
         severity: 'warning', code: ENVIRONMENT_CODES.PORT_FAMILY_COLLISION, message, target: check.source,
         fix: 'if that port is meant for a service a cockpit session starts, stop the program holding it (find it with `lsof -nP -iTCP:<port> -sTCP:LISTEN`) first',
     })))
-    return [...health.stopped === null ? [] : [health.stopped], ...health.notices,
+    // Checks only a running stack answers are not failures while none runs. One line names them, so
+    // a reader neither takes a dozen missing-evidence rows for broken checks nor assumes they passed.
+    // A cockpit that declares no runtime never has a running stack, so nothing there waits for one.
+    const deferred = health.stopped === null || health.stopped.code === ENVIRONMENT_CODES.ENVIRONMENT_NOT_DECLARED ? []
+        : health.preflight.checks.flatMap((check) => {
+        const id = awaitsRunningStack(check)
+        return id === undefined ? [] : [id]
+    })
+    const notChecked: readonly EnvironmentDiagnostic[] = deferred.length === 0 ? [] : [{
+        severity: 'info', code: ENVIRONMENT_CODES.CHECKS_NEED_RUNNING_STACK, target: health.preflight.checks[0]!.stackId,
+        message: `not checked: needs a running stack (${deferred.length} ${deferred.length === 1 ? 'check' : 'checks'}: ${deferred.join(', ')})`,
+        ...health.stopped?.fix === undefined ? {} : { fix: health.stopped.fix },
+    }]
+    return [...health.stopped === null ? [] : [health.stopped], ...notChecked, ...health.notices,
         ...health.producerRefusals, ...checks, ...dirty, ...outsideListeners, ...unhealthy, ...advisories, ...uncommitted, ...overridden, ...producerFailures, ...comparisons]
 }
 

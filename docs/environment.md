@@ -907,15 +907,19 @@ review.
 
 `preflight` is the blocking gate; `doctor` reports the same checks. Neither repairs anything, runs
 `sync`, seeds data or advances lifecycle progress. Before the first bring-up (`STATE_UNSEEDED`),
-while the stack sleeps (`STACK_NOT_RUNNING`), and for a cockpit with no runtime
-(`ENVIRONMENT_NOT_DECLARED`, `doctor` only), both still run every check that needs no running stack
-and report the rest as not applicable; `preflight` never passes in those states. A check can pass,
+while the stack sleeps or every session that held it has ended with nothing running
+(`STACK_NOT_RUNNING`), and for a cockpit with no runtime (`ENVIRONMENT_NOT_DECLARED`, `doctor`
+only), both still run every check that needs no running stack and report the rest as not
+applicable, named on one `CHECKS_NEED_RUNNING_STACK` info line rather than as errors; `preflight`
+never passes in those states. A check can pass,
 fail, be unavailable, or not apply, and an unavailable required check never becomes a pass because
 another succeeded. Host capacity and runtime health need complete results from processes cockpit
 itself ran.
 
 `doctor` exits 0 with a report whenever it can read `cockpit.toml`, whatever the verdict, and 2 when
-the configuration is missing or invalid. `--json` carries the checks, declarations, override
+the configuration is missing or invalid. A script gates on `.result.verdict` from `doctor --json`,
+or runs `preflight` or `check`, which exit nonzero on a failure; doctor's summary says so whenever
+the verdict is not pass. `--json` carries the checks, declarations, override
 inspection and whether the generated files are current.
 
 What the checks compare:

@@ -7,7 +7,7 @@ import { isProxy } from 'node:util/types'
 import { EnvironmentFile, type EnvironmentFile as EnvironmentFileValue } from '../schema.js'
 import { loadCockpitConfig } from '../config/load.js'
 import { cockpitCommand, formatShellCommand } from '../fix-catalogue.js'
-import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
+import { authenticatedExecutionOutcome, executeProbe, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import {
     hasErrorCode,
     RefusalError,
@@ -481,7 +481,7 @@ async function ignoreRepositoryChecks(
         && await validConfigurationInventory(configurationInventory, root.canonicalPath, [
             resolve(common.canonicalPath, 'config'),
             worktreeConfig,
-        ])
+        ]) === 'valid'
         ? checks
         : undefined
 }
@@ -724,44 +724,71 @@ async function validConfigurationInventory(
     bytes: Buffer,
     checkout: string,
     allowedPaths: readonly string[],
-): Promise<boolean> {
+): Promise<'valid' | 'unreadable' | 'unsupported'> {
     let fields: string[]
     try {
         const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-        if (!decoded.endsWith('\0')) return false
+        if (!decoded.endsWith('\0')) return 'unreadable'
         fields = decoded.slice(0, -1).split('\0')
     } catch {
-        // Invalid UTF-8 is the only throw and means the Git configuration is malformed.
-        return false
+        // Invalid UTF-8 is the only throw and means the output is not Git's NUL-separated listing.
+        return 'unreadable'
     }
-    if (fields.length === 0 || fields.length % 2 !== 0 || fields.length > 8_192) return false
+    if (fields.length === 0 || fields.length % 2 !== 0) return 'unreadable'
+    if (fields.length > 8_192) return 'unsupported'
     const allowed = new Set(allowedPaths)
     for (let index = 0; index < fields.length; index += 2) {
         const origin = fields[index]
         const entry = fields[index + 1]
-        if (!origin || entry === undefined) return false
+        if (!origin || entry === undefined) return 'unreadable'
         const separator = entry.indexOf('\n')
-        if (separator <= 0) return false
+        // Git lists a key set with no value as the key alone; that is configuration, not unreadable output.
+        if (separator < 0) return 'unsupported'
+        if (separator === 0) return 'unreadable'
         const key = entry.slice(0, separator)
         const value = entry.slice(separator + 1)
-        if (key === 'include.path' || key.startsWith('includeif.')) return false
+        if (key === 'include.path' || key.startsWith('includeif.')) return 'unsupported'
         if (origin === 'command line:') {
-            if (COMMAND_LINE_CONFIG.get(key) !== value) return false
+            if (COMMAND_LINE_CONFIG.get(key) !== value) return 'unsupported'
             continue
         }
-        if (!origin.startsWith('file:')) return false
+        if (!origin.startsWith('file:')) return 'unsupported'
         const path = origin.slice('file:'.length)
-        if (path.length === 0 || path.includes('\0')) return false
+        if (path.length === 0 || path.includes('\0')) return 'unsupported'
         let canonical
         try {
             canonical = await realpath(isAbsolute(path) ? path : resolve(checkout, path))
         } catch {
-            // An unresolvable origin path is not an allowed worktree; the caller returns false.
-            return false
+            // An unresolvable origin path is not an allowed worktree configuration.
+            return 'unsupported'
         }
-        if (!allowed.has(canonical)) return false
+        if (!allowed.has(canonical)) return 'unsupported'
     }
-    return true
+    return 'valid'
+}
+
+// A probe that failed, as under load, said nothing about the configuration, yet it was reported as
+// configuration cockpit cannot support, which sent the reader after their Git setup instead of a retry.
+// Undefined when the origins are supported; otherwise why they were not accepted.
+async function configurationOriginsRefusal(
+    subject: string,
+    step: ExecutionStep,
+    outcome: ExecuteProbeOutcome | 'moved' | undefined,
+    checkout: string,
+    allowedPaths: readonly string[],
+): Promise<string | undefined> {
+    const read = outcome !== undefined && outcome !== 'moved' && outcome.kind === 'complete'
+        ? await validConfigurationInventory(outcome.stdout, checkout, allowedPaths) : undefined
+    if (read === 'valid') return undefined
+    if (read === 'unsupported') return `${subject} are unsupported`
+    const why = read === 'unreadable' ? 'printed output cockpit could not read'
+        : outcome === 'moved' ? 'ran while the checkout\'s Git files changed'
+        : outcome === undefined || outcome.kind === 'complete' ? 'returned no result cockpit could authenticate'
+        : outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT ? `timed out after ${Math.ceil(step.timeoutMs / 1_000)} s`
+        : outcome.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED ? `exited with status ${outcome.execution.exitCode}`
+        : `failed (${outcome.code})`
+    return `${subject} could not be read: the \`git config --show-origin --null --list\` probe ${why}, which says nothing about the configuration itself; `
+        + 'rerun the command, once the machine is less busy if the probe timed out'
 }
 
 function sameRecordedObject(observed: DirectoryIdentity, recorded: FilesystemObjectIdentity): boolean {
@@ -1027,20 +1054,19 @@ async function attemptSetupCheckout(value: SetupCheckoutInput): Promise<Checkout
     })
     if (!currentChecks) return checkoutMoved('current checkout authority is unavailable')
     const configurationArguments = ['config', '--show-origin', '--null', '--list'] as const
-    const configurationInventory = await checkoutProbe(setupProbeStep(
+    const configurationStep = setupProbeStep(
         'setup:observe:checkout-config-origins',
         value.gitExecutable,
         value.env,
         current.topLevel,
         configurationArguments,
         currentChecks,
-    ))
+    )
+    const configurationInventory = await probeWatchingAuthority(configurationStep)
     if (configurationInventory === 'moved') return checkoutMoved()
-    const allowedCurrentConfigurations = [resolve(current.commonDirectory, 'config'), currentWorktreeConfiguration]
-    if (!configurationInventory
-        || !await validConfigurationInventory(configurationInventory, current.topLevel, allowedCurrentConfigurations)) {
-        return setupCheckoutFailure('Git configuration origins are unsupported')
-    }
+    const configurationRefusal = await configurationOriginsRefusal('Git configuration origins', configurationStep, configurationInventory,
+        current.topLevel, [resolve(current.commonDirectory, 'config'), currentWorktreeConfiguration])
+    if (configurationRefusal !== undefined) return setupCheckoutFailure(configurationRefusal)
     const worktrees = await checkoutProbe(setupProbeStep(
         'setup:observe:checkout-worktrees',
         value.gitExecutable,
@@ -1100,22 +1126,19 @@ async function attemptSetupCheckout(value: SetupCheckoutInput): Promise<Checkout
     })
     if (!allChecks) return checkoutMoved('checkout authority is unavailable')
     if (main.topLevel !== current.topLevel) {
-        const mainConfigurationInventory = await checkoutProbe(setupProbeStep(
+        const mainConfigurationStep = setupProbeStep(
             'setup:observe:checkout-main-config-origins',
             value.gitExecutable,
             value.env,
             main.topLevel,
             configurationArguments,
             allChecks,
-        ))
+        )
+        const mainConfigurationInventory = await probeWatchingAuthority(mainConfigurationStep)
         if (mainConfigurationInventory === 'moved') return checkoutMoved()
-        const allowedMainConfigurations = [
-            resolve(main.commonDirectory, 'config'), resolve(main.gitDirectory, 'config.worktree'),
-        ]
-        if (!mainConfigurationInventory
-            || !await validConfigurationInventory(mainConfigurationInventory, main.topLevel, allowedMainConfigurations)) {
-            return setupCheckoutFailure('main checkout Git configuration origins are unsupported')
-        }
+        const mainConfigurationRefusal = await configurationOriginsRefusal('main checkout Git configuration origins', mainConfigurationStep,
+            mainConfigurationInventory, main.topLevel, [resolve(main.commonDirectory, 'config'), resolve(main.gitDirectory, 'config.worktree')])
+        if (mainConfigurationRefusal !== undefined) return setupCheckoutFailure(mainConfigurationRefusal)
     }
     const confirmedCurrent = await gitIdentity('setup:observe:checkout-current-confirm', current.topLevel, value, allChecks)
     const confirmedMain = main.topLevel === current.topLevel ? confirmedCurrent
@@ -1808,19 +1831,17 @@ export async function observeSetupPath(
         return failure('checkout identity changed during observation')
     }
 
-    const configurationInventory = await authenticatedProbe(probeStep(
+    const configurationStep = probeStep(
         'setup:observe:config-origins',
         [executable.canonicalPath, '-c', 'core.excludesFile=/dev/null', ...GIT_CHILD_CONFIG, '-C', target, 'config', '--show-origin', '--null', '--list'],
         siblingsRoot,
         env,
         executable,
         repositoryChecks,
-    ))
-    if (!configurationInventory || !await validConfigurationInventory(
-        configurationInventory,
-        canonicalTarget,
-        [configPath, worktreeConfigPath],
-    )) return failure('Git configuration origins are unsupported')
+    )
+    const configurationRefusal = await configurationOriginsRefusal('Git configuration origins', configurationStep,
+        await probeWatchingAuthority(configurationStep), canonicalTarget, [configPath, worktreeConfigPath])
+    if (configurationRefusal !== undefined) return failure(configurationRefusal)
 
     const remote = await authenticatedProbeOutcome(probeStep(
         'setup:observe:origin',

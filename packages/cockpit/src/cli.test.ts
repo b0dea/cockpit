@@ -617,6 +617,21 @@ describe('generated environment process contract', () => {
         expect(capture.output().stderr).toBe('')
     })
 
+    // Doctor exits 0 for every verdict that produced a report, so a script gating on its exit code read
+    // every failing report as a pass. The summary says so once, and only when the verdict is not pass.
+    it('says once, for a verdict that is not pass, that the exit code is 0 and what a script gates on instead', async () => {
+        for (const verdict of ['fail', 'unavailable']) {
+            const capture = captureIo()
+            expect(await runCli(['doctor', '--config', 'cockpit.toml'], capture.io, {
+                doctor: async () => ({ status: 0, diagnostics: [], result: { verdict, checks: [{ verdict: 'fail' }], comparisons: [] } }),
+            })).toBe(0)
+            const lines = capture.output().stdout.split('\n')
+            expect(lines.filter((line) => line.startsWith('Exit code'))).toEqual(['Exit code: 0 for every verdict that produced a report. '
+                + 'To gate a script, read .result.verdict from doctor --json, or run preflight (the stack) or check (generated files), which exit nonzero on a failure.'])
+            expect(lines[1]).toMatch(/^Exit code/)
+        }
+    })
+
     it('reports a state lock a command took over from a dead holder, and nothing for a command that took none', async () => {
         const { hostname } = await import('node:os')
         const { randomUUID } = await import('node:crypto')
@@ -958,6 +973,34 @@ describe('setup process contract', () => {
         } finally {
             process.env = originalEnvironment
         }
+    })
+
+    // Under load the configuration-origin probe can fail outright; that was reported as configuration
+    // cockpit cannot support, which sent the reader after their Git setup instead of a retry.
+    it('reports a failed Git configuration-origin probe as a failed probe with its reason and a retry', async () => {
+        const testRoot = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-cli-setup-origins-')))
+        scratch.push(testRoot)
+        const directory = join(testRoot, 'checkout')
+        const bin = join(testRoot, 'bin')
+        mkdirSync(directory)
+        mkdirSync(bin)
+        execFileSync('git', ['init', '--quiet', directory])
+        const configPath = join(directory, 'cockpit.toml')
+        writeFileSync(configPath, renderSetupConfig())
+        const realGit = realpathSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim())
+        writeFileSync(join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" --show-origin "*) echo 'fatal: synthetic failure' >&2; exit 128 ;; esac\nexec ${realGit} "$@"\n`, { mode: 0o700 })
+        const originalEnvironment = process.env
+        process.env = { ...originalEnvironment, HOME: testRoot, PATH: `${bin}:${originalEnvironment.PATH}` }
+        const capture = captureIo()
+        try {
+            expect(await runCli(['setup', '--config', configPath, '--json'], capture.io)).toBe(2)
+        } finally {
+            process.env = originalEnvironment
+        }
+        const [diagnostic] = JSON.parse(capture.output().stdout).diagnostics
+        expect(diagnostic.message).toContain('Git configuration origins could not be read: the `git config --show-origin --null --list` probe exited with status 128')
+        expect(diagnostic.message).toContain('rerun the command')
+        expect(diagnostic.message).not.toContain('unsupported')
     })
 
     it('refuses a malformed relevant ambient environment value', async () => {

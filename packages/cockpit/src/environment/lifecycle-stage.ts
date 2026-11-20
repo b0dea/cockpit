@@ -93,6 +93,8 @@ function decodeStartedWith(value: unknown): StartedWith | undefined {
 }
 
 export type RuntimeInputs = Readonly<Record<string, string>>
+/** The runtime input that stands for the active Compose profiles; every other input is a file the stack starts from. */
+export const ACTIVE_PROFILES_INPUT = 'active Compose profiles'
 
 export interface CurrentLifecycleRecord {
     readonly record: StateRecord

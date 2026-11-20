@@ -1856,4 +1856,90 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         if (stored.kind !== 'complete') throw new Error(JSON.stringify(stored))
         expect(decodeCoordinationRecord(stored.value, first.context.stackId)).toMatchObject({ holders: [], lease: { released: true } })
     })
+
+    // A Compose file added to environment.compose_files read as one that "changed", so the reader looked
+    // for an edit in a file the stack never started from. Up names the addition and keeps the recovery.
+    it.each([['a running', false], ['an asleep', true]] as const)('names a Compose file added to the files %s stack started from, with the down-then-up recovery', async (_state, sleepFirst) => {
+        const first = await runStackScenario()
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const input = { configPath: first.candidate.configPath, env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
+            sessionId: 'stack-production', timeoutMs: 5_000 }
+        if (sleepFirst) expect(await runSleep({ configPath: input.configPath }, createLifecycleCommandAdapters(input, executeProbe)))
+            .toMatchObject({ kind: 'complete', result: { change: 'stopped' } })
+        await writeFile(join(first.candidate.checkout, 'compose.extra.yml'), 'services: {}\n')
+        await writeFile(input.configPath, (await readFile(input.configPath, 'utf8'))
+            .replace('compose_files = ["compose.yml"]', 'compose_files = ["compose.yml", "compose.extra.yml"]'))
+        const adapters = createLifecycleCommandAdapters(input, executeProbe)
+        const loaded = await adapters.load({ configPath: input.configPath })
+        if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
+        await configureStackDocker(first.candidate, loaded.result)
+        const path = loaded.result.source.path
+
+        const refused = await runUp({ configPath: input.configPath }, adapters)
+
+        expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_PROGRESS_INVALID',
+            message: `the recorded stack runs an earlier version of the services, ports, mounts or images: cockpit.toml changed and compose.extra.yml was added to environment.compose_files since it started, and up does not replace a running stack — fix: run \`${cockpitCommand('down', { config: path })}\`, then \`${cockpitCommand('up', { config: path })}\`` }] })
+    })
+
+    // Up refused a stack down had removed, while another session held it, with only "rerun up", which
+    // met the same hold again; nothing said which session it was or how to look it up.
+    it('names the session holding a stack up cannot start, by process, with how to look it up and not its command line', async () => {
+        const first = await runStackScenario()
+        expect(first.result, JSON.stringify(first.result)).toMatchObject({ kind: 'complete', status: 0 })
+        const input = { configPath: first.candidate.configPath, env: { PATH: `${first.candidate.root}:/usr/bin:/bin`, HOME: first.candidate.home },
+            sessionId: 'stack-production', timeoutMs: 5_000 }
+        expect(await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, executeProbe)))
+            .toMatchObject({ kind: 'complete', result: { change: 'removed' } })
+        const session = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000) // synthetic-session-argument'], { stdio: 'ignore' })
+        try {
+            const started = await observeProcessStart(session.pid!, processHost(executeProbe))
+            if (started.state !== 'present') throw new Error(JSON.stringify(started))
+            const held = createLifecycleCommandAdapters({ ...input, sessionId: 'other-session', holderProcess: { pid: session.pid!, processStart: started.start } }, executeProbe)
+            const heldContext = await held.load({ configPath: input.configPath })
+            if (heldContext.kind !== 'complete') throw new Error(JSON.stringify(heldContext))
+            expect(await held.withAcquiredPorts(heldContext.result, async () => true)).toBe(true)
+            const adapters = createLifecycleCommandAdapters(input, executeProbe)
+            const loaded = await adapters.load({ configPath: input.configPath })
+            if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
+            await configureStackDocker(first.candidate, loaded.result)
+
+            const refused = await runUp({ configPath: input.configPath }, adapters)
+
+            expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'CLAIM_CO_TENANT',
+                message: expect.stringContaining(`(process ${session.pid})`) }] })
+            expect(refused.diagnostics[0]!.message).toContain(`\`ps -o pid,ppid,command -p ${session.pid}\``)
+            expect(refused.diagnostics[0]!.message).not.toContain('synthetic-session-argument')
+        } finally {
+            session.kill('SIGKILL')
+        }
+    })
+
+    // A session whose start failed keeps its hold and its unfinished progress; another session's up
+    // was told to resume or release a start that session owns, with no word of which session it was.
+    it('names the session whose unfinished start another session cannot take over, by process', async () => {
+        const candidate = await stackFixture()
+        const configPath = candidate.configPath
+        const env = { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home }
+        const session = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+        try {
+            const started = await observeProcessStart(session.pid!, processHost(executeProbe))
+            if (started.state !== 'present') throw new Error(JSON.stringify(started))
+            const starting = createLifecycleCommandAdapters({ configPath, env, sessionId: 'mcp-starting', timeoutMs: 5_000,
+                holderProcess: { pid: session.pid!, processStart: started.start } }, executeProbe)
+            const loaded = await starting.load({ configPath })
+            if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
+            await configureStackDocker(candidate, loaded.result)
+            listenerProbeControl.enabled = true
+            await writeFile(join(candidate.root, 'docker-failure-needle'), 'up --detach\n')
+            expect(await runUp({ configPath }, starting)).toMatchObject({ kind: 'refusal' })
+            await writeFile(join(candidate.root, 'docker-failure-needle'), '\n')
+
+            const refused = await runUp({ configPath }, createLifecycleCommandAdapters({ configPath, env, sessionId: 'mcp-joining', timeoutMs: 5_000 }, executeProbe))
+
+            expect(refused).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'CLAIM_CO_TENANT',
+                message: expect.stringContaining(`\`ps -o pid,ppid,command -p ${session.pid}\``) }] })
+        } finally {
+            session.kill('SIGKILL')
+        }
+    })
 })
