@@ -534,12 +534,15 @@ function launchesShellText(name: string, args: readonly string[]): boolean {
     if (name === 'osascript') return args.some(arg => /do\s+shell\s+script/i.test(arg))
     return false
 }
-// tmux commands that open a session, window or pane running a shell command.
-const TMUX_OPENERS = new Set(['new-session', 'new', 'new-window', 'neww', 'split-window', 'splitw', 'respawn-pane', 'respawnp'])
+// tmux commands that open a session, window or pane running a shell command. Without -c, spawn.c starts one in
+// server_client_get_cwd of the command client, which has no session, so in the invoking shell's directory; respawn-pane
+// reuses the pane's own directory instead, so it asks.
+const TMUX_OPENERS = new Set(['new-session', 'new', 'new-window', 'neww', 'split-window', 'splitw'])
 /**
  * The one literal command string a tmux opener runs, with the directory its `-c` names, or undefined for any other form:
- * `-e` sets its environment, a format's `#(…)` and a command list joined by `;` run more, and several words are run
- * without a shell, so those ask. With no command the session runs the person's shell and nothing of the agent's.
+ * `-e` sets its environment, a format's `#(…)` and a command list joined by `;` run more, `-k` destroys the window or
+ * pane already there, a `-c` format names a directory the guard cannot see, and several words are run without a shell,
+ * so those ask. With no command the session runs the person's shell and nothing of the agent's.
  */
 function tmuxSessionCommand(tokens: readonly Token[], cwd: string): { readonly text: string; readonly cwd: string } | undefined {
     if (!TMUX_OPENERS.has(tokens[0]?.value ?? '') || tokens.some((token) => token.dynamic || token.status || token.value.includes('#(') || token.value.endsWith(';'))) return undefined
@@ -551,11 +554,11 @@ function tmuxSessionCommand(tokens: readonly Token[], cwd: string): { readonly t
             const value = tokens[at + 1]?.value
             if (value === undefined) return undefined
             if (option === '-c') {
-                if (climbsOutOfName(value)) return undefined
+                if (climbsOutOfName(value) || value.includes('#')) return undefined
                 directory = path(posix.resolve(cwd, value))
             }
             at += 2
-        } else if (/^-[AbdDEhIkPvXZ]+$/.test(option)) at++
+        } else if (/^-[AbdDEhIPvXZ]+$/.test(option)) at++
         else return undefined
     }
     const rest = tokens.slice(at)
@@ -837,6 +840,8 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
     assignments()
     let wrapped = false
     let detached = false
+    // `env` sets or clears variables the program starts with.
+    let environment = false
     // The word in command position, a wrapper's or the program's, is read under its folded name.
     const commandWord = () => {
         const token = args[cursor]
@@ -849,6 +854,7 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
             && args.length > cursor + 2 && args.slice(cursor + 2).every((token) => !token.value.startsWith('-'))) break
         const wrapper = posix.basename(args[cursor++].value)
         wrapped = true
+        if (wrapper === 'env') environment = true
         if (wrapper === 'nohup' || wrapper === 'setsid') { context.seen.background = true; detached = true }
         const take = () => {
             const token = args[cursor++]
@@ -945,7 +951,10 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
         }
         // A tmux session, window or pane runs its one command string through a shell, and a detached screen runs its
         // command line, after the call returns: each is judged as `sh -c` text or a launched command, in the background.
-        const session = name === 'tmux' ? tmuxSessionCommand(args.slice(cursor + 1), cwd) : name === 'screen' ? detachedScreenCommand(args.slice(cursor + 1)) : undefined
+        // Both read their configuration and socket from the environment, so one started with any change to it asks.
+        const changed = assigned.length > 0 || environment
+        const session = changed ? undefined : name === 'tmux' ? tmuxSessionCommand(args.slice(cursor + 1), cwd)
+            : name === 'screen' ? detachedScreenCommand(args.slice(cursor + 1)) : undefined
         if (session) {
             context.seen.background = true
             const started = 'text' in session ? session.text ? childShell(session.text, session.cwd) : []

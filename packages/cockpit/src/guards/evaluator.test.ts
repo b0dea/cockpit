@@ -3543,7 +3543,7 @@ describe('everyday directory changes and held paths', () => {
     it('judges the command a tmux session or detached screen starts as a background shell', () => {
         expect(run('npm run dev').decision).toBe('allow')
         for (const command of [`tmux new-session -d 'npm run dev'`, `tmux new -d -s dev 'npm run dev'`, `tmux new-window -n web 'npm run dev'`, `tmux neww 'npm run dev'`,
-            `tmux split-window -h 'npm run dev'`, `tmux splitw -v 'npm run dev'`, `tmux respawn-pane -k 'npm run dev'`, `tmux new-session -d -c workorders/x 'npm run dev'`,
+            `tmux split-window -h 'npm run dev'`, `tmux splitw -v 'npm run dev'`, `tmux new-session -d -c workorders/x 'npm run dev'`,
             'tmux new-session -d -s scratch', `screen -dmS dev sh -c 'npm run dev'`, 'screen -d -m npm run dev']) {
             expect(run(command), command).toMatchObject({ decision: 'allow' })
         }
@@ -3560,6 +3560,26 @@ describe('everyday directory changes and held paths', () => {
         // The session runs beside the rest of the call, so a link made after it can still be followed from it.
         for (const command of [`tmux new-session -d 'sleep 2; cat out/x > build/leak.txt'; cp -r src out`, `tmux new -d 'cat out/x'; cp -r src out`]) {
             expect(run(command).decision, command).not.toBe('allow')
+        }
+    })
+
+    // screen and tmux read their configuration and socket from the environment they start with, which the call can point
+    // at a file it wrote, so a session started with any assignment, here or exported, asks.
+    it('asks before a tmux or screen session that starts with a changed environment', () => {
+        for (const command of ['SCREENRC=build/rc screen -dm npm test', 'SYSSCREENRC=build/rc screen -dm npm test', 'SCREENDIR=build screen -dm npm test',
+            'env SCREENRC=build/rc screen -dm npm test', `TMUX_TMPDIR=build tmux new -d 'npm run dev'`, `TMUX=build/s,1,0 tmux new -d 'npm run dev'`,
+            `HOME=build tmux new -d 'npm run dev'`, `FOO=1 tmux new -d 'npm run dev'`, `env -u TMUX tmux new -d 'npm run dev'`, 'export SCREENRC=build/rc; screen -dm npm test',
+            `export TMUX_TMPDIR=build && tmux new -d 'npm run dev'`]) {
+            expect(run(command), command).toMatchObject({ decision: 'ask' })
+        }
+    })
+
+    // tmux starts a new window or split in the invoking shell's directory (spawn.c takes server_client_get_cwd of the
+    // command client, which has no session), but respawn-pane reuses the pane's own, and -k destroys what runs there.
+    it('asks before a tmux opener that respawns or kills a pane, or names its directory by a format', () => {
+        for (const command of [`tmux respawn-pane -k 'npm run dev'`, `tmux respawnp 'npm run dev'`, `tmux new-window -k -t main:0 'npm run dev'`,
+            `tmux split-window -k 'npm run dev'`, `tmux new-window -c '#{pane_current_path}' 'npm run dev'`]) {
+            expect(run(command), command).toMatchObject({ decision: 'ask' })
         }
     })
 

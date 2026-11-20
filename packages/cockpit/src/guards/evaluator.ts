@@ -1929,13 +1929,14 @@ function gitProgramOption(git: GitInvocation): boolean {
  * What an assignment does to the commands after it. Git's location variables point it at state the guard does not
  * inspect, HOME and XDG_CONFIG_HOME choose the configuration that names its hooks, BASH_ENV and ENV run a file as a
  * shell starts, and the session markers say an agent runs: a person decides those. A hook manager's skip variable
- * is `--no-verify` by another name. Any other variable, `DOCKER_BUILDKIT` among them, runs; one naming a program Git runs is
+ * is `--no-verify` by another name. screen's and tmux's variables choose the configuration file and server a session
+ * starts from. Any other variable, `DOCKER_BUILDKIT` among them, runs; one naming a program Git runs is
  * judged by its value where Git runs.
  */
 function steers({ name, value }: { readonly name?: string; readonly value: string }): 'ask' | 'deny' | undefined {
     if (name === undefined) return 'ask'
     if (name === 'SKIP' || /^(?:HUSKY|LEFTHOOK)$/.test(name) && /^(?:0|false)$/i.test(value) || name === 'OVERCOMMIT_DISABLE' && !/^(?:0|false|)$/i.test(value)) return 'deny'
-    return /^(?:GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_CONFIG.*|GIT_EXEC_PATH|GIT_COMMON_DIR|GIT_OBJECT_DIRECTORY|GIT_ALTERNATE_OBJECT_DIRECTORIES|HOME|XDG_CONFIG_HOME|BASH_ENV|ENV|CLAUDECODE|CODEX_THREAD_ID|OPENCODE)$/.test(name) ? 'ask' : undefined
+    return /^(?:GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_CONFIG.*|GIT_EXEC_PATH|GIT_COMMON_DIR|GIT_OBJECT_DIRECTORY|GIT_ALTERNATE_OBJECT_DIRECTORIES|HOME|XDG_CONFIG_HOME|BASH_ENV|ENV|CLAUDECODE|CODEX_THREAD_ID|OPENCODE|SCREENRC|SYSSCREENRC|SCREENDIR|TMUX|TMUX_TMPDIR)$/.test(name) ? 'ask' : undefined
 }
 
 // Variables that name a program Git runs: a diff driver, an ssh, proxy or password helper, or an editor. A pager, `GIT_PAGER`
@@ -3396,7 +3397,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const effect = steers(assignment)
             if (effect === 'deny') hold(deny(`Refusing ${named(invocation)}: setting ${assignment.name} skips the hooks a commit or push runs, as --no-verify does. Fix what the hook reports instead.`))
             else if (effect === 'ask') holdBoundary(invocation, ask(assignment.name === undefined ? 'An environment assignment the guard could not name requires human approval.'
-                : `${named(invocation)} sets ${assignment.name}, which changes where Git looks for its repository and configuration, what a shell runs as it starts, or whether an agent is marked as running. Run it without that assignment.`))
+                : `${named(invocation)} sets ${assignment.name}, which changes where Git looks for its repository and configuration, what a shell, screen or tmux runs as it starts, or whether an agent is marked as running. Run it without that assignment.`))
         }
         // Removing a session marker, or every variable with `env -i`, hides that an agent runs what follows.
         const marker = (word: string) => /^(?:CLAUDECODE|CODEX_THREAD_ID|OPENCODE)$/.test(word)
