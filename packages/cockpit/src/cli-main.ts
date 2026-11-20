@@ -16,7 +16,7 @@ import { createInvocationRecord, EXIT_CODES } from './invocation.js'
 import { commandGroups, commandSpelling, commandStages, commands, describePublicOption, internalCommands, isWorkHandler, isRecordedAnswerField, schemaFileReference, type CommandDefinition, type HandlerIdentifier, type WorkHandlerIdentifier } from './command-table.js'
 import { SURFACE_TARGETS, type SurfaceTarget } from './surfaces/contract.js'
 import { DEFAULT_SURFACE_TOOLS, GUARD_SURFACE_TARGETS, isGuardSurfaceTarget } from './surfaces/harness-registry.js'
-import { cockpitCommand, initCommand, type FixContext } from './fix-catalogue.js'
+import { bindConfigPath, cockpitCommand, initCommand, type FixContext } from './fix-catalogue.js'
 import { type Diagnostic, renderHumanDiagnostics, renderHumanValue, renderJsonResponse, reportListsDiagnostics } from './diagnostics.js'
 import { classifyEstateObservation, draftFromEstate, observeCockpitRoot, observePublicEstate } from './init/draft.js'
 import { runInitOperatorCommand, type UnattendedInit } from './init/command.js'
@@ -531,6 +531,9 @@ function workCommandOutcome(outcome: WorkApplicationOutcome, env: Readonly<Recor
         const unsatisfied = weakened.length === 0 || outcome.reason !== '' ? [unsatisfiedWorkDiagnostic(outcome.operation, outcome.reason)] : []
         return { status: 2, result: outcome.value, diagnostics: [...weakened, ...unsatisfied, ...sameToolGradeWarnings(outcome.value, env)] }
     }
+    if (outcome.kind === 'interrupted') return { status: 2, result: null, diagnostics: [{ severity: 'error', message: outcome.reason,
+        code: 'WORK_GRADE_INTERRUPTED' satisfies typeof ENVIRONMENT_CODES.WORK_GRADE_INTERRUPTED,
+        fix: 'a cockpit or machine error ended the grade before it judged the product, so no attempt was spent. The message names that error\'s code and its own fix; follow it, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work grade --config <your cockpit.toml> --work-order <id>, or grade --criteria <file> for a grade without an order, and report it if the same error returns' }] }
     return usageOutcome('WORK_APPLICATION_REFUSED', outcome.kind === 'refusal' ? outcome.reason : 'this step needs a person at a terminal')
 }
 
@@ -1441,6 +1444,10 @@ async function canonicalConfig(configPath: string): Promise<string> {
     }
 }
 
+// What an agent hands the person for a step left waiting: one line to copy, and where it runs. Claude Code's `!` runs a
+// command inside the agent's session, where approve finds no person to answer it.
+const APPROVE_HAND_OFF = 'run `cd <the cockpit root> && npx --no cockpit approve` in a terminal of your own, not with `!` in this session, which can\'t take your answer'
+
 /** Records a step that waits for a person, as the command to run again, with its configuration made canonical. */
 async function recordForPerson(handler: HandlerIdentifier, configured: string, args: readonly string[], outcome: CommandOutcome): Promise<CommandOutcome> {
     const title = isPersonHandler(handler) ? (outcome.result as { title?: unknown } | null)?.title : PERSON_TITLES[handler]
@@ -1452,7 +1459,9 @@ async function recordForPerson(handler: HandlerIdentifier, configured: string, a
     const argv = handler === 'upgrade' && typeof resolved === 'string' && words.slice(1).every(word => word.startsWith('-'))
         ? [words[0]!, resolved, ...words.slice(1)] : words
     const failed = await recordPendingApproval(dirname(config), { argv: [...argv, '--config', config], config, title, at: new Date().toISOString() })
-    return failed === undefined ? outcome : { ...outcome, diagnostics: [...outcome.diagnostics, { severity: 'error', target: 'approve',
+    const handOff = bindConfigPath(APPROVE_HAND_OFF, { resolvedConfigPath: config, generatedTargets: [] })
+    return failed === undefined ? { ...outcome, diagnostics: outcome.diagnostics.map(row => waitsForPerson(row) ? { ...row, message: `${row.message}. For the person: ${handOff}` } : row) }
+        : { ...outcome, diagnostics: [...outcome.diagnostics, { severity: 'error', target: 'approve',
         code: 'APPROVAL_NOT_RECORDED', message: `this step could not be left for a person to approve: ${failed}`,
         fix: 'make .cockpit/local in the cockpit root a plain directory you can write and the command\'s words shorter, then run it again' }] }
 }
@@ -1470,7 +1479,7 @@ async function runApprove(configPath: string, io: CliIo, overrides: CliHandlerOv
     // A test answers through io.confirm in place of a terminal; it still must not be an agent, CI or JSON run.
     const absent = personAbsence(io.confirm ? undefined : io, runtime.env ?? process.env, json)
     if (absent) return refused('APPROVE_TERMINAL_REQUIRED', `approve asks a person, and this run has none: ${absent}`,
-        'open a terminal outside the agent and, in <the cockpit root>, run: npx --no cockpit approve')
+        'open a terminal outside the agent and, in <the cockpit root>, run: npx --no cockpit approve; as one line, run `cd <the cockpit root> && npx --no cockpit approve` in a terminal of your own, not with `!` in this session, which can\'t take your answer')
     const read = readPendingApprovals(root)
     if (read.kind === 'refusal') return refused('PENDING_APPROVALS_INVALID', read.message,
         'delete that file; each step an agent runs again that needs a person is recorded again')

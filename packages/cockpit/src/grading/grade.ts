@@ -73,7 +73,8 @@ export function readGradingAnswer(answer: Readonly<Record<string, unknown>>, sub
         const unsupported = row.evidence.length === 0 ? 'cites no evidence'
             : row.evidence.find(item => { const textCited = cited(item.source); return textCited === undefined || !quoted(textCited, item.quote) })
         return unsupported === undefined ? { id: row.id, verdict: 'met' as const, note: row.note }
-            : { id: row.id, verdict: 'unclear' as const, unquoted: true as const, note: `the grader said met but ${typeof unsupported === 'string' ? unsupported
-                : `its quote from ${unsupported.source} is not found exactly once there`}: ${row.note}` }
+            : { id: row.id, verdict: 'unclear' as const, unquoted: true as const, note: `the grader said met but ${typeof unsupported === 'string'
+                ? `${unsupported}; quote the evidence verbatim from a changed file or check output`
+                : `its quote from ${unsupported.source} is not found exactly once there; quote the evidence verbatim from ${unsupported.source}, a span of at least ${MIN_QUOTE_LENGTH} characters found once`}: ${row.note}` }
     }) }
 }

@@ -105,6 +105,8 @@ export async function runGate(registry: GateRegistry, request: GateRequest, deps
     if (select && (!(SELECTOR_KINDS as readonly string[]).includes(select.kind) || !text(select.value))) throw new RefusalError('gate selection has an invalid selector')
     const selected = gate.stages.filter(id => requested.includes(id))
     const observations: StageObservation[] = []
+    // The stages the environment kept from running; the observation itself stays the stage's result alone.
+    const stopped: string[] = []
     let before: string | undefined
     let stability: RunInput['stability'] = 'stable'
     const stabilityReasons: string[] = []
@@ -134,14 +136,17 @@ export async function runGate(registry: GateRegistry, request: GateRequest, deps
         let result: StageResult
         const selection = select ? stage.select?.[select.kind] : undefined
         if (stage.requiresStack && request.stack?.state !== 'available') {
+            stopped.push(id)
             result = { kind: 'unavailable', reason: `stack unavailable: ${request.stack?.state === 'unavailable' ? request.stack.reason : 'no current stack observation'}` }
         } else if (select && !selection) {
             // Running the whole stage would report a selection that never happened.
+            stopped.push(id)
             result = { kind: 'unavailable', reason: `stage ${id} declares no ${select.kind} selection; add testing.stages[].select.${select.kind} with the tool's own arguments` }
         } else {
             const command = [...stage.command, ...(selection ?? []).map(value => value.replaceAll(SELECTOR_VALUE, select!.value))] as [string, ...string[]]
             try { result = await deps.runProductTool({ gate: gate.id, stage: id, command, timeoutSeconds: stage.timeoutSeconds, select }) }
-            catch (error) { result = { kind: 'unavailable', reason: `product tooling could not run: ${errorCause(error)}` } }
+            catch (error) { stopped.push(id); result = { kind: 'unavailable', reason: `product tooling could not run: ${errorCause(error)}` } }
+            if (result.kind === 'unavailable' && result.stop) { stopped.push(id); result = { kind: 'unavailable', reason: result.reason } }
         }
         observations.push({ ...result, id })
     }
@@ -163,7 +168,7 @@ export async function runGate(registry: GateRegistry, request: GateRequest, deps
             }
         } else stability = 'unavailable'
     }
-    const result = classifyRun({ declared: gate.stages, selected, observations,
+    const result = classifyRun({ declared: gate.stages, selected, observations, stopped,
         scope: request.staged ? 'staged' : select ? 'subset' : 'full', stability })
     return { ...result, observations, reasons: [...result.reasons, ...stabilityReasons] }
 }

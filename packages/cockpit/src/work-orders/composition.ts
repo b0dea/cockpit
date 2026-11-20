@@ -11,9 +11,9 @@ import { readBoundedFile } from '../bounded-read.js'
 import { tmpdir } from 'node:os'
 import { loadCockpitConfig, type ConsumedWorkEnvironmentConfig } from '../config/load.js'
 import { observeGuardConfigChange } from '../guards/policy-change.js'
-import { defaultEvaluatorOrder, evaluate, locateEvaluators, type EvaluatorChain } from '../grading/evaluate.js'
+import { chainUnavailable, defaultEvaluatorOrder, evaluate, locateEvaluators, type EvaluatorChain } from '../grading/evaluate.js'
 import { gradingDocument, gradingSchema, readGradingAnswer, type ChangedFile, type GradingSubject, type Verdict } from '../grading/grade.js'
-import { ENVIRONMENT_CODES, errorCause, hasErrorCode, INHERITED_TOOL_ENVIRONMENT, type ConsumedFile, type FilesystemCheck, type SourceProvenance, type ExecutionStep, RefusalError } from '../environment/contract.js'
+import { ENVIRONMENT_CODES, errorCause, hasErrorCode, INHERITED_TOOL_ENVIRONMENT, type ConsumedFile, type ExecutionFailureCode, type FilesystemCheck, type SourceProvenance, type ExecutionStep, RefusalError } from '../environment/contract.js'
 import { authenticatedExecutionOutcome, executeProbe } from '../environment-exec/execute.js'
 import { issueBrowserRoutePolicy, type BrowserCommandInput, type BrowserCommandKind, type BrowserRoutePolicy } from '../browser/commands.js'
 import { type BrowserRuntimeProjection } from '../browser/runtime.js'
@@ -84,8 +84,9 @@ interface WorkApplicationAuthorities {
     readonly env: Readonly<Record<string, string | undefined>>
 }
 
+type GradingRefusal = Readonly<{ code: string; message: string; fix: string }>
 type GradingResult = Readonly<{ criteria: readonly Verdict[]; evaluator: Readonly<{ tool: string; fallbacks: readonly Readonly<{ tool: string; code: string; message: string }>[] }> }>
-    | Readonly<{ refusal: Readonly<{ code: string; message: string; fix: string }> }>
+    | Readonly<{ refusal: GradingRefusal }>
 
 export interface WorkApplicationComposition {
     readonly policy: Readonly<{ grading: WorkGrading }>
@@ -101,6 +102,8 @@ export interface WorkApplicationComposition {
     readonly heads: () => Promise<Readonly<Record<string, string>>>
     readonly runCheck: (criterion: string, check: WorkOrderCheck) => Promise<CheckResult>
     readonly evaluate: (subject: GradingSubject) => Promise<GradingResult>
+    /** Why no evaluator can grade here, found without running one; undefined when one can. */
+    readonly evaluatorUnavailable: () => Promise<GradingRefusal | undefined>
     /** Test weakening in each checkout since `base`, over the files this cockpit treats as tests, less what `attribution` gives other orders. */
     readonly testWeakening: (base: Readonly<Record<string, string>>, attribution?: Attribution) => Promise<TestWeakeningObservation>
     /**
@@ -142,7 +145,8 @@ interface WorkApplicationGateRequest {
 }
 type VerificationObservation =
     | Readonly<{ kind: 'executed'; exitCode: number; stdout: string; stderr: string; truncated: boolean }>
-    | Readonly<{ kind: 'error' | 'unavailable'; reason: string }>
+    // `code` is the execution failure that stopped the command, where the executor named one.
+    | Readonly<{ kind: 'error' | 'unavailable'; reason: string; code?: ExecutionFailureCode }>
 type RepositorySubject = Readonly<{ path: string; revision: string; worktreeDigest: string }>
 
 const issuedCompositions = new WeakSet<object>()
@@ -373,6 +377,14 @@ async function executable(directories: readonly string[], name: string): Promise
 type BoundedExecutionMode = (Readonly<{ kind: 'probe' }>
     | Readonly<{ kind: 'declared'; env: Readonly<Record<string, string>>; timeoutField: string }>) & Readonly<{ stdoutLimitBytes?: number; lenientText?: true }>
 
+// A check or gate stage the product stops from running fails: by running too long or printing too much, or by a command
+// file in the tree, which the work can remove or break. Anything else that keeps it from running (a command not on
+// cockpit's search path, an executor failure) is cockpit's or the machine's, decided by the executor's code and the argv
+// the contract or [testing] holds, never by output the product writes, so the work cannot pass a failure of its own off as cockpit's.
+const PRODUCT_STOPS: ReadonlySet<string> = new Set([ENVIRONMENT_CODES.EXECUTION_TIMEOUT, ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT])
+const productFailure = (argv: readonly string[], observed: Extract<VerificationObservation, { kind: 'error' | 'unavailable' }>) =>
+    observed.code !== undefined && PRODUCT_STOPS.has(observed.code) || observed.kind === 'unavailable' && argv[0]!.includes('/')
+
 async function executeBounded(root: string, argv: readonly string[], directories = DEFAULT_EXECUTABLE_DIRECTORIES, timeoutMs = 30_000,
     mode: BoundedExecutionMode = { kind: 'probe' }): Promise<VerificationObservation & Readonly<{ observedBytes?: number }>> {
     if (!Array.isArray(argv) || !argv.length || argv.length > MAX_ARGUMENTS || argv.some(value => typeof value !== 'string' || !value || Buffer.byteLength(value) > 4_096)) {
@@ -406,13 +418,13 @@ async function executeBounded(root: string, argv: readonly string[], directories
     const result = authenticatedExecutionOutcome(await executeProbe(step), step)
     if (!result) return { kind: 'error', reason: `the outcome of ${argv[0]} could not be authenticated as the issued step` }
     if (result.kind === 'refusal' && result.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT) {
-        return { kind: 'error', reason: `timed out after ${timeoutMs / 1_000} seconds${mode.kind === 'declared' ? `; raise ${mode.timeoutField}` : ''}` }
+        return { kind: 'error', code: result.code, reason: `timed out after ${timeoutMs / 1_000} seconds${mode.kind === 'declared' ? `; raise ${mode.timeoutField}` : ''}` }
     }
-    if (result.kind === 'refusal' && result.code === ENVIRONMENT_CODES.EXECUTION_SPAWN_FAILED) return { kind: 'unavailable', reason: `${argv[0]} could not be started` }
-    if (result.kind === 'refusal' && result.code === ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT) return { kind: 'error', reason: `${argv[0]} printed more than ${stdoutLimit} bytes, so its answer is refused rather than read in part` }
+    if (result.kind === 'refusal' && result.code === ENVIRONMENT_CODES.EXECUTION_SPAWN_FAILED) return { kind: 'unavailable', code: result.code, reason: `${argv[0]} could not be started` }
+    if (result.kind === 'refusal' && result.code === ENVIRONMENT_CODES.EXECUTION_STDOUT_LIMIT) return { kind: 'error', code: result.code, reason: `${argv[0]} printed more than ${stdoutLimit} bytes, so its answer is refused rather than read in part` }
     // A non-zero exit carries a receipt only when the process started and its termination was confirmed.
     const exited = result.kind === 'complete' || result.code === ENVIRONMENT_CODES.EXECUTION_STEP_FAILED && result.receipt !== undefined
-    if (!exited) return { kind: 'error', reason: `${argv[0]} did not run to completion: ${result.code}` }
+    if (!exited) return { kind: 'error', code: result.code, reason: `${argv[0]} did not run to completion: ${result.code}` }
     const truncated = result.execution.stdoutObservedBytes !== result.execution.stdoutRetainedBytes
         || result.execution.stderrObservedBytes !== result.execution.stderrRetainedBytes
     if (truncated && mode.kind === 'probe') return { kind: 'error', reason: `${argv[0]} output exceeded the ${stdoutLimit}-byte probe capture` }
@@ -804,15 +816,16 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
             return observed.kind === 'executed'
                 ? { criterion, kind: 'argv', passed: observed.exitCode === 0, outcome: `exit ${observed.exitCode}${observed.truncated ? ' (output truncated to its end)' : ''}`,
                     output: outputTail(`${observed.stdout}${observed.stderr}`) }
-                : { criterion, kind: 'argv', passed: false, outcome: `did not run: ${observed.reason}`.slice(0, 256), output: '' }
+                : { criterion, kind: 'argv', passed: false, outcome: `did not run: ${observed.reason}`.slice(0, 256), output: '', ...productFailure(check, observed) ? {} : { cockpitError: true as const } }
         }
         try {
             const prepared = await gate({ operation: 'test-run', gate: check.gate, mode: 'canonical',
                 ...check.select ? { select: { kind: check.select.slice(0, check.select.indexOf(':')) as 'spec', value: check.select.slice(check.select.indexOf(':') + 1) } } : {} })
             const run = await runGate(prepared.registry, prepared.request, prepared.dependencies)
-            return { criterion, kind: 'gate', passed: run.satisfiesGate, outcome: `gate ${check.gate}: ${run.verdict}`.slice(0, 256), output: outputTail(run.reasons.join('\n') || run.verdict) }
+            return { criterion, kind: 'gate', passed: run.satisfiesGate, outcome: `gate ${check.gate}: ${run.verdict}`.slice(0, 256), output: outputTail(run.reasons.join('\n') || run.verdict),
+                ...run.environmental ? { cockpitError: true as const } : {} }
         } catch (error) {
-            return { criterion, kind: 'gate', passed: false, outcome: `gate ${check.gate} did not run`, output: outputTail(errorCause(error)) }
+            return { criterion, kind: 'gate', passed: false, outcome: `gate ${check.gate} did not run`, output: outputTail(errorCause(error)), cockpitError: true }
         }
     }
     const heads = async () => Object.fromEntries(await Promise.all(repositories.map(async repository => {
@@ -988,13 +1001,23 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         const [changed, weakening] = await Promise.all([changesWith(base, untracked, scope, holder), weakeningWith(base, untracked, holder)])
         return { changes: changed.files, weakening, otherOrders: changed.otherOrders }
     }
-    const gradeIndependently = async (subject: GradingSubject): Promise<GradingResult> => {
+    const authenticEvaluator = async (): Promise<Readonly<{ evaluator: EvaluatorAuthority }> | Readonly<{ refusal: GradingRefusal }>> => {
         let evaluator: EvaluatorAuthority
         try { evaluator = await resolveEvaluator() }
         catch (error) { return { refusal: { code: 'EVALUATOR_UNAVAILABLE', message: errorCause(error), fix: `run ${cockpitCommand('sync', { config: config.source.path })}` } } }
         if (evaluator.restriction !== 'instructed' || sha256Hex(evaluator.bytes) !== evaluator.sha256) {
             return { refusal: { code: 'EVALUATOR_UNAVAILABLE', message: 'the shipped evaluator instructions could not be authenticated', fix: `run ${cockpitCommand('sync', { config: config.source.path })}` } }
         }
+        return { evaluator }
+    }
+    const evaluatorUnavailable = async (): Promise<GradingRefusal | undefined> => {
+        const authentic = await authenticEvaluator()
+        return 'refusal' in authentic ? authentic.refusal : chainUnavailable(authentic.evaluator.chain)
+    }
+    const gradeIndependently = async (subject: GradingSubject): Promise<GradingResult> => {
+        const authentic = await authenticEvaluator()
+        if ('refusal' in authentic) return authentic
+        const { evaluator } = authentic
         // The shipped instructions carry notes to cockpit's maintainers that are not addressed to the grader.
         const result = await evaluate({ chain: evaluator.chain, role: 'grader',
             document: gradingDocument(stripDevelopmentMarkers(evaluator.bytes), root, subject), schema: gradingSchema(subject.criteria),
@@ -1031,7 +1054,7 @@ function createWorkApplicationComposition(config: WorkEnvironmentApplicationConf
         readCriteriaFile: async (path: string) => parseCriteriaFile(readBounded(root, path, 65_536)),
         sourceDigests: async (order: Pick<WorkOrder, 'criteria'>) => Object.fromEntries(order.criteria.flatMap(row => row.source ? [row.source] : [])
             .map(source => [source, sha256Hex(readSource(source))])),
-        heads, runCheck, evaluate: gradeIndependently, testWeakening, review, browser, gate,
+        heads, runCheck, evaluate: gradeIndependently, evaluatorUnavailable, testWeakening, review, browser, gate,
         ...config.docs ? { docs: config.docs } : {}, decisionRecords, readDocsFile, writeDecisionRecords, containers,
     }
     issuedCompositions.add(composition)
@@ -1089,7 +1112,7 @@ function productGateDependencies(root: string, source: SourceProvenance,
         runProductTool: async (invocation: ProductGateInvocation) => {
             const observed = await executeBounded(root, invocation.command, executableDirectories ?? DEFAULT_EXECUTABLE_DIRECTORIES,
                 invocation.timeoutSeconds * 1_000, { kind: 'declared', env: { ...stageEnvironment, ...await leaseEnvironment() }, timeoutField: 'testing.stages[].timeout_seconds' })
-            if (observed.kind !== 'executed') return { kind: 'unavailable' as const, reason: observed.reason }
+            if (observed.kind !== 'executed') return { kind: 'unavailable' as const, reason: observed.reason, ...productFailure(invocation.command, observed) ? {} : { stop: 'command-unavailable' as const } }
             const output = await saveStageOutput(root, invocation, `${observed.stdout}${observed.stderr}`, observed.truncated, observed.exitCode !== 0)
             return { kind: 'executed' as const, exitCode: observed.exitCode, signal: null, outputBytes: observed.observedBytes ?? 0,
                 assertion: observed.exitCode === 0 ? 'passed' as const : 'failed' as const, ...output ? { output } : {} }

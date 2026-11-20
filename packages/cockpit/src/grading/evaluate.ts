@@ -247,6 +247,11 @@ export function evaluatorUnavailable(message: string) {
     }
 }
 
+/** Why no tool in the chain can run, found without running one; undefined when one can. */
+export function chainUnavailable(chain: EvaluatorChain) {
+    return chain.located.length ? undefined : evaluatorUnavailable(chain.skipped.map(row => row.message).join('; then ') || 'work.evaluators lists no evaluator')
+}
+
 type StepOutcome = Readonly<{ kind: 'complete'; stdout: string; stderr: string }>
     | Readonly<{ kind: 'failed'; code: string; exitCode?: number; stdout: string; stderr: string }>
 

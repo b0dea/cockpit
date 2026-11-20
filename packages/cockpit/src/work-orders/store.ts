@@ -31,6 +31,8 @@ const CheckResult = z.object({
     // How the check ended: an exit status, a gate verdict, or why it could not run.
     outcome: z.string().max(256),
     output: z.string().max(OUTPUT_TAIL_BYTES * 2),
+    // The check did not run for a cause that is cockpit's or the machine's, not the product's, so it judged nothing.
+    cockpitError: z.literal(true).optional(),
 }).strict()
 export type CheckResult = z.infer<typeof CheckResult>
 
@@ -83,6 +85,9 @@ export const WorkRecord = z.object({
     // keeps it, or rewording a criterion would let its own relayed pass through; like amendmentsFailedReview,
     // only an amendment a person or CI accepts clears it.
     evaluatorFailed: z.object({ at }).strict().optional(),
+    // The last grade, when a cockpit or machine error ended it before it reached a verdict on the product. It spent no
+    // attempt; the next grade that reaches a verdict clears it.
+    interrupted: z.object({ at, code: z.string().max(64), message: z.string().max(4_096) }).strict().optional(),
     // A decision is resolved by a later `resolution` note naming it in `resolves`: with `record`, the decision
     // record it is written in; without, `text` says why it made no lasting decision. The latest resolution counts.
     notes: z.array(z.object({ at, by, kind: z.enum(['note', 'question', 'answer', 'decision', 'resolution']), text: note,
@@ -102,6 +107,9 @@ export function outputTail(value: string): string {
     const bytes = Buffer.from(value)
     return bytes.byteLength <= OUTPUT_TAIL_BYTES ? value : `[...]${bytes.subarray(bytes.byteLength - OUTPUT_TAIL_BYTES).toString('utf8')}`
 }
+
+/** Another cockpit command holds the order's lock, so nothing about the order can be recorded now. */
+export class WorkOrderLockedError extends RefusalError {}
 
 export interface WorkStore {
     readonly read: (id: string) => Promise<WorkRecord | undefined>
@@ -186,7 +194,7 @@ export function createWorkStore(root: string): WorkStore {
         try { await link(staged, path) }
         catch (error) {
             if (!hasErrorCode(error, 'EEXIST')) throw error
-            throw new RefusalError(`work order ${id} is locked by another cockpit command (${WORK_RECORD_DIRECTORY}/${id}.lock); wait for it, or if it crashed run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work recover --config <your cockpit.toml> --work-order ${id} --apply`)
+            throw new WorkOrderLockedError(`work order ${id} is locked by another cockpit command (${WORK_RECORD_DIRECTORY}/${id}.lock); wait for it, or if it crashed run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work recover --config <your cockpit.toml> --work-order ${id} --apply`)
         } finally { await rm(staged, { force: true }) }
         return async () => { await rm(path, { force: true }) }
     }
