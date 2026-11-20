@@ -21,12 +21,16 @@ name inside a longer word, such as a commit message, a search pattern or a `sed`
 and the option values of a Git read are text, not names, so `git commit -m "Load .env first"` and
 `rg '\.env' docs` run. A program is judged under its folded name, and a Homebrew GNU tool with a `g` prefix
 (`grm`, `gcp`, `gsed`, `gtar`, `gtime`, `gpatch`, `gmake`) as the command it names. The guard reads `if`/`elif`/`else`, `for`, `while` and `until`, subshells and
-brace groups, `time` before either, judging every command inside as it would on its own. It also reads here-strings,
+brace groups, `time` before either, judging every command inside as it would on its own. The one command string a
+tmux `new-session`, `new-window`, `split-window` or `respawn-pane` runs is read as `sh -c` text is, and the command
+line `screen -dm` runs as a command of its own, both as background jobs, so `tmux new-session -d 'npm run dev'`
+starts a dev server; `-e`, a format's `#(…)`, a `;` command list or several command words ask. It also reads here-strings,
 `source FILE`, `${NAME:-word}` (its default word is name-checked wherever a word is) and arithmetic
 over numbers and operators. A plain `"$NAME"` as a redirect or an operand, or `"$NAME/file"` with a literal rest as an operand, in a
 call's second command is read as the path its first command, a plain `NAME=path`, assigns; any other variable in a redirect asks. Shell it does not read, such as `case`, `[[ … ]]`, `eval`, `watch`,
 shell text a session, job or terminal runs (`tmux` other than its listing, attaching and capturing commands,
-and those too with a format's `#(…)` or `detach -E`, `screen` other than `-ls`, `-r` and `-x`, `at` other
+and those too with a format's `#(…)` or `detach -E`, `screen` other than `-ls`, `-r`, `-x` and a detached
+command, `at` other
 than `-l` and `-r`, `batch`, `crontab` installing a table, from standard input too, `systemd-run`, a terminal
 such as `xterm`, `kitty`, `kitten @`, `ghostty` or `gnome-terminal` given a command, `open --args`, and
 osascript's `do shell script`), `xargs -I`, arithmetic over a name, a `cd` after `!` or an expanding heredoc, asks: what runs inside it

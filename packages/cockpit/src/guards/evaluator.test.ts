@@ -3520,9 +3520,8 @@ describe('everyday directory changes and held paths', () => {
             `at now + 1 minute <<< 'cp build/x ${settings}'`, `batch <<< 'cat .env'`, `tmux send-keys -t x 'cat .env' Enter`, `xterm -e 'cat .env'`]) {
             expect(run(command), command).toMatchObject({ decision: 'deny' })
         }
-        for (const command of [`tmux new-session -d 'sleep 2; cat out/x > build/leak.txt'; cp -r src out`, `tmux new-window 'npm test'`, `tmux neww 'npm test'`,
-            `tmux run-shell 'make'`, `tmux run 'make'`, `tmux send 'make' Enter`, `tmux new -d 'make'`, 'tmux', 'tmux ls \\; run-shell make', 'screen -S x -dm npm test',
-            'screen -d -m npm test', 'at -f build/job now', `osascript -e 'do shell script "make"'`, 'xterm -e make']) {
+        for (const command of [`tmux run-shell 'make'`, `tmux run 'make'`, `tmux send 'make' Enter`, 'tmux', 'tmux ls \\; run-shell make',
+            'at -f build/job now', `osascript -e 'do shell script "make"'`, 'xterm -e make']) {
             expect(run(command), command).toMatchObject({ decision: 'ask' })
         }
         for (const command of ['tmux ls', 'tmux attach -t x', 'screen -ls']) expect(run(command), command).toMatchObject({ decision: 'allow' })
@@ -3537,6 +3536,31 @@ describe('everyday directory changes and held paths', () => {
         }
         for (const command of [`tmux ls -F '#(make)'`, `tmux lsw -F '#(make)'`, `tmux detach -E make`, `tmux detach-client -E make`]) expect(run(command), command).toMatchObject({ decision: 'ask' })
         for (const command of [`tmux ls -F '#{session_name}'`, 'tmux detach', 'tmux detach-client -s x']) expect(run(command), command).toMatchObject({ decision: 'allow' })
+    })
+
+    // A tmux session, window or pane, or a detached screen, runs its command as `sh -c` would, in the background: the
+    // command is judged as one, so a dev server starts while a secret, a guard file or text the guard cannot read does not.
+    it('judges the command a tmux session or detached screen starts as a background shell', () => {
+        expect(run('npm run dev').decision).toBe('allow')
+        for (const command of [`tmux new-session -d 'npm run dev'`, `tmux new -d -s dev 'npm run dev'`, `tmux new-window -n web 'npm run dev'`, `tmux neww 'npm run dev'`,
+            `tmux split-window -h 'npm run dev'`, `tmux splitw -v 'npm run dev'`, `tmux respawn-pane -k 'npm run dev'`, `tmux new-session -d -c workorders/x 'npm run dev'`,
+            'tmux new-session -d -s scratch', `screen -dmS dev sh -c 'npm run dev'`, 'screen -d -m npm run dev']) {
+            expect(run(command), command).toMatchObject({ decision: 'allow' })
+        }
+        for (const command of [`tmux new-session -d 'cat .env > build/l'`, `tmux new-window 'cat ~/.netrc'`, `tmux new -d 'cp build/x .claude/settings.json'`,
+            `screen -dmS x sh -c 'cat .env'`, `tmux new-session -d -c ~ 'cat .netrc'`]) {
+            expect(run(command), command).toMatchObject({ decision: 'deny' })
+        }
+        // What the nested judgement cannot read, or tmux options that change its environment, still ask.
+        for (const command of [`tmux new-session -d 'eval "$X"'`, `tmux new-session -d -e PATH=build 'npm run dev'`, 'tmux new-session -d npm run dev',
+            `tmux new-session -d -F '#(make)' 'npm run dev'`, `tmux new-session -d 'npm run dev' \\; run-shell make`, `tmux new-session -d -c workorders/x/../../.. 'npm run dev'`,
+            `screen -dmS x -c build/rc npm run dev`, 'screen -S x npm run dev', `tmux new -d -s 'x;' run-shell`]) {
+            expect(run(command), command).toMatchObject({ decision: 'ask' })
+        }
+        // The session runs beside the rest of the call, so a link made after it can still be followed from it.
+        for (const command of [`tmux new-session -d 'sleep 2; cat out/x > build/leak.txt'; cp -r src out`, `tmux new -d 'cat out/x'; cp -r src out`]) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
     })
 
     // An installed crontab, a transient systemd unit and a terminal's command run shell text later or elsewhere.

@@ -534,6 +534,47 @@ function launchesShellText(name: string, args: readonly string[]): boolean {
     if (name === 'osascript') return args.some(arg => /do\s+shell\s+script/i.test(arg))
     return false
 }
+// tmux commands that open a session, window or pane running a shell command.
+const TMUX_OPENERS = new Set(['new-session', 'new', 'new-window', 'neww', 'split-window', 'splitw', 'respawn-pane', 'respawnp'])
+/**
+ * The one literal command string a tmux opener runs, with the directory its `-c` names, or undefined for any other form:
+ * `-e` sets its environment, a format's `#(…)` and a command list joined by `;` run more, and several words are run
+ * without a shell, so those ask. With no command the session runs the person's shell and nothing of the agent's.
+ */
+function tmuxSessionCommand(tokens: readonly Token[], cwd: string): { readonly text: string; readonly cwd: string } | undefined {
+    if (!TMUX_OPENERS.has(tokens[0]?.value ?? '') || tokens.some((token) => token.dynamic || token.status || token.value.includes('#(') || token.value.endsWith(';'))) return undefined
+    let directory = cwd
+    let at = 1
+    while (tokens[at]?.value.startsWith('-')) {
+        const option = tokens[at]!.value
+        if (['-c', '-n', '-s', '-t', '-F', '-x', '-y', '-l', '-f'].includes(option)) {
+            const value = tokens[at + 1]?.value
+            if (value === undefined) return undefined
+            if (option === '-c') {
+                if (climbsOutOfName(value)) return undefined
+                directory = path(posix.resolve(cwd, value))
+            }
+            at += 2
+        } else if (/^-[AbdDEhIkPvXZ]+$/.test(option)) at++
+        else return undefined
+    }
+    const rest = tokens.slice(at)
+    return rest.length <= 1 ? { text: rest[0]?.value ?? '', cwd: directory } : undefined
+}
+/** The command line `screen -dm` starts, after options that name the session or title only; any other form asks. */
+function detachedScreenCommand(tokens: readonly Token[]): { readonly command: Token[] } | undefined {
+    let at = 0
+    const flags = new Set<string>()
+    while (tokens[at]?.value.startsWith('-')) {
+        const option = tokens[at]!.value
+        if (['-S', '-t'].includes(option)) { if (tokens[at + 1] === undefined) return undefined; at += 2; continue }
+        const named = /^-([dm]+)(S)?$/.exec(option)
+        if (!named) return undefined
+        for (const letter of named[1]!) flags.add(letter)
+        if (named[2]) { if (tokens[at + 1] === undefined) return undefined; at += 2 } else at++
+    }
+    return flags.has('d') && flags.has('m') && at < tokens.length ? { command: tokens.slice(at) } : undefined
+}
 /**
  * Package and environment managers that run a program named on their line, by their words before it. Only the options
  * listed are read: any other may pick a shell, a directory, an environment file or another package. npm and yarn read an
@@ -884,12 +925,13 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
         if (directoryChangers.has(executable)) refuse(CD_REFUSAL)
         const name = posix.basename(executable)
         if (privileged.has(name) || name === 'osascript' && args.slice(cursor + 1).some((token) => /administrator\s+privileges/i.test(token.value))) forbid(`${shown(executable)} runs a command with another user's privileges. Privilege escalation is a person's action: ask them to run it in their own terminal.`)
+        // The string runs in a child shell: its commands are judged as these are, and its `cd` moves only that shell.
+        const childShell = (text: string, directory: string) => parseShell(text, directory, { ...context, depth: context.depth + 1 }).map((item) => ({ ...item, wrapped: true }))
         if (scriptShells.has(name)) {
             const [first, script, ...rest] = args.slice(cursor + 1)
             if (first?.value === '-c') {
                 if (!script || rest.length || script.dynamic || script.status) refuse(`${shown(executable)} -c is parsed only with one literal command string and nothing after it. Write the string in single quotes, or run the command itself.`)
-                // The string runs in a child shell: its commands are judged as these are, and its `cd` moves only that shell.
-                nested = parseShell(script.value, cwd, { ...context, depth: context.depth + 1 }).map((item) => ({ ...item, wrapped: true }))
+                nested = childShell(script.value, cwd)
             } else if (!first || /^[-+]/.test(first.value) || first.dynamic) {
                 refuse(`${shown(executable)} is parsed only as \`${name} SCRIPT [ARGUMENTS]\` or \`${name} -c '<command>'\` with a literal command string: with no script it runs whatever it reads. Run the command itself.`)
             }
@@ -901,7 +943,16 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
         if (subscriptEvaluators.has(name) && args.slice(cursor + 1).some((token) => /\[.*[$`]/s.test(outsideSubstitutions(token)))) {
             refuse(`${shown(executable)} evaluates an array subscript as arithmetic, which runs any command substitution in it. Write the index as a number.`)
         }
-        if (dynamicExecutables.has(name) || launchesShellText(name, args.slice(cursor + 1).map((token) => token.value))) refuse(`${shown(executable)} runs a command or script built from its arguments, which the guard does not parse. Run the command itself.`)
+        // A tmux session, window or pane runs its one command string through a shell, and a detached screen runs its
+        // command line, after the call returns: each is judged as `sh -c` text or a launched command, in the background.
+        const session = name === 'tmux' ? tmuxSessionCommand(args.slice(cursor + 1), cwd) : name === 'screen' ? detachedScreenCommand(args.slice(cursor + 1)) : undefined
+        if (session) {
+            context.seen.background = true
+            const started = 'text' in session ? session.text ? childShell(session.text, session.cwd) : []
+                : (([program, ...rest]) => [{ ...program!, wrapped: true }, ...rest])(invocation(session.command, cwd, context))
+            nested = started.map((item) => ({ ...item, background: true as const }))
+        }
+        if (dynamicExecutables.has(name) || !session && launchesShellText(name, args.slice(cursor + 1).map((token) => token.value))) refuse(`${shown(executable)} runs a command or script built from its arguments, which the guard does not parse. Run the command itself.`)
         if (reserved.has(executable)) refuse(`Shell control flow (${executable}) is not parsed by the guard. Run each command on its own.`)
         words.push({ role: 'executable', value: executable })
         cursor++
