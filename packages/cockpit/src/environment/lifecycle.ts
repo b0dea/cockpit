@@ -102,8 +102,13 @@ function canonicalExecution(value: RuntimeLifecycleExecutionSemantics): unknown 
     if (!paths || !ports || !expected || !consumedFiles || !filesystemChecks) return undefined
     const compensation = value.compensation.map(canonicalExecution)
     if (compensation.some((item) => item === undefined)) return undefined
+    // The caller's PATH, and the name docker was found under on it, say where that shell looks for
+    // programs, not what the stack runs: argv[0] and the consumed-file digest pin the docker program.
+    // With them in the basis, a session an agent tool started, whose PATH differs from the terminal's,
+    // was refused the stack the terminal started as one running an earlier version.
+    const { PATH: _callerPath, ...env } = value.env
     return {
-        argv: [...value.argv], argv0: value.argv0, cwd: value.cwd, env: { ...value.env },
+        argv: [...value.argv], cwd: value.cwd, env,
         stdoutLimitBytes: value.stdoutLimitBytes,
         stderrLimitBytes: value.stderrLimitBytes, paths, ports, expected: expected.map((item) => ({ ...item })),
         consumedFiles: consumedFiles.map((item) => ({ ...item, argvIndexes: [...item.argvIndexes] })),

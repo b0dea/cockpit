@@ -495,6 +495,43 @@ describe('lifecycle application contracts', () => {
         expect(execute).not.toHaveBeenCalled()
     })
 
+    // Runtime readings that outlast their observation window on a loaded machine fail admission as
+    // evidence, not as changed work; up named an earlier version of a stack nothing had changed.
+    it('says a fully started stack\'s planning evidence failed, not that its work changed, when admission refuses the evidence', async () => {
+        const { configPath, context } = await lifecycleContextFixture()
+        const inputs = { 'cockpit.toml': 'd'.repeat(64), 'compose.yml': 'e'.repeat(64) }
+        await transactState(context.namespace, context.namespace.paths.lifecycle(context.stackId), { ownerId: context.holderId }, () => ({
+            format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId: context.cockpitId,
+            subjectId: context.stackId, revision: 0, updatedAt: new Date().toISOString(),
+            value: {
+                holderId: context.holderId, workBasisSha256: 'a'.repeat(64), operationGeneration: 'b'.repeat(64),
+                completedServices: [{ service: 'api', containerId: 'c'.repeat(64) }], runtimeInputs: inputs,
+            },
+        }))
+        const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
+        const projection = Object.freeze({
+            lease, entrypoints: Object.freeze([]),
+            ownership: Object.freeze({ change: 'unchanged' as const, holderId: context.holderId, recordRevision: 2, holderCount: 1, holderIds: Object.freeze([context.holderId]) }),
+        })
+        const leaseResult = Object.freeze({ kind: 'complete' as const, change: 'unchanged' as const, holderId: context.holderId,
+            recordRevision: 2, lease, observation: 'resolved-listener-evidence-accepted' as const })
+        applicationOwners.lifecycle.admitUpProgress = () => ({ kind: 'refusal', diagnostics: [{ severity: 'error', code: 'LIFECYCLE_EVIDENCE_INVALID', message: 'lifecycle planning evidence is invalid', target: 'up' }] })
+        const execute = vi.fn(async () => ({}) as never)
+
+        const result = await runUp({ configPath }, {
+            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
+            withRuntimeReadiness: async (_context, use) => use({ topology: { services: [{ id: 'api' }] }, lifecycle: {}, hostObservations: [],
+                inputs, activeProfiles: [] } as never),
+            withLifecycleStage: async (_context, use) => use({} as never),
+            withAcquiredPorts: async (_context, use) => use({ leaseResult, projection, retainOnFailure: vi.fn() } as never),
+            execute,
+        })
+
+        expect(result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'LIFECYCLE_EVIDENCE_INVALID', message: 'lifecycle planning evidence is invalid' }] })
+        expect(JSON.stringify(result.diagnostics)).not.toContain('earlier version')
+        expect(execute).not.toHaveBeenCalled()
+    })
+
     it('resumes a completed dependency prefix in one readiness round', async () => {
         const { configPath, context } = await lifecycleContextFixture()
         const address = context.namespace.paths.lifecycle(context.stackId)

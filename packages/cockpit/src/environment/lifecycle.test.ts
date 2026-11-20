@@ -337,6 +337,22 @@ describe('lifecycle planning', () => {
         }
     })
 
+    // A terminal and an agent tool run with different PATHs; a session started from one was refused the
+    // running stack the other started, as one started from an earlier version.
+    it('keeps one work basis whatever PATH the caller found docker through, while the daemon it talks to still counts', () => {
+        const digest = (change: (start: RuntimeLifecycleSemantics['services'][number]['start']) => object) => {
+            const input = projections()
+            Object.assign(input.runtime, ({ topology: input.topology, semantics: { ...input.semantics,
+                services: input.semantics.services.map((service) => ({ ...service, start: change(service.start) })) } }))
+            const result = planUp({ lifecycleStage: input.stage as never, runtime: input.runtime as never, ports: input.ports as never, progress: null, completedServices: [], operationGeneration: generation })
+            if (result.kind !== 'execute') throw new Error('basis unavailable')
+            return result.plan.progress.workBasisSha256
+        }
+        const baseline = digest((start) => start)
+        expect(digest((start) => ({ ...start, argv0: '/opt/tools/bin/docker', env: { PATH: '/opt/tools/bin:/bin' } }))).toBe(baseline)
+        expect(digest((start) => ({ ...start, env: { ...start.env, DOCKER_HOST: 'unix:///tmp/other.sock' } }))).not.toBe(baseline)
+    })
+
     it('canonicalizes expected checks and refuses duplicate expected or filesystem checks', () => {
         const checks = [
             { kind: 'path' as const, target: '/workspace/z', state: 'directory' as const },

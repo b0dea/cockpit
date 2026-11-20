@@ -340,7 +340,7 @@ export interface StateTransactionOptions {
     readonly beforePublish?: (temporaryPath: string) => Promise<void>
     readonly beforeCommit?: () => StateTransactionAbort<unknown> | undefined
     readonly beforeRelease?: () => Promise<void>
-    readonly beforeLockMetadata?: (operation: 'takeover-link' | 'takeover-rename') => Promise<void>
+    readonly beforeLockMetadata?: (operation: 'owner-write' | 'takeover-link' | 'takeover-rename') => Promise<void>
     readonly contentionTimeoutMs?: number
 }
 
@@ -1851,19 +1851,34 @@ async function acquireLock(
     const ownerBytes = `${JSON.stringify(owner)}\n`
     let createdLock = false
     let createdNode: { readonly dev: number; readonly ino: number } | undefined
+    // The owner record is written before the lock directory exists, then linked in whole. Created
+    // inside it, the record stood empty until its write landed; a write a loaded machine held for
+    // longer than OWNERLESS_LOCK_MS read as a command killed mid-lock, and another command took the
+    // lock over while this one went on to use it.
+    const staged = `${namespace.paths.stateLock}.${owner.token}.staged`
     try {
-        await mkdir(namespace.paths.stateLock, { mode: 0o700 })
-        createdLock = true
-        createdNode = await lstat(namespace.paths.stateLock)
-        const handle = await open(join(namespace.paths.stateLock, 'owner.json'), 'wx', 0o600)
+        // A held lock is met without staging a record: a waiter retries every few milliseconds.
+        const held = await lstat(namespace.paths.stateLock).then(() => true, (error: unknown) => {
+            if (hasErrorCode(error, 'ENOENT')) return false
+            throw error
+        })
+        if (held) throw Object.assign(new Error('the state lock is held'), { code: 'EEXIST' })
+        const handle = await open(staged, 'wx', 0o600)
         try {
+            await options.beforeLockMetadata?.('owner-write')
             await handle.writeFile(ownerBytes, 'utf8')
             await handle.sync()
         } finally {
             await handle.close()
         }
+        await mkdir(namespace.paths.stateLock, { mode: 0o700 })
+        createdLock = true
+        createdNode = await lstat(namespace.paths.stateLock)
+        await link(staged, join(namespace.paths.stateLock, 'owner.json'))
+        await rm(staged)
         return { kind: 'acquired', ownerBytes }
     } catch (error) {
+        await rm(staged, { force: true })
         if (createdLock) {
             try {
                 const current = await lstat(namespace.paths.stateLock)

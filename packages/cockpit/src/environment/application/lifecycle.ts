@@ -481,6 +481,11 @@ async function executeUpRound(
             // running stack in place; `down` removes it by its ownership labels whatever the
             // configuration says now.
             if (stored && !resetProgress && progressComplete) {
+                // Only a progress mismatch is changed work. Evidence admission refused, as readings that
+                // outlast their observation window on a loaded machine leave it, is said as itself.
+                if (!admission.diagnostics.some(({ code }) => code === ENVIRONMENT_CODES.LIFECYCLE_PROGRESS_INVALID)) {
+                    return { kind: 'complete' as const, result: forwardedRefusal(admission.diagnostics) }
+                }
                 return { kind: 'complete' as const, result: runtimeChangedRefusal(context,
                     changedRuntimeInputs(stored.value.runtimeInputs, runtime.inputs, basename(context.source.path),
                     started && { recorded: stored.value.startedWith, current: started })) }
