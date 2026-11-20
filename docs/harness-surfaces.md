@@ -482,7 +482,12 @@ nothing else; the sync after it, the agent and every later command run without i
 shell functions run `npx` inside their own process, whose proxy filters every fetch and reads the
 exemption only from that process's environment, so the install's own variable never reaches it. When
 `safe-chain` is on the search path, the agent's output names the exemption on the person's approve
-command, and an install the filter refused says so, keeps the step and gives the line to rerun. An agent's
+command, and an install the filter refused says so, keeps the step and gives the line to rerun. After a
+successful approve, Safe Chain's wrapper prints its own "Some package versions were suppressed"
+summary, about other versions its age check hid; approve's output says in advance that it is not a
+failure. The package manager can re-resolve other lockfile entries while it installs cockpit, so
+review the lockfile diff before committing and check it with the package manager's frozen-lockfile
+install. An agent's
 `upgrade --commit` records the commit too: the person's yes installs and syncs, and a second yes on
 the exact list of changed files commits them, since anything that wrote during the install would
 ride along. The guard

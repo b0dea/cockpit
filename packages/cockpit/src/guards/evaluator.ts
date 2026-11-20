@@ -2371,7 +2371,10 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     if (input.unreadable) {
         const words = input.unreadable.text.split(/[\s;&|()<>`"'{}]+/).filter(Boolean)
         const declared = resolved.declaredDenies.find(rule => words.some((_, at) => rule.argv.every((_, offset) => ruleWordMatches(rule.argv, offset, words[at + offset], true))))
-        return textDenial(input.unreadable.text, input.cwd) ?? (declared ? deny(`${declared.reason}${declared.fix ? ` Fix: ${declared.fix}` : ''}`)
+        const refusal = textDenial(input.unreadable.text, input.cwd)
+        // Running cockpit beside a form the guard cannot read is refused for the form; name it, so the fix is plain.
+        if (refusal === unreadInstalledCodeDenial) return deny(`${refusal.reason} Here it is a form the guard does not read: ${input.unreadable.reason}`)
+        return refusal ?? (declared ? deny(`${declared.reason}${declared.fix ? ` Fix: ${declared.fix}` : ''}`)
             : ask(`The guard does not read this shell form (${input.unreadable.reason}) Write it as plain commands joined with &&, use \`[ … ] &&\` or \`if\`, or put it in a script file.`))
     }
     // The current branch and where a bare push goes, for the repository at `cwd`, as Git reports them.
@@ -3645,9 +3648,37 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // `git rebase <upstream> <branch>` rewrites that branch.
         if (git.verb === 'rebase' && protectedName(gitOperands(git.args, ['--onto', '-s', '--strategy', '-X', '--strategy-option'])[1])) hold(deny('Refusing to rewrite history on a declared protected branch. Switch to a work branch first.'))
         // A fetch refspec's destination is a local ref: `git fetch . +topic:main` moves or rewrites main.
+        // `git fetch origin main:main` only fast-forwards main to a remote's own main: Git refuses a refspec without `+`
+        // that is not a fast-forward, or that names the checked-out branch, unless forced. That is how a person brings
+        // a stale main up to date after a merge without switching to it. The remote must be a configured one, which a
+        // person set, since Git reads a name no remote holds as a directory; a refmap or refspecs from stdin can force it.
+        const branchName = (ref: string) => ref.replace(/^(?:refs\/)?heads\//, '')
+        const fetchOperands = git.verb === 'fetch' ? gitOperands(git.args, ['--depth', '--deepen', '--shallow-since', '--shallow-exclude', '--negotiation-tip', '--refmap',
+            '-o', '--server-option', '-j', '--jobs', '--filter', '--recurse-submodules-default', '--upload-pack']) : []
+        const refsFromElsewhere = git.verb === 'fetch' && git.args.some(arg => /^--(?:refmap|stdin)(?:=|$)/.test(arg))
+        const absentHere = (name: string) => [name, `${name}.git`].every(candidate => {
+            try { const evidence = snapshotJson(inspect({ path: candidate, cwd: git.cwd, operation: 'read' })); return record(evidence) && evidence.status === 'resolved' && evidence.identity === null }
+            catch { return false } // no answer is not proof that Git reads the name as a remote
+        })
+        // Alone in its call, since an earlier command could create the directory the name is then read as.
+        const fastForwardOnly = invocations.length === 1 && fetchOperands.length >= 2 && /^[A-Za-z0-9][\w-]*$/.test(fetchOperands[0]!) && !refsFromElsewhere
+            && !git.args.some(arg => /^--(?:force|update-head-ok|refetch)$/.test(arg) || /^-[a-zA-Z]*[fu]/.test(arg) && !arg.startsWith('--'))
+            && absentHere(fetchOperands[0]!)
+        const mirrorsProtected = (arg: string) => fastForwardOnly && !arg.startsWith('+') && !arg.includes('*') && branchName(arg.slice(0, arg.indexOf(':'))) === branchName(arg.slice(arg.indexOf(':') + 1))
+        // A pattern destination, `refs/heads/*`, reaches every branch it matches; on a case-insensitive volume a loose
+        // `refs/heads/MAIN` is the file `refs/heads/main`.
+        const reachesProtected = (destination: string) => resolved.protectedBranches.some(branch => [branch, `heads/${branch}`, `refs/heads/${branch}`]
+            .some(name => destination.includes('*') ? new RegExp(`^${destination.split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 'i').test(name)
+                : name.toLowerCase() === destination.toLowerCase()))
         if (git.verb === 'fetch' && git.args.some(arg => !arg.startsWith('-') && !/^[a-z][a-z0-9+.-]*:\/\//i.test(arg) && arg.includes(':')
-            && resolved.protectedBranches.some(branch => [branch, `heads/${branch}`, `refs/heads/${branch}`].includes(arg.slice(arg.indexOf(':') + 1))))) {
+            && reachesProtected(arg.slice(arg.indexOf(':') + 1))
+            && !(fetchOperands.slice(1).includes(arg) && mirrorsProtected(arg)))) {
             hold(deny('Refusing a fetch into a declared protected branch: its refspec moves or rewrites that branch locally. Fetch into a remote-tracking ref or a work branch.'))
+        }
+        if (refsFromElsewhere) holdBoundary(invocation, ask(`${named(invocation)} takes refspecs from a refmap or stdin, which can move or rewrite a protected branch locally. Name the refspecs on the command line, or a person runs it.`))
+        // A remote's URL and fetch rules decide what a later fetch brings into local branches, so a person sets them.
+        if (git.verb === 'remote' && ['add', 'set-url', 'rename', 'set-branches'].includes(gitOperands(git.args, [])[0] ?? '')) {
+            holdBoundary(invocation, ask(`${named(invocation)} sets where a remote fetches from, which a later fetch into a local branch trusts. A person runs it.`))
         }
         if (rewritesHead || configuredRebase) {
             const facts = branchFacts(git.cwd)
@@ -3672,7 +3703,12 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             // A new worktree is a checkout a session there loads, not this one's files: a control in it that differs asks.
             if (unsettled.length) holdBoundary(invocation, ask(`${named(invocation)} applies another revision's changes to HEAD, and HEAD differs from the files on disk at ${shownGuardWord(posix.relative(git.cwd, unsettled[0]!) || unsettled[0]!)}, a guard control or agent setting, so what it writes there cannot be judged. Restore the checkout first, or a person runs it.`))
             if (changed.length && git.verb === 'worktree') holdBoundary(invocation, ask(`${named(invocation)} checks out ${shownGuardWord(posix.relative(git.cwd, changed[0]!) || changed[0]!)} different from this checkout's copy, an agent tool's settings, hooks or guard script a session started in the new worktree would load. A person runs it.`))
-            else if (changed.length) hold(deny(`Refusing ${named(invocation)}: it would write ${shownGuardWord(posix.relative(git.cwd, changed[0]!) || changed[0]!)} into the working tree from the index or another revision, and that path is a guard control, an agent tool's settings, hooks or guard script at any depth, a secrets directory or a declared instance. A person runs it.`))
+            else if (changed.length) {
+                // After a squash merge the local protected branch is behind its remote, so switching to it writes the old controls back.
+                const stale = ['checkout', 'switch'].includes(git.verb) ? positional.find(arg => protectedName(arg)) : undefined
+                hold(deny(`Refusing ${named(invocation)}: it would write ${shownGuardWord(posix.relative(git.cwd, changed[0]!) || changed[0]!)} into the working tree from the index or another revision, and that path is a guard control, an agent tool's settings, hooks or guard script at any depth, a secrets directory or a declared instance. `
+                    + (stale ? `If ${stale} is only behind its remote, fast-forward it first with \`git fetch origin ${stale}:${stale}\` (or your remote's name), then switch again; otherwise a person runs it.` : 'A person runs it.')))
+            }
             else if (instructions.length) holdBoundary(invocation, ask(`${named(invocation)} writes ${shownGuardWord(posix.relative(git.cwd, instructions[0]!) || instructions[0]!)} from the index or another revision: a skill, command or agent file whose frontmatter can register hooks or MCP servers that run outside the guard. A person runs it.`))
             else if (answers.some(answer => answer === undefined)) holdBoundary(invocation, ask(`${named(invocation)} writes another revision's files into the working tree, and the guard could not tell whether they include a guard control: the revision does not resolve, or Git did not answer. A person runs it.`))
             else if (guarded && tree.unnamed) holdBoundary(invocation, ask(`${named(invocation)} brings content into a working tree that holds guard controls, which the guard cannot inspect before it is fetched. Fetch first, then \`git merge --ff-only <remote>/<branch>\`; or a person runs it.`))

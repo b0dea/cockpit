@@ -398,7 +398,11 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
     // The commit names its paths, so whatever else is staged stays out of it.
     const commitCommand = changed && `${formatShellCommand(['git', 'add', '--', ...changed])} && ${formatShellCommand(['git', 'commit', '-m', message, '--', ...changed])}`
     const checks = `run ${cockpitCommand('check', { config: configPath })}, then ${cockpitCommand('doctor', { config: configPath })}`
+    // Safe Chain's wrapper prints its own summary once approve exits, which reads like a failure of the install.
+    const safeChainNote = input.confirm && (await locateExecutable('safe-chain', input.env, root)).state === 'present'
+        ? 'Safe Chain may print "Some package versions were suppressed" after this: that is its notice about other versions its age check hid; this install finished' : undefined
     const next = (committed: boolean) => [
+        safeChainNote,
         committed ? undefined : branch && `${branch} (best run before the upgrade)`,
         committed ? `committed exactly the files the upgrade changed as "${message}": ${changed!.join(' ')}`
             : !changed ? 'review git diff, then commit package.json, the lockfile and the regenerated files together'
