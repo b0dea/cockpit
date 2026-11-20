@@ -205,6 +205,9 @@ export function createMachine(name: string, options: { realDocker?: string } = {
     const bin = join(root, 'bin')
     const state = join(root, 'docker')
     for (const directory of [home, tmp, bin, state]) mkdirSync(directory, { recursive: true, mode: 0o700 })
+    // npm checks the registry for a newer npm and appends `npm notice` lines to a stage's output when it finds
+    // one, so a stage's last lines depended on what had been published that day.
+    writeFileSync(join(home, '.npmrc'), 'update-notifier=false\n')
     writeFileSync(join(state, 'calls.jsonl'), '')
     writeFileSync(join(state, 'state.json'), JSON.stringify({
         serverVersion: '29.0.0', composeVersion: '2.40.0', memTotal: 8 * 1024 ** 3, cpus: 4, sequence: 1,
