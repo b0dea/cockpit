@@ -309,6 +309,22 @@ describe('cockpit upgrade for an agent and a person', () => {
         expect(JSON.stringify(agent.json().diagnostics)).not.toContain('start a branch')
     })
 
+    // Without origin's HEAD the default branch is unknown, so a local protected branch is what says one is needed.
+    it('asks for a new branch on a protected branch when origin names no default branch', async () => {
+        const f = repository()
+        f.git('remote', 'set-head', 'origin', '--delete')
+        f.git('switch', '--quiet', '-c', 'release-line')
+        writeFileSync(f.config, '[guards]\nprotected_branches = ["release-line"]\n')
+        f.git('commit', '--quiet', '-am', 'Protect the release line')
+        const agent = (await f.cli(['upgrade', '--config', f.config, '--json'], { ...f.env, CLAUDECODE: '1' })).json()
+        expect(agent.result.next.split('\n')[0]).toBe('start a branch first: git switch -c cockpit-9.9.9 origin/<default branch>')
+        // The schema's own default protects main when the configuration names none.
+        const plain = repository()
+        plain.git('remote', 'set-head', 'origin', '--delete')
+        const onMain = (await plain.cli(['upgrade', '--config', plain.config, '--json'], { ...plain.env, CLAUDECODE: '1' })).json()
+        expect(onMain.result.next).toContain('start a branch first')
+    })
+
     // Safe Chain wraps the person's `npx` in a process whose own proxy filters every fetch, so the exemption
     // approve sets on the install it starts never reaches the filter. The person's line names it instead, a
     // failed install says so, and the step stays queued for the rerun.

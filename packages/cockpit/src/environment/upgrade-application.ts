@@ -13,6 +13,9 @@
  */
 import { lstat, readFile, readlink, realpath, stat } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'node:path'
+import { parse as parseToml, TomlError } from 'smol-toml'
+import { readBoundedInput } from '../config/load.js'
+import { Guards } from '../schema.js'
 import type { ExecuteProbeOutcome, ForegroundProcessInput, ForegroundProcessOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { readLatestRelease, type ReleaseMetadataTransport } from '../freshness.js'
@@ -224,6 +227,26 @@ async function observeTree(root: string, env: Readonly<Record<string, string>>,
  * exemption set on the install alone is never read. The functions wrap only while `safe-chain` is on
  * PATH, so the same lookup decides when the person's command must carry the exemption itself.
  */
+/**
+ * The branches `[guards] protected_branches` names, with the schema's default when it names none. The field
+ * is read alone, so a configuration this version would refuse elsewhere still answers; undefined when the
+ * file or the field cannot be read.
+ */
+async function branchesNotToCommitOn(configPath: string): Promise<readonly string[] | undefined> {
+    let parsed: unknown
+    try {
+        const read = await readBoundedInput(configPath)
+        if (read.kind === 'too-large') return undefined
+        parsed = parseToml(read.bytes.toString('utf8'))
+    } catch (error) {
+        if (error instanceof TomlError || hasErrorCode(error, 'ENOENT', 'EISDIR')) return undefined
+        throw error
+    }
+    const guards = (parsed as { guards?: unknown }).guards
+    const field = Guards.shape.protected_branches.safeParse(guards !== null && typeof guards === 'object' ? (guards as { protected_branches?: unknown }).protected_branches : undefined)
+    return field.success ? field.data : undefined
+}
+
 export async function personApproveCommand(env: Readonly<Record<string, string | undefined>>, root: string): Promise<string> {
     const safeChain = await locateExecutable('safe-chain', env, root)
     return `${safeChain.state === 'present' ? `${AGE_EXEMPTION}=${installedPackageMetadata.name} ` : ''}npx --no cockpit approve`
@@ -304,8 +327,12 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
     // The consumer's branch is made before the upgrade: once its files are dirty, switching to a branch
     // from the default branch refuses wherever a changed file also differs there.
     // A branch with no upstream yet is still a branch: one made with `git switch -c` has none until it is pushed.
+    // A protected branch counts as the default does, which covers a local main when origin names no default;
+    // one whose protection cannot be read is treated as protected.
+    const guarded = typeof before !== 'string' && before.branch !== null ? await branchesNotToCommitOn(configPath) : undefined
     const branch = typeof before !== 'string' && (before.branch === null || before.files.size > 0
-        || before.defaultRef !== undefined && `origin/${before.branch}` === before.defaultRef)
+        || before.defaultRef !== undefined && `origin/${before.branch}` === before.defaultRef
+        || guarded === undefined || guarded.includes(before.branch))
         ? `start a branch first: git switch -c cockpit-${target} ${typeof before !== 'string' && before.defaultRef || 'origin/<default branch>'}` : undefined
 
     // The install and its age exemption are a person's: an agent's run leaves them for approve.

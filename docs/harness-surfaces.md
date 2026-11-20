@@ -457,8 +457,8 @@ output and exit code pass through: it removes stale generated files, and an upgr
 agents may do waits for a person's `npx --no cockpit approve` yes. It ends by printing the `Upgrade:`
 lines from the installed `CHANGELOG.md` between the two versions (each names a step `sync` does not
 do), or the npm page when there is no changelog, and the next steps, one `next:` line each, in order:
-start a branch first when the tree was dirty, HEAD is detached or it is the default branch
-(`git switch -c cockpit-<version> origin/<default>`, best before the upgrade; a new branch with no
+start a branch first when the tree was dirty, HEAD is detached, or it is the default branch or one
+in `[guards] protected_branches` (`git switch -c cockpit-<version> origin/<default>`, best before the upgrade; a new branch with no
 upstream yet is fine); commit exactly the
 files the upgrade changed, named by path; then run `check` and `doctor`.
 
