@@ -20,7 +20,7 @@ a push that names no destination, or `HEAD`, asks, since only Git knows where it
 name inside a longer word, such as a commit message, a search pattern or a `sed`, `awk` or `jq` script,
 and the option values of a Git read are text, not names, so `git commit -m "Load .env first"` and
 `rg '\.env' docs` run. A program is judged under its folded name, and a Homebrew GNU tool with a `g` prefix
-(`grm`, `gcp`, `gsed`) as the command it names. The guard reads `if`/`elif`/`else`, `for`, `while` and `until`, subshells and
+(`grm`, `gcp`, `gsed`, `gtar`, `gtime`, `gpatch`, `gmake`) as the command it names. The guard reads `if`/`elif`/`else`, `for`, `while` and `until`, subshells and
 brace groups, `time` before either, judging every command inside as it would on its own. It also reads here-strings,
 `source FILE`, `${NAME:-word}` (its default word is name-checked wherever a word is) and arithmetic
 over numbers and operators. A plain `"$NAME"` as a redirect or an operand, or `"$NAME/file"` with a literal rest as an operand, in a

@@ -2673,6 +2673,18 @@ describe('cockpit structure protection', () => {
         for (const command of ['gcp src/a.ts build/a.ts', 'gls src', 'gcat README.md', 'ggrep -rn needle src']) expect(decide(command), command).toMatchObject({ decision: 'allow' })
     })
 
+    // Homebrew's gnu-time, gnu-tar, gpatch and make install as gtime, gtar, gpatch and gmake.
+    it('judges gtime, gtar, gpatch and gmake as the commands they are', () => {
+        for (const [prefixed, plain] of [['gtime rm -rf .cockpit/guards', 'time rm -rf .cockpit/guards'], ['gtar -xf a.tar -C .cockpit/guards', 'tar -xf a.tar -C .cockpit/guards'],
+            ['gpatch -p1 < x.patch', 'patch -p1 < x.patch']]) {
+            expect(decide(prefixed), prefixed).toEqual(decide(plain))
+            expect(decide(prefixed).decision, prefixed).not.toBe('allow')
+        }
+        const configured = policy()
+        configured.declaredDenies.push({ match: 'prefix', argv: ['make', 'deploy'], reason: 'Deploys are a person\'s.' })
+        expect(decide('gmake deploy', configured)).toEqual({ decision: 'deny', reason: 'Deploys are a person\'s.' })
+    })
+
     it('denies deleting, renaming or truncating the ownership manifest, and leaves cockpit.toml to the agent', () => {
         const manifest = '.cockpit/generated-environment-ownership.json'
         for (const command of [`rm ${manifest}`, 'rm -rf .cockpit', 'rm -rf .', 'rm -rf ../project', 'find . -delete', `truncate -s 0 ${manifest}`,

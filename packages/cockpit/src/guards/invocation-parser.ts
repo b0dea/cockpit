@@ -475,14 +475,14 @@ export function foldGuardSpelling(path: string): string {
  * so every rule keyed on a program's name sees the folded one; on a case-sensitive volume such a file is some other
  * program, which no rule names, so judging it as git refuses no less.
  */
-// Homebrew installs GNU coreutils, findutils, sed and grep with a `g` prefix (`grm`, `gcp`, `gsed`), and each runs as
-// the command it names: `grm -rf .cockpit/guards` deleted the guard as an unknown program. gtar and gawk are judged
-// under their own names already.
+// Homebrew installs GNU coreutils, findutils, sed, grep, tar, time, patch and make with a `g` prefix (`grm`, `gcp`,
+// `gtar`), and each runs as the command it names: `grm -rf .cockpit/guards` deleted the guard as an unknown program.
+// gawk is judged under its own name already.
 const GNU_PREFIXED = new Set(['base64', 'basename', 'cat', 'chgrp', 'chmod', 'chown', 'cp', 'csplit', 'cut', 'date', 'dd', 'df', 'dirname', 'du',
     'echo', 'env', 'expand', 'false', 'head', 'install', 'link', 'ln', 'ls', 'md5sum', 'mkdir', 'mkfifo', 'mktemp', 'mv', 'nice', 'nl', 'nohup', 'od',
     'printenv', 'printf', 'readlink', 'realpath', 'rm', 'rmdir', 'sha1sum', 'sha256sum', 'sha512sum', 'shred', 'sleep', 'sort', 'split', 'stat',
     'stdbuf', 'tac', 'tail', 'tee', 'test', 'timeout', 'touch', 'tr', 'true', 'truncate', 'uniq', 'unlink', 'wc', 'find', 'xargs', 'sed', 'grep',
-    'egrep', 'fgrep'])
+    'egrep', 'fgrep', 'tar', 'time', 'patch', 'make'])
 
 /** A program as the guard judges it: its folded name, and a g-prefixed GNU tool under the name of the command it is. */
 export function foldGuardProgram(word: string): string {
