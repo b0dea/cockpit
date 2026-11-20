@@ -449,6 +449,40 @@ describe('resolved guard evaluation', () => {
         }
     })
 
+    // After a squash merge the local main is behind origin's, so switching to it would write the old guard controls back.
+    it('fast-forwards a protected branch from its remote, and names that when switching to a stale one is refused', () => {
+        const stale = (request: Parameters<PathInspection>[0]) => request.operation !== 'tree' ? withGit(request)
+            : { status: 'resolved', path: posix.resolve(request.cwd, request.path), revision: request.revision,
+                ...request.from === undefined ? {} : { from: request.from }, guarded: true, changed: [`${root}/.cockpit/generated-environment-ownership.json`] }
+        const refused = evaluateGuard(parseGuardInput(shellPayload('git switch main')), policy(), stale)
+        expect(refused).toMatchObject({ decision: 'deny', reason: expect.stringContaining('git fetch origin main:main') })
+        for (const command of ['git fetch origin main:main', 'git fetch -q origin refs/heads/main:refs/heads/main', 'git fetch --depth 1 upstream main:heads/main']) {
+            expect(decide(command).decision, command).toBe('allow')
+        }
+        // A forced refspec or fetch rewrites the branch, `-u` fetches into the checked-out one, and another
+        // source, a path or `.` is not the remote's own copy of the branch.
+        for (const command of ['git fetch origin +main:main', 'git fetch -f origin main:main', 'git fetch --force origin main:main', 'git fetch -qu origin main:main',
+            'git fetch origin topic:main', 'git fetch origin refs/remotes/origin/main:main', 'git fetch ../fork main:main', 'git fetch . main:main',
+            'git fetch origin main:main +topic:release/stable', "git fetch --refmap='+refs/heads/main:refs/heads/main' origin main:main",
+            // A pattern destination reaches the protected branch it matches.
+            "git fetch origin '+refs/heads/*:refs/heads/*'", "git fetch origin 'refs/heads/m*:refs/heads/m*'",
+            // A case-insensitive volume stores MAIN as main.
+            'git fetch origin +topic:MAIN', 'git fetch origin topic:refs/heads/Main',
+            // An earlier command can create the directory Git then reads the name as.
+            'mv build/fork fork && git fetch fork main:main', 'mkdir -p fork; git fetch fork main:main']) {
+            expect(decide(command).decision, command).toBe('deny')
+        }
+        // Git reads a name no remote holds as a directory, which the agent can fill with its own commits.
+        const directory = (request: Parameters<PathInspection>[0]) => posix.resolve(request.cwd, request.path) === `${root}/fork`
+            ? { status: 'resolved', path: `${root}/fork`, symlink: false, identity: '8:4', ancestors: [] } : withGit(request)
+        expect(evaluateGuard(parseGuardInput(shellPayload('git fetch fork main:main')), policy(), directory).decision).toBe('deny')
+        // Refspecs from stdin or a refmap, and a remote's URL or fetch rules, are a person's to set.
+        for (const command of ['git fetch --stdin origin', "git fetch --refmap '+refs/heads/*:refs/remotes/origin/*' origin main",
+            'git remote add fork build/fork', 'git remote set-url origin build/fork', 'git remote rename fork origin', 'git remote set-branches origin main']) {
+            expect(decide(command).decision, command).toBe('ask')
+        }
+    })
+
     it('asks for a Git write it cannot resolve, and judges a new branch by its start point', () => {
         // A write judged as writing nothing when its target was missing let `git checkout -b <new> <rev>` and
         // `git pull --ff-only` replace the guard.
@@ -3733,6 +3767,13 @@ describe('everyday directory changes and held paths', () => {
         // Only a literal rest is followed: another expansion, a glob or a later command leaves the path unseen.
         for (const command of ['S=build; cp build/a "$S/$T"', 'S=build; cp build/a $S/*.txt', 'S=build; true; cp build/a "$S/x"']) {
             expect(run(command).decision, command).toBe('ask')
+        }
+    })
+
+    it('names the unread form when a cockpit command shares a call with one', () => {
+        for (const [command, form] of [[`${cockpit} down --config cockpit.toml > "$TMPDIR/doc.json"`, 'dynamic redirect target'],
+            [`s=$(date +%s); ${cockpit} down --config cockpit.toml; echo $(( $(date +%s) - s ))`, 'Arithmetic expansion']] as const) {
+            expect(run(command), command).toMatchObject({ decision: 'deny', reason: expect.stringContaining(form) })
         }
     })
 })

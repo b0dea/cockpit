@@ -360,6 +360,22 @@ describe('cockpit upgrade for an agent and a person', () => {
         expect(f.pending()).toEqual([])
     })
 
+    // Safe Chain prints its own summary after approve exits, which reads like the install failed.
+    it('says after an approve under Safe Chain that its suppressed-versions notice is not a failure', async () => {
+        const f = repository({ branch: 'topic' })
+        await f.cli(['upgrade', '--config', f.config, '--json'], { ...f.env, CLAUDECODE: '1' })
+        const wrapped = join(f.project, '..', 'wrapped-bin')
+        mkdirSync(wrapped)
+        writeFileSync(join(wrapped, 'safe-chain'), '#!/bin/sh\nexit 0\n')
+        chmodSync(join(wrapped, 'safe-chain'), 0o755)
+        const run = await f.cli(['approve', '--config', f.config], { ...f.env, PATH: `${wrapped}:${f.env.PATH}` }, { confirm: async () => true })
+        expect(run.status).toBe(0)
+        expect(run.stdout).toContain('Some package versions were suppressed" after this')
+        const plain = repository({ branch: 'topic' })
+        await plain.cli(['upgrade', '--config', plain.config, '--json'], { ...plain.env, CLAUDECODE: '1' })
+        expect((await plain.cli(['approve', '--config', plain.config], plain.env, { confirm: async () => true })).stdout).not.toContain('Safe Chain')
+    })
+
     // Once the release is installed, a rerun finds it current and would rerun nothing, so a failed sync is
     // not kept as a retry; its own message says to run sync.
     it('does not keep an upgrade whose install finished and whose sync failed', async () => {
