@@ -2659,6 +2659,18 @@ describe('cockpit structure protection', () => {
     const patch = (body: string) => evaluateGuard(parseGuardInput({ hook_event_name: 'PreToolUse', tool_name: 'apply_patch', cwd: root,
         tool_input: { command: `*** Begin Patch\n${body}\n*** End Patch` } }), policy(), inspect)
 
+    // Homebrew installs GNU coreutils, findutils, sed and grep with a `g` prefix; each runs as the command it names.
+    it('judges a g-prefixed GNU tool as the command it is', () => {
+        for (const command of ['grm -rf .cockpit/guards', '/opt/homebrew/bin/grm -rf .cockpit/guards', 'gtimeout 5 grm -rf .cockpit/guards', 'GRM -rf .cockpit/guards',
+            'gmv .codex/hooks.json build/x', 'gsed -i s/a/b/ .codex/hooks.json', 'gtee .codex/hooks.json', 'gln -sf build/x .codex/hooks.json', 'gtouch .cockpit/guards/x',
+            'gchmod 000 .codex/hooks.json', 'gtruncate -s0 .codex/hooks.json', 'gshred .codex/hooks.json', 'gdd if=build/x of=.codex/hooks.json', 'gmkdir .cockpit/guards/x',
+            'grmdir .cockpit/guards', 'ginstall build/x .codex/hooks.json', 'gprintenv']) {
+            expect(decide(command).decision, command).toBe('deny')
+        }
+        expect(decide('gcp -R . ../other/').decision).toBe('ask')
+        for (const command of ['gcp src/a.ts build/a.ts', 'gls src', 'gcat README.md', 'ggrep -rn needle src']) expect(decide(command), command).toMatchObject({ decision: 'allow' })
+    })
+
     it('denies deleting, renaming or truncating the ownership manifest, and leaves cockpit.toml to the agent', () => {
         const manifest = '.cockpit/generated-environment-ownership.json'
         for (const command of [`rm ${manifest}`, 'rm -rf .cockpit', 'rm -rf .', 'rm -rf ../project', 'find . -delete', `truncate -s 0 ${manifest}`,
