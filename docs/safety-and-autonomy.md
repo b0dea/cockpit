@@ -670,7 +670,9 @@ session started in that checkout. Secret names stay refused there as anywhere. A
 only where it exists as a directory under exactly the spelling declared: one that is missing, or
 reached through a link, grants nothing, and the declared spelling and its missing ancestors are never
 written, so an agent cannot plant a link there. The home directory, a directory above it and one
-overlapping a managed root grant nothing. Adding one widens what agents may read and waits for a person's sync.
+overlapping a managed root grant nothing. Adding one widens what agents may read and waits for a person's sync,
+except in a checkout where the entry is, or holds, the cockpit root or a sibling's: one `cockpit.toml`
+serves every checkout of a product, so there the entry is the cockpit itself, which the guard drops.
 
 `~/` means the home directory of whoever runs the agent. A listed path that does not exist grants
 nothing, and `/` or the home directory itself is never granted. In every mode the guard still
