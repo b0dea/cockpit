@@ -2967,10 +2967,12 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     // Only a command that runs once the link exists can follow it, so one link maker may end a sequential list: not
     // piped or in the background, beside no background job, and in no loop, which runs the commands before it again.
     // `:`, `true` and a bare `wait` after it read no path, unless the call can make one run something else: `enable -n`,
-    // zsh's `disable`, `hash -p`, `builtin` or a new PATH. The parser asks before a name an alias or function defines.
-    const redefines = invocations.some(invocation => ['enable', 'disable', 'hash', 'builtin'].includes(posix.basename(invocation.executable ?? ''))
-        || invocation.words.some(word => word.role === 'environment-assignment-value' && /^(?:PATH|path)$/.test(word.name ?? ''))
-        || VARIABLE_SETTERS.has(posix.basename(invocation.executable ?? '')) && invocation.argv.some(arg => /^(?:PATH|path)(?:=|$)/.test(arg)))
+    // zsh's `disable`, `hash -p`, `builtin`, an alias, zsh loading, copying or removing a function (`FPATH=build;
+    // autoload -U true` ran build/true), or a new PATH or FPATH. The parser also asks before a name a definition holds.
+    const redefines = invocations.some(invocation => ['enable', 'disable', 'hash', 'builtin', 'alias', 'unalias', 'autoload', 'functions', 'zmodload',
+        'unfunction'].includes(posix.basename(invocation.executable ?? ''))
+        || invocation.words.some(word => word.role === 'environment-assignment-value' && /^(?:PATH|path|FPATH|fpath)$/.test(word.name ?? ''))
+        || VARIABLE_SETTERS.has(posix.basename(invocation.executable ?? '')) && invocation.argv.some(arg => /^(?:PATH|path|FPATH|fpath)(?:=|$)/.test(arg)))
     const acting = invocations.filter(invocation => invocation.redirects.length || invocation.executable !== null
         && (redefines || !(['true', ':', 'wait'].includes(invocation.executable) && !invocation.argv.length)))
     const last = linkMakers.length === 1 && acting.at(-1) === linkMakers[0] && !linkMakers[0]!.piped && !input.loop

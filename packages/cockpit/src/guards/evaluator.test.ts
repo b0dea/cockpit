@@ -3155,6 +3155,16 @@ describe('installed code, search path and secret links', () => {
         }
     })
 
+    // zsh autoloads a function from FPATH under the builtin's name, and its other builtins load, copy or remove functions.
+    it('counts a no-op builtin as a later command beside zsh function loading or an FPATH change', () => {
+        const run = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command), { home: '/workspace/home' }), policy(), withGit)
+        for (const command of ['FPATH=build; autoload -U true; cp -r src out; true', 'autoload -U true; cp -r src out; true', 'FPATH=build; cp -r src out; true',
+            'export FPATH=build; cp -r src out; wait', 'typeset fpath=build; cp -r src out; :', 'functions -c x true; cp -r src out; true',
+            'zmodload zsh/files; cp -r src out; true', 'unfunction true; cp -r src out; true', 'unalias true; cp -r src out; true']) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+    })
+
     it('treats hard links and materialised repositories as links, and never writes a file another hard link shares', () => {
         const configured = { ...policy(), homeDirectory: '/workspace/person' }
         const run = (command: string, evidence: PathInspection = withGit) => evaluateGuard(parseGuardInput(shellPayload(command)), configured, evidence)
