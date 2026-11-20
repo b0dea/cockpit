@@ -2951,7 +2951,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const linkMakers = invocations.filter(invocation => (outsideGit || !gitInvocation(invocation)) && makesLink(invocation))
     // Only a command that runs once the link exists can follow it, so one link maker may end a sequential list: not
     // piped or in the background, beside no background job, and in no loop, which runs the commands before it again.
-    const acting = invocations.filter(invocation => invocation.executable !== null || invocation.redirects.length)
+    // `:`, `true` and a bare `wait` after it read no path.
+    const acting = invocations.filter(invocation => invocation.redirects.length || invocation.executable !== null
+        && !(['true', ':', 'wait'].includes(invocation.executable) && !invocation.argv.length))
     const last = linkMakers.length === 1 && acting.at(-1) === linkMakers[0] && !linkMakers[0]!.piped && !input.loop
         && !acting.some(invocation => invocation.background)
     if (linkMakers.length && !last && acting.some(invocation => !linkMakers.includes(invocation)) || linkMakers.length > 1) {

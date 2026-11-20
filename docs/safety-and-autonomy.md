@@ -445,7 +445,8 @@ files) or moves or copies an existing one runs nothing after it: a link's text r
 lies, so one moved within the call could reach a guard control or a secret, and the guard judged the
 call's other paths against the filesystem before it ran. It may end a call, as in
 `mkdir -p build && cp -r src build/out`, when it is the call's only link maker, neither piped nor in
-the background, beside no background job and outside a loop. Git writing a revision's files counts only
+the background, beside no background job and outside a loop; `:`, `true` and a bare `wait` after it
+read nothing. Git writing a revision's files counts only
 beside a command that is not Git, since Git's own later writes meet the Git tree checks:
 `git stash && git rebase main && git stash pop` runs. Hard links count too (`ln`, `link`, `cp -l`,
 BSD `install -l`, `pax -l`, `cpio -l`, `rsync --link-dest`), and so do a `gh repo clone`, `gh repo

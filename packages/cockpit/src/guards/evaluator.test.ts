@@ -3108,6 +3108,15 @@ describe('installed code, search path and secret links', () => {
         }
     })
 
+    // A no-op builtin after the link maker follows nothing, so the link maker still ends what the call does.
+    it('lets a no-op builtin follow the command that makes a link', () => {
+        const run = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command), { home: '/workspace/home' }), policy(), withGit)
+        for (const command of ['cp -r src build/out && :', 'cp -r src build/out; true', 'cp -r src build/out; wait']) expect(run(command), command).toMatchObject({ decision: 'allow' })
+        for (const command of ['cp -r src build/out; true > build/out/x', 'cp -r src build/out; wait 1', 'cp -r src build/out; true; cat build/out/x']) {
+            expect(run(command), command).toMatchObject({ decision: 'deny' })
+        }
+    })
+
     it('treats hard links and materialised repositories as links, and never writes a file another hard link shares', () => {
         const configured = { ...policy(), homeDirectory: '/workspace/person' }
         const run = (command: string, evidence: PathInspection = withGit) => evaluateGuard(parseGuardInput(shellPayload(command)), configured, evidence)
