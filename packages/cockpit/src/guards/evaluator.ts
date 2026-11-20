@@ -2949,8 +2949,12 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     // `git stash && git rebase main && git stash pop` runs, while `git checkout topic -- links && echo x > links/l` does not.
     const outsideGit = invocations.some(invocation => !gitInvocation(invocation) && (invocation.executable !== null || invocation.redirects.length))
     const linkMakers = invocations.filter(invocation => (outsideGit || !gitInvocation(invocation)) && makesLink(invocation))
-    if (linkMakers.length && invocations.some(invocation => !linkMakers.includes(invocation) && (invocation.executable !== null || invocation.redirects.length))
-        || linkMakers.length > 1) {
+    // Only a command that runs once the link exists can follow it, so one link maker may end a sequential list: not
+    // piped or in the background, beside no background job, and in no loop, which runs the commands before it again.
+    const acting = invocations.filter(invocation => invocation.executable !== null || invocation.redirects.length)
+    const last = linkMakers.length === 1 && acting.at(-1) === linkMakers[0] && !linkMakers[0]!.piped && !input.loop
+        && !acting.some(invocation => invocation.background)
+    if (linkMakers.length && !last && acting.some(invocation => !linkMakers.includes(invocation)) || linkMakers.length > 1) {
         hold(deny(`Refusing ${named(linkMakers[0]!)} with other commands in one call: it can make or move a symbolic link, which a later command could move to where its text reaches a guard control or a secret, and the guard judges every other path against the filesystem before the call. Make or move the link on its own, then run the rest in a later call.`))
     }
     // Every path a call names, as a word, an option value, a redirect or a file tool's target, and every

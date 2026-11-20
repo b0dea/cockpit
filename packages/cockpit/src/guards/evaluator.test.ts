@@ -3098,6 +3098,16 @@ describe('installed code, search path and secret links', () => {
         }
     })
 
+    // Only a command that runs after the link exists can follow it, so the link maker may end a sequential list.
+    it('lets a call end in one command that makes a link, run neither piped nor in the background', () => {
+        const run = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command), { home: '/workspace/home' }), policy(), withGit)
+        for (const command of ['mkdir -p build && cp -r src build/out', 'mkdir -p a && ln -s ../src a/src']) expect(run(command), command).toMatchObject({ decision: 'allow' })
+        for (const command of ['cp -r src build/out; cat build/out/x', 'cp -r src build/out && cat build/out/x', 'cp -r src out & cat out/x',
+            'cat out/x & cp -r src out', 'cat out/x | cp -r src out', 'for d in a b; do cat out/x; cp -r src out; done', 'ln -s ../src a/src && cp -r src out']) {
+            expect(run(command), command).toMatchObject({ decision: 'deny' })
+        }
+    })
+
     it('treats hard links and materialised repositories as links, and never writes a file another hard link shares', () => {
         const configured = { ...policy(), homeDirectory: '/workspace/person' }
         const run = (command: string, evidence: PathInspection = withGit) => evaluateGuard(parseGuardInput(shellPayload(command)), configured, evidence)
