@@ -166,9 +166,9 @@ interface PathInspectionRequest {
     /** For a `search`, the reading tool follows links, so a link below the path leaves its `sensitive` unknown (null). */
     readonly followsLinks?: true
     /**
-     * For a `search`, the command copies the tree, so its evidence may also carry `carried`: every existing path at or
-     * below it named as an agent tool's configuration, a guard directory or a repository, or null past the walk's bound.
-     * Without it what the tree carries is unknown, as with null.
+     * For a `search`, the command copies the tree, so its evidence carries `carried`: every existing path at or below it
+     * named as an agent tool's configuration, a guard directory or a repository, or null where the walk could not finish.
+     * Evidence for any search may carry it; for one that asked, a null or missing `carried` leaves the copy unknown.
      */
     readonly carries?: true
     /** For a `repository`, the command can print a commit, so its evidence also carries `committed`. */
@@ -2451,7 +2451,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         inspectedLink = record(evidence) && evidence.symlink === true
         const lexical = posix.resolve(request.cwd, request.path)
         const listed = request.operation === 'search' || request.operation === 'unignored-search'
-            ? ['sensitive', ...request.carries && record(evidence) && Object.hasOwn(evidence, 'carried') ? ['carried'] : []]
+            ? ['sensitive', ...record(evidence) && Object.hasOwn(evidence, 'carried') ? ['carried'] : []]
             : request.operation === 'repository' ? ['tracked', ...request.history ? ['committed'] : []] : []
         const canonicalPath = evidence !== undefined && record(evidence) ? evidence.canonicalPath : undefined
         const observedPath = canonicalPath ?? lexical
@@ -2831,7 +2831,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const present = reached.find((target) => identityOf(target) !== null && read(target))
             const unseen = sensitive?.find((found) => !documentation(fold(found)))
             // A copy carries an agent tool's settings, a guard directory or a repository to where a session or Git loads it.
-            const carried = (evidence.carried as readonly string[] | null | undefined)?.[0]
+            // A walk that could not finish, or evidence that does not say, leaves what the copy carries unknown.
+            const carries = evidence.carried as readonly string[] | null | undefined
+            const carried = access.carries ? carries === null || carries === undefined ? null : carries[0] : undefined
             if (present === undefined && sensitive !== null && unseen === undefined && carried === undefined && chainReadOnly) return
             safe = false
             const shown = (target: string) => posix.relative(access.cwd, target) || '.'
@@ -2839,7 +2841,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             searchBlocker = present !== undefined || sensitive !== null && unseen !== undefined ? deny(present !== undefined
                 ? `A recursive search of ${path} would read ${shown(present)}, ${(resolved.secretPaths ?? []).includes(present) ? 'a path [guards] secret_paths declares secret' : 'a declared environment instance or secrets directory'}. Search a path that does not contain it.`
                 : `A recursive search of ${path} would read ${shown(unseen!)}, an environment file or secrets directory that is not a declared template. Search a path that does not contain it.`) : undefined
-            if (carried !== undefined) searchBlocker ??= ask(`Copying ${path} carries ${shown(carried)}, an agent tool's configuration, a guard directory or a repository, which a session started there loads or whose hooks Git runs. Copy the files it needs by name; otherwise a person approves it.`)
+            if (carried === null) searchBlocker ??= ask(`The guard could not walk all of ${path} to tell whether copying it carries an agent tool's configuration, a guard directory or a repository, which a session started there loads or whose hooks Git runs. Copy the files it needs by name; otherwise a person approves it.`)
+            else if (carried !== undefined) searchBlocker ??= ask(`Copying ${path} carries ${shown(carried)}, an agent tool's configuration, a guard directory or a repository, which a session started there loads or whose hooks Git runs. Copy the files it needs by name; otherwise a person approves it.`)
         }
         for (const path of access.requires ?? []) {
             const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: 'read' })
@@ -3266,7 +3269,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 + 'Name the files it needs, or use `git worktree add` for another checkout; otherwise a person approves it or runs it.'))
         }
         const othersReadOnly = invocations.every(other => other === invocation || accesses.get(other) !== undefined || other.executable === null && !other.redirects.some(redirect => redirect.write))
-        const copies = executableName === 'cp' || executableName === 'rsync'
+        const copies = ['cp', 'rsync', 'ditto', 'scp'].includes(executableName)
         if (sources?.paths.length && !inspectReadOnly({ cwd: invocation.cwd, reads: [], trees: sources.paths, listings: [], ...sources.followsLinks ? { followsLinks: true as const } : {},
             ...copies ? { carries: true as const } : {} }, othersReadOnly)
             && searchBlocker && !approvalBarriers.has(invocation)) {

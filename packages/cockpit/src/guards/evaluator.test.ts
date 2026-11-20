@@ -21,6 +21,8 @@ const inspect = ({ path, cwd, operation, revision, from, history }: { path: stri
     ? { status: 'resolved', path: posix.resolve(cwd, path), revision, ...from === undefined ? {} : { from }, guarded: false, changed: [] as string[] }
     : operation === 'archive' ? { status: 'resolved', path: posix.resolve(cwd, path), entries: [] as string[], links: false }
     : { status: 'resolved', path: posix.resolve(cwd, path), symlink: false, identity: null, ancestors: [],
+        // A synthetic tree carries no agent configuration, guard directory or repository to where it is copied.
+        ...(searches(operation) ? { carried: [] as string[] | null } : {}),
         ...(searches(operation) ? { sensitive: [] as string[] | null } : {}), ...(operation === 'repository' ? { tracked: [] as string[] | null, ...history ? { committed: [] as string[] | null } : {} } : {}) }
 // Identity facts for every protected path; synthetic tests name only the ones they exercise.
 type IdentityFacts = Record<string, { identity: string | null; ancestors: string[] }>
@@ -3246,6 +3248,29 @@ describe('installed code, search path and secret links', () => {
             expect(run(command), command).toMatchObject({ decision: 'ask', reason: expect.stringContaining('pkg/.claude/settings.json') })
         }
         for (const command of ['cp -R src build/out', 'rsync -a src/ build/out/', 'grep -rn needle pkg']) expect(run(command), command).toMatchObject({ decision: 'allow' })
+    })
+
+    // A walk that could not finish, or an inspector that did not say, leaves what the copy carries unknown, so it asks;
+    // ditto and scp -r copy trees as cp -R does.
+    it('asks before a copy whose carried names the walk could not settle, and judges ditto and scp as copies', () => {
+        const configured = { ...policy(), homeDirectory: '/workspace/home' }
+        const carrying = (carried: (path: string) => readonly string[] | null | undefined): PathInspection => request => {
+            const { carried: _, ...evidence } = withGit(request) as ReturnType<typeof withGit> & { carried?: unknown }
+            const found = carried(evidence.path)
+            return 'sensitive' in evidence && found !== undefined ? { ...evidence, carried: found } : evidence
+        }
+        const run = (command: string, carried: (path: string) => readonly string[] | null | undefined) =>
+            evaluateGuard(parseGuardInput(shellPayload(command), { home: '/workspace/home' }), configured, carrying(carried))
+        for (const command of ['cp -R src build/out', 'rsync -a src/ build/out/', 'cp -rL src build/out']) {
+            expect(run(command, () => null), command).toMatchObject({ decision: 'ask', reason: expect.stringContaining('could not') })
+            expect(run(command, () => undefined), command).toMatchObject({ decision: 'ask', reason: expect.stringContaining('could not') })
+        }
+        expect(run('grep -rn needle src', () => undefined)).toMatchObject({ decision: 'allow' })
+        const settings = `${root}/pkg/.claude/settings.json`
+        for (const command of ['ditto pkg sub', 'scp -r pkg sub']) {
+            expect(run(command, path => path === `${root}/pkg` ? [settings] : []), command).toMatchObject({ decision: 'ask', reason: expect.stringContaining('pkg/.claude/settings.json') })
+        }
+        expect(run('ditto src sub', () => [])).toMatchObject({ decision: 'allow' })
     })
 
     // A recursive copy carries what the tree holds: a copy of the cockpit puts its guard files, agent settings and Git
