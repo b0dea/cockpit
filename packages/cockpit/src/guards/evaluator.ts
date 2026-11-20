@@ -165,6 +165,12 @@ interface PathInspectionRequest {
     readonly workspace?: true
     /** For a `search`, the reading tool follows links, so a link below the path leaves its `sensitive` unknown (null). */
     readonly followsLinks?: true
+    /**
+     * For a `search`, the command copies the tree, so its evidence may also carry `carried`: every existing path at or
+     * below it named as an agent tool's configuration, a guard directory or a repository, or null past the walk's bound.
+     * Without it what the tree carries is unknown, as with null.
+     */
+    readonly carries?: true
     /** For a `repository`, the command can print a commit, so its evidence also carries `committed`. */
     readonly history?: true
 }
@@ -2444,7 +2450,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         catch (error) { inspectionFailure = errorCause(error); return undefined }
         inspectedLink = record(evidence) && evidence.symlink === true
         const lexical = posix.resolve(request.cwd, request.path)
-        const listed = request.operation === 'search' || request.operation === 'unignored-search' ? ['sensitive']
+        const listed = request.operation === 'search' || request.operation === 'unignored-search'
+            ? ['sensitive', ...request.carries && record(evidence) && Object.hasOwn(evidence, 'carried') ? ['carried'] : []]
             : request.operation === 'repository' ? ['tracked', ...request.history ? ['committed'] : []] : []
         const canonicalPath = evidence !== undefined && record(evidence) ? evidence.canonicalPath : undefined
         const observedPath = canonicalPath ?? lexical
@@ -2790,7 +2797,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             // protected file leaves every recursive search unproven: either may reach it unnamed.
             if (kind !== 'listing' && !secretFiles || kind === 'tree' && resolved.protectedFilesLinked) safe = false
             const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: kind === 'tree' ? access.skipsIgnored ? 'unignored-search' : 'search' : kind === 'listing' && external ? 'list' : 'read',
-                ...kind === 'tree' && access.followsLinks ? { followsLinks: true as const } : {} })
+                ...kind === 'tree' && access.followsLinks ? { followsLinks: true as const } : {}, ...kind === 'tree' && access.carries ? { carries: true as const } : {} })
             if (!evidence || external && evidence.identity === null && !(kind === 'read' && access.revisionOperands)) {
                 if (external && kind === 'tree' && evidence) searchBlocker ??= ask(`${shownGuardWord(path)} does not exist outside the configured roots. Name an existing regular file.`)
                 else if (external && kind === 'tree') searchBlocker ??= ask(`A search of ${shownGuardWord(path)} outside the configured roots must name a regular file: there the guard recognises only .env and .secrets names, not other credential files, so it does not search a directory or follow a link. Search the named files instead.`)
@@ -2823,13 +2830,16 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const reached = searchedProtections.filter((target) => within(fold(target), folded) || covers(target))
             const present = reached.find((target) => identityOf(target) !== null && read(target))
             const unseen = sensitive?.find((found) => !documentation(fold(found)))
-            if (present === undefined && sensitive !== null && unseen === undefined && chainReadOnly) return
+            // A copy carries an agent tool's settings, a guard directory or a repository to where a session or Git loads it.
+            const carried = (evidence.carried as readonly string[] | null | undefined)?.[0]
+            if (present === undefined && sensitive !== null && unseen === undefined && carried === undefined && chainReadOnly) return
             safe = false
             const shown = (target: string) => posix.relative(access.cwd, target) || '.'
             // A protected path that exists now is a person's to read past; one that might appear first is not.
             searchBlocker = present !== undefined || sensitive !== null && unseen !== undefined ? deny(present !== undefined
                 ? `A recursive search of ${path} would read ${shown(present)}, ${(resolved.secretPaths ?? []).includes(present) ? 'a path [guards] secret_paths declares secret' : 'a declared environment instance or secrets directory'}. Search a path that does not contain it.`
                 : `A recursive search of ${path} would read ${shown(unseen!)}, an environment file or secrets directory that is not a declared template. Search a path that does not contain it.`) : undefined
+            if (carried !== undefined) searchBlocker ??= ask(`Copying ${path} carries ${shown(carried)}, an agent tool's configuration, a guard directory or a repository, which a session started there loads or whose hooks Git runs. Copy the files it needs by name; otherwise a person approves it.`)
         }
         for (const path of access.requires ?? []) {
             const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: 'read' })
@@ -3252,7 +3262,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 + 'Name the files it needs, or use `git worktree add` for another checkout; otherwise a person approves it or runs it.'))
         }
         const othersReadOnly = invocations.every(other => other === invocation || accesses.get(other) !== undefined || other.executable === null && !other.redirects.some(redirect => redirect.write))
-        if (sources?.paths.length && !inspectReadOnly({ cwd: invocation.cwd, reads: [], trees: sources.paths, listings: [], ...sources.followsLinks ? { followsLinks: true as const } : {} }, othersReadOnly)
+        const copies = executableName === 'cp' || executableName === 'rsync'
+        if (sources?.paths.length && !inspectReadOnly({ cwd: invocation.cwd, reads: [], trees: sources.paths, listings: [], ...sources.followsLinks ? { followsLinks: true as const } : {},
+            ...copies ? { carries: true as const } : {} }, othersReadOnly)
             && searchBlocker && !approvalBarriers.has(invocation)) {
             approvalBarriers.set(invocation, searchBlocker)
         }

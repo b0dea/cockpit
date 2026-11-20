@@ -55,6 +55,7 @@ import {
     guardSearchDirectories,
     guardSecretFiles,
     guardSensitivePathsBelow,
+    guardCarriedPathsBelow,
     guardBranchFacts,
     guardPackageManifest,
     guardPatchTargets,
@@ -679,6 +680,7 @@ export async function runGuardEvaluationApplication(
             const search = request.operation === 'search' || request.operation === 'unignored-search'
             return { status: 'resolved', path, symlink: false, identity: exists ? chain.at(-1)! : null, ancestors: exists ? chain.slice(0, -1) : chain,
                 ...(search ? { sensitive: exists ? searched(path, request.operation === 'unignored-search', request.followsLinks === true) : [] } : {}),
+                ...(search && request.carries ? { carried: exists ? guardCarriedPathsBelow(path, undefined, request.followsLinks === true) : [] } : {}),
                 ...(request.operation === 'repository' ? { tracked: tracked.get(path) ?? null, ...request.history ? { committed: committed.get(path) ?? null } : {} } : {}),
                 ...(request.operation === 'write' && exists && inspected.get(path)!.isFile() ? { links: inspected.get(path)!.nlink } : {}) }
         }

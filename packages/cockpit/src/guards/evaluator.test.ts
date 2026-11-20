@@ -3207,6 +3207,23 @@ describe('installed code, search path and secret links', () => {
 
     // Agents copy directories constantly. A recursive cp reads each source as the tree it is, as rsync does, and its
     // destination is a write covering everything the copy may put below it.
+    // A tree that holds an agent tool's settings, a guard directory or a repository carries them to the destination, where a
+    // session started there loads them or Git runs their hooks; the inspector's walk names them.
+    it('asks before a recursive copy or sync of a tree holding agent settings or a repository', () => {
+        const configured = { ...policy(), homeDirectory: '/workspace/home' }
+        const settings = `${root}/pkg/.claude/settings.json`
+        const carrying: PathInspection = request => {
+            const evidence = withGit(request)
+            return 'sensitive' in evidence && (request as { carries?: true }).carries
+                ? { ...evidence, carried: evidence.path === `${root}/pkg` ? [settings] : [] } : evidence
+        }
+        const run = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command), { home: '/workspace/home' }), configured, carrying)
+        for (const command of ['cp -R pkg sub/', 'rsync -a pkg/ sub/', 'cp -a pkg build/pkg']) {
+            expect(run(command), command).toMatchObject({ decision: 'ask', reason: expect.stringContaining('pkg/.claude/settings.json') })
+        }
+        for (const command of ['cp -R src build/out', 'rsync -a src/ build/out/', 'grep -rn needle pkg']) expect(run(command), command).toMatchObject({ decision: 'allow' })
+    })
+
     // A recursive copy carries what the tree holds: a copy of the cockpit puts its guard files, agent settings and Git
     // configuration and hooks wherever a session or Git then loads them, so it asks as rsync does.
     it('asks before a recursive copy whose source holds guard files or a repository', () => {

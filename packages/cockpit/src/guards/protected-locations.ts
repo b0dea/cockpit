@@ -94,18 +94,35 @@ const sensitiveName = isSensitiveGuardName
  * `followsLinks`, for a tool that follows them, null as well once the walk meets a link.
  */
 export function guardSensitivePathsBelow(path: string, entryLimit = GUARD_SEARCH_ENTRY_LIMIT, followsLinks = false): readonly string[] | null {
+    return namedPathsBelow(path, sensitiveName, true, entryLimit, followsLinks)
+}
+
+// What a copy of a tree carries to where a session or Git then loads it: an agent tool's configuration, a
+// guard directory, or a repository's `.git`, whose configuration and hooks Git runs. Case-folded names.
+const CARRIED_NAMES = new Set(['.claude', '.codex', '.opencode', '.cockpit', '.mcp.json', 'opencode.json', 'opencode.jsonc', '.git'])
+
+/**
+ * Every path at or below `path` named as `CARRIED_NAMES` holds, walked as guardSensitivePathsBelow walks, without
+ * entering one it found: one found is enough to name, and a repository's objects would spend the walk's bound.
+ */
+export function guardCarriedPathsBelow(path: string, entryLimit = GUARD_SEARCH_ENTRY_LIMIT, followsLinks = false): readonly string[] | null {
+    return namedPathsBelow(path, name => CARRIED_NAMES.has(name.toLowerCase()), false, entryLimit, followsLinks)
+}
+
+function namedPathsBelow(path: string, named: (name: string) => boolean, entersNamed: boolean, entryLimit: number, followsLinks: boolean): readonly string[] | null {
     let status
     try { status = lstatSync(path) } catch (error) { if (missing(error)) return []; throw error }
-    const found = sensitiveName(basename(path)) ? [path] : []
-    const pending = status.isDirectory() ? [path] : []
+    const found = named(basename(path)) ? [path] : []
+    const pending = status.isDirectory() && (entersNamed || !found.length) ? [path] : []
     let seen = 0
     while (pending.length) {
         const directory = pending.pop()!
         for (const entry of readdirSync(directory, { withFileTypes: true })) {
             if (++seen > entryLimit || followsLinks && entry.isSymbolicLink()) return null
             const child = join(directory, entry.name)
-            if (sensitiveName(entry.name) && found.push(child) > GUARD_LOCATION_LIMITS.sensitivePaths) return null
-            if (entry.isDirectory()) pending.push(child)
+            const hit = named(entry.name)
+            if (hit && found.push(child) > GUARD_LOCATION_LIMITS.sensitivePaths) return null
+            if (entry.isDirectory() && (entersNamed || !hit)) pending.push(child)
         }
     }
     return found.sort()

@@ -30,6 +30,8 @@ export interface ReadOnlyAccess {
     readonly revisionOperands?: boolean
     /** The command follows links below its `trees`, which a walk that does not follow them cannot vouch for. */
     readonly followsLinks?: true
+    /** The command copies its `trees`, so what they carry to the destination is judged too. */
+    readonly carries?: true
 }
 
 type Classified = Omit<ReadOnlyAccess, 'cwd'> | undefined
