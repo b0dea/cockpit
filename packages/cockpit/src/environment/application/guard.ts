@@ -1008,8 +1008,10 @@ export async function prepareGuardEvaluationPolicy(
                         || [...allowedRoots].some(root => confinedPath(root, real) || confinedPath(real, root))) return []
                     return [real]
                 }),
-                // Every declared spelling and its missing ancestors stay unwritten, so no agent can create one.
-                relatedReserved: [...new Set(relatedSpellings.flatMap(path => {
+                // Every declared spelling and its missing ancestors stay unwritten, so no agent can create one. A
+                // spelling that is a root or holds one names no other checkout: one cockpit.toml serves every
+                // checkout of a product, and reserving its own root refused every write in it.
+                relatedReserved: [...new Set(relatedSpellings.filter(path => ![...allowedRoots].some(root => confinedPath(path, root))).flatMap(path => {
                     const reserved = [path]
                     for (let cursor = dirname(path); cursor !== '/' && !lstatIfPresentSync(cursor); cursor = dirname(cursor)) reserved.push(cursor)
                     return reserved

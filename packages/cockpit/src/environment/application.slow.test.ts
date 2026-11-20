@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, renameSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, type Stats } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse, stringify } from 'smol-toml'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
@@ -384,6 +385,26 @@ describe('guard policy construction', () => {
         expect((await decide(`cp notes.md '${unlisted}/copy.md'`)).decision).toBe('unavailable')
         expect(await decide(`cp notes.md '/System/Volumes/Data${root}/node_modules/copy.md'`)).toMatchObject({ decision: 'deny' })
         expect(await decide(`cp notes.md '${outside}/.toolrc'`)).toMatchObject({ decision: 'deny' })
+    }, 120_000)
+
+    // One cockpit.toml serves every checkout of a product, so a related_checkouts entry can name the very checkout
+    // the guard runs in, or a directory holding it. That entry is no other checkout and reserves nothing: it used
+    // to refuse every write in the cockpit as a change to a related checkout.
+    it('reserves no related spelling that is the cockpit itself or holds it, and still writes in the cockpit', async () => {
+        const { root, configPath } = await observedPolicy()
+        const config = CockpitConfig.parse(parse(readFileSync(configPath, 'utf8')))
+        config.guards.related_checkouts = [`../${basename(root)}`, dirname(root)]
+        writeFileSync(configPath, stringify(config))
+        const synced = await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })
+        expect(synced, JSON.stringify(synced.diagnostics)).toMatchObject({ kind: 'complete' })
+        const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
+        const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
+            resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }) }
+        const decide = async (command: string) => (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'codexcli', cwd: root,
+            payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+        for (const command of ['echo x > notes.md', 'mkdir -p src/lib', 'git switch -c topic']) {
+            expect(await decide(command), command).toMatchObject({ decision: 'allow' })
+        }
     }, 120_000)
 
     it('grants a related checkout only where it exists under its declared spelling, and keeps the agent from creating one', async () => {
