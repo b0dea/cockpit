@@ -84,6 +84,20 @@ it('refuses without a person at a terminal outside an agent, and says where to r
     expect(begin).not.toHaveBeenCalled()
 })
 
+it('hands the person one copyable line for a step it leaves waiting, and approve refused in an agent session says the same', async () => {
+    const { root, config } = cockpitRoot()
+    const handOff = `cd ${root} && npx --no cockpit approve`
+    const notHere = 'in a terminal of your own, not with `!` in this session, which can\'t take your answer'
+    const { begin } = retryStep()
+    const agent = await agentRuns(['work', 'retry', '--work-order', 'WO-1', '--note', 'a flaky fixture', '--config', config], { beginOperatorWorkApplication: begin })
+    expect(agent.envelope.diagnostics[0].message).toContain(`run \`${handOff}\` ${notHere}`)
+    let stderr = ''
+    const io = { stdin: Object.assign(new PassThrough(), { isTTY: true }), stdout: { write: () => true },
+        stderr: { write: (text: string) => ((stderr += text), true), isTTY: true } } as unknown as CliIo
+    expect(await runCli(['approve', '--config', config], io, { loadPolicy: quietPolicy }, { env: { CLAUDECODE: '1' } })).toBe(2)
+    expect(stderr).toContain(`run \`${handOff}\` ${notHere}`)
+})
+
 it('leaves an agent\'s person step for approve, which shows it briefly and applies it on y', async () => {
     const { root, config, pending } = cockpitRoot()
     const { apply, begin } = retryStep()

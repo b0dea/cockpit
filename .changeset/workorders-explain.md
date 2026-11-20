@@ -6,4 +6,6 @@ A work order grade that a cockpit or machine error ends before it judges the pro
 
 When the grader's quote is not found in what it cites, the grade now says to quote the evidence verbatim from that source.
 
-The cockpit-explain skill maps a pasted guard refusal to its rule and the spelling that runs instead.
+The cockpit-explain skill maps a pasted guard refusal, as the guard words it now, to its rule and the spelling that runs instead.
+
+When an agent leaves a step for a person, its message now gives one line to copy, `cd <root> && npx --no cockpit approve`, and says to run it in a terminal of their own, not with `!` in the agent session, which cannot take their answer. `approve` refused inside an agent session says the same.
