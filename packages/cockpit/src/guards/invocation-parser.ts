@@ -489,6 +489,26 @@ const wrappers = new Set(['timeout', 'nice', 'nohup', 'setsid', 'env', 'command'
 // not read, or a program that runs the rest of its command line in a form the guard does not read as a wrapper.
 const dynamicExecutables = new Set(['eval', 'dash', 'ksh', 'fish', 'csh', 'tcsh', 'mksh', 'yash', 'busybox', 'pwsh', 'builtin',
     'trap', 'let', 'chrt', 'taskset', 'unbuffer', 'watch', 'script', 'flock', 'parallel', 'entr'])
+// tmux commands that list, attach, capture or end sessions, which run no shell text.
+const TMUX_PLAIN = new Set(['ls', 'list-sessions', 'attach', 'attach-session', 'a', 'has-session', 'has', 'kill-session', 'kill-server', 'list-windows',
+    'lsw', 'list-panes', 'lsp', 'list-clients', 'lsc', 'capture-pane', 'capturep', 'detach-client', 'detach'])
+/**
+ * Whether a program runs shell text from its arguments or standard input, often in a session or job that outlives the
+ * call: tmux (any command but a listing or attaching one, or a command list joined by `;`), screen (any form but
+ * `-ls`, `-r` or `-x`), `at` and `batch`, a terminal's `-e`, and AppleScript's `do shell script`.
+ */
+function launchesShellText(name: string, args: readonly string[]): boolean {
+    if (name === 'tmux') {
+        let at = 0
+        while (args[at] === '-L' || args[at] === '-S') at += 2
+        return !TMUX_PLAIN.has(args[at] ?? '') || args.some(arg => arg.endsWith(';'))
+    }
+    if (name === 'screen') return !['-ls', '-list', '-r', '-x', '-wipe'].includes(args[0] ?? '') || args.length > 2 || args.slice(1).some(arg => arg.startsWith('-'))
+    if (name === 'at' || name === 'batch') return true
+    if (name === 'xterm') return args.includes('-e')
+    if (name === 'osascript') return args.some(arg => /do\s+shell\s+script/i.test(arg))
+    return false
+}
 /**
  * Package and environment managers that run a program named on their line, by their words before it. Only the options
  * listed are read: any other may pick a shell, a directory, an environment file or another package. npm and yarn read an
@@ -856,7 +876,7 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
         if (subscriptEvaluators.has(name) && args.slice(cursor + 1).some((token) => /\[.*[$`]/s.test(outsideSubstitutions(token)))) {
             refuse(`${shown(executable)} evaluates an array subscript as arithmetic, which runs any command substitution in it. Write the index as a number.`)
         }
-        if (dynamicExecutables.has(name)) refuse(`${shown(executable)} runs a command or script built from its arguments, which the guard does not parse. Run the command itself.`)
+        if (dynamicExecutables.has(name) || launchesShellText(name, args.slice(cursor + 1).map((token) => token.value))) refuse(`${shown(executable)} runs a command or script built from its arguments, which the guard does not parse. Run the command itself.`)
         if (reserved.has(executable)) refuse(`Shell control flow (${executable}) is not parsed by the guard. Run each command on its own.`)
         words.push({ role: 'executable', value: executable })
         cursor++

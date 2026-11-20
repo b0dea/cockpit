@@ -3415,6 +3415,22 @@ describe('everyday directory changes and held paths', () => {
         for (const command of ['cat "$PWD/notes.md"', 'S=build/out; cp build/a "$S/x"']) expect(run(command).decision, command).not.toBe('deny')
     })
 
+    // A session, job or terminal that another program starts runs shell text the guard does not parse, often after the
+    // call has ended, so the text is judged by the names it spells and otherwise asks.
+    it('judges shell text that a session, job or terminal launcher runs as unread shell', () => {
+        const settings = '.claude/settings.json'
+        for (const command of [`tmux new-session -d 'cat .env > build/l'`, `tmux new-session -d 'cp build/x ${settings}'`, `screen -dm sh -c 'cat .netrc > build/l'`,
+            `at now + 1 minute <<< 'cp build/x ${settings}'`, `batch <<< 'cat .env'`, `tmux send-keys -t x 'cat .env' Enter`, `xterm -e 'cat .env'`]) {
+            expect(run(command), command).toMatchObject({ decision: 'deny' })
+        }
+        for (const command of [`tmux new-session -d 'sleep 2; cat out/x > build/leak.txt'; cp -r src out`, `tmux new-window 'npm test'`, `tmux neww 'npm test'`,
+            `tmux run-shell 'make'`, `tmux run 'make'`, `tmux send 'make' Enter`, `tmux new -d 'make'`, 'tmux', 'tmux ls \\; run-shell make', 'screen -S x -dm npm test',
+            'screen -d -m npm test', 'at -f build/job now', `osascript -e 'do shell script "make"'`, 'xterm -e make']) {
+            expect(run(command), command).toMatchObject({ decision: 'ask' })
+        }
+        for (const command of ['tmux ls', 'tmux attach -t x', 'screen -ls']) expect(run(command), command).toMatchObject({ decision: 'allow' })
+    })
+
     // `.aws/` and `.aws/*` name the store as `.aws` does: a sync, a recursive copy or a glob reaches every file in it.
     it('judges a directory spelled with a trailing slash or a glob after it as the directory itself', () => {
         for (const command of ['rsync -a "$X/.aws/" build/', `python3 -c "import os, glob; os.chdir(os.environ['HO'+'ME']); print(glob.glob('.codex/*'))"`,
