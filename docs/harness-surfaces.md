@@ -457,8 +457,9 @@ output and exit code pass through: it removes stale generated files, and an upgr
 agents may do waits for a person's `npx --no cockpit approve` yes. It ends by printing the `Upgrade:`
 lines from the installed `CHANGELOG.md` between the two versions (each names a step `sync` does not
 do), or the npm page when there is no changelog, and the next steps, one `next:` line each, in order:
-start a branch first when the tree was dirty, the branch has no upstream or it is the default branch
-(`git switch -c cockpit-<version> origin/<default>`, best before the upgrade); commit exactly the
+start a branch first when the tree was dirty, HEAD is detached or it is the default branch
+(`git switch -c cockpit-<version> origin/<default>`, best before the upgrade; a new branch with no
+upstream yet is fine); commit exactly the
 files the upgrade changed, named by path; then run `check` and `doctor`.
 
 `--commit` stages exactly those files by path and commits them as `chore: upgrade cockpit to
@@ -477,7 +478,11 @@ nothing, and records the step for approve (`UPGRADE_PERSON_REQUIRED`); its outpu
 first. The person's screen names both versions and the install command. On `y`, approve installs with
 `SAFE_CHAIN_MINIMUM_PACKAGE_AGE_EXCLUSIONS=@b00dea/cockpit` set for that install alone, so
 Safe Chain's minimum package age check skips cockpit and
-nothing else; the sync after it, the agent and every later command run without it. An agent's
+nothing else; the sync after it, the agent and every later command run without it. Safe Chain's
+shell functions run `npx` inside their own process, whose proxy filters every fetch and reads the
+exemption only from that process's environment, so the install's own variable never reaches it. When
+`safe-chain` is on the search path, the agent's output names the exemption on the person's approve
+command, and an install the filter refused says so, keeps the step and gives the line to rerun. An agent's
 `upgrade --commit` records the commit too: the person's yes installs and syncs, and a second yes on
 the exact list of changed files commits them, since anything that wrote during the install would
 ride along. The guard
