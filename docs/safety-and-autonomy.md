@@ -1212,6 +1212,67 @@ If an adapter is unavailable, no target-specific registration or read-only fragm
 shared guard file may still be generated. What each harness is confirmed to enforce is in
 [Capability states](harness-surfaces.md#capability-states).
 
+## Prove the guard after a change
+
+`guard prove` checks the generated hooks the way a harness runs them. It sends each probe as that
+harness's PreToolUse payload to every hook command in `.claude/settings.json`,
+`.claude/settings.local.json` and `.codex/hooks.json`, and reads back the answer. It judges probes;
+it never runs them. Run
+`./node_modules/@b00dea/cockpit/bin/cockpit.mjs guard prove --config cockpit.toml` after every upgrade
+and after a change to `[guards]`.
+
+The checkout's state changes some answers. A dirty guard control changes what `git stash`, `reset`,
+`revert` or `worktree add` may write, and a branch's upstream decides where a bare `git push` goes. So
+`guard prove` clones the committed cockpit and each sibling repository into a scratch directory, keeps
+their layout, checks out a branch with no upstream, and links in `node_modules`. It copies your
+working `cockpit.toml` in, committed or not, since the hooks in force were synced from it, and syncs
+that clone for a scratch home. It commits what that changed inside the clone, so the clone's tree is
+clean. The answers then depend on the commit and your configuration, not on the rest of your working
+tree. When no valid clone
+can be made, for example because nothing is committed yet or a sibling is not a Git repository, it
+runs in your checkout and warns with `GUARD_PROVE_IN_PLACE`. The report then records the branch,
+upstream and uncommitted files the answers depended on.
+
+It always runs the standard probes in
+[`prove-matrix.ts`](../packages/cockpit/src/guards/prove-matrix.ts). Each probe names the rule above that
+sets its expectation. They cover secret files, credential stores, the declared database and vendor
+hosts, protected and forced pushes, a live key and a placeholder key, guard-control and installed-code
+writes, wrappers, case variants, and ordinary work that must run. Add your own commands with
+`[guards] cases`, or with `--cases <file>` for one run. The file must be a `.json` file inside the
+cockpit, outside the locations the guard protects and the names it keeps secret, and a refusal never
+quotes its bytes. It is a JSON list:
+
+```json
+[
+  { "id": "stash-clean", "command": "git stash", "expect": "allow" },
+  { "id": "api-secret", "command": "cat .env", "cwd": "../api", "expect": "refuse" },
+  { "id": "legacy-0042", "command": "make deploy" }
+]
+```
+
+`cwd` is relative to the cockpit. `expect` is optional. `allow` matches an allow answer or no answer,
+since a hook that answers nothing lets the call run. `refuse` matches a deny, or a hook that exits 2.
+`ask` matches an ask. Codex has no prompt, so it turns an ask into a deny, and so does
+`unresolved = "deny"`; there `ask` and `refuse` both mean "not allowed". The report records the raw
+answer from each harness.
+
+The report goes to `.cockpit/local/guard-prove/<cockpit version>.json`, which is ignored. It is
+compared with the newest report another cockpit version wrote, so a rerun keeps flagging a regression
+until the case is refused again. A case that is allowed now and was refused or asked there, for the
+same command, is a regression (`GUARD_PROVE_REGRESSION`), with or without an expectation. An earlier
+report it cannot read is named (`GUARD_PROVE_PREVIOUS_UNREADABLE`) and left out of the comparison. A
+mismatch (`GUARD_PROVE_MISMATCH`) is an answer that differs from its expectation, or a hook that
+failed. The command prints one line for each, plus a count, and exits nonzero if there are any.
+`doctor` warns when `[guards] cases` is declared and no report exists for the installed version
+(`GUARD_PROVE_REPORT_MISSING`), and when that report failed, including a run that could not drive a
+listed harness, or cannot be read as one (`GUARD_PROVE_REPORT_FAILING`).
+
+OpenCode runs its guard from a plugin inside its own process. It has no hook command to drive, so
+`guard prove` names it as not proved. `--real-sessions` prints the headless `claude -p` and
+`codex exec` commands that would send each probe through a real session, and does not run them. Each
+session is a paid model call that needs your login. The model also chooses whether and how to make
+the call, so a session's answer is not a repeatable reading of the guard.
+
 ## Evidence
 
 Static configuration, source inspection, synthetic fixtures, model self-report and silence do not

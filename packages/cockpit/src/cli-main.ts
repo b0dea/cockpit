@@ -48,6 +48,7 @@ import {
 import { takeAllStateLockReclaims } from './environment/state.js'
 import { runLogs as runLogsApplication } from './environment/application/logs.js'
 import { runDocsCheck } from './docs/check.js'
+import { runGuardProve } from './environment/application/guard-prove.js'
 import { runEnvKeys, runEnvSchema } from './environment/env-sources.js'
 import { runServiceExec, runServicePs, runServiceRestart } from './environment/application/services.js'
 import { executeForegroundProcess, executePlan, executeProbe, foregroundTerminal, withExecutionSignal } from './environment-exec/execute.js'
@@ -146,6 +147,7 @@ interface HandlerInputById extends Record<WorkHandlerIdentifier, WorkCommandInpu
     check: GeneratedEnvironmentCommandInput
     'docs-check': Readonly<{ configPath: string }>
     'env-keys': Readonly<{ configPath: string }>
+    'guard-prove': Readonly<{ configPath: string; casesPath?: string; realSessions: boolean }>
     'env-schema': Readonly<{ configPath: string; reference: string; replaceFrom?: string }>
     init: InitApplicationInput & Readonly<{ unattended?: UnattendedInit }>
     doctor: DoctorCommandInput
@@ -746,6 +748,8 @@ function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {
         'docs-check': (input) => runDocsCheck({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
         adopt: (input) => runGuardImportApplication({ ...input, configPath: resolve(input.configPath), env }, { execute: executeProbe }),
         'env-keys': (input) => runEnvKeys({ configPath: resolve(input.configPath), env }, { execute: executeProbe }),
+        'guard-prove': (input) => runGuardProve({ configPath: resolve(input.configPath), realSessions: input.realSessions, env,
+            ...input.casesPath === undefined ? {} : { casesPath: resolve(input.casesPath) } }, { execute: executeProbe }),
         'env-schema': (input) => runEnvSchema({ configPath: resolve(input.configPath), reference: input.reference, ...input.replaceFrom === undefined ? {} : { replaceFrom: input.replaceFrom }, env }, { execute: executeProbe }),
         sibling: (request) => request.operation === 'add'
             ? runSiblingAdd({ ...request.input, env }, { execute: executeProbe })
@@ -1195,6 +1199,13 @@ async function decodeRequest(
         return namedOnly(handler, parsed.positionals) ?? { handler, input: { configPath: values.config, hookScript: resolve(values['import-guard']), casesFile: resolve(values.cases) } }
     }
 
+    if (handler === 'guard-prove') {
+        const values = parsed.values as { config?: string; cases?: string; 'real-sessions'?: boolean }
+        if (!values.config) return missingConfig()
+        return namedOnly(handler, parsed.positionals) ?? { handler, input: { configPath: values.config, realSessions: values['real-sessions'] === true,
+            ...values.cases === undefined ? {} : { casesPath: values.cases } } }
+    }
+
     if (handler === 'env-schema') {
         const values = parsed.values as { config?: string; path?: string; 'replace-from'?: string }
         if (!values.config) return missingConfig()
@@ -1384,6 +1395,7 @@ async function dispatchHandler(
     if (request.handler === 'docs-check') return handlers['docs-check']?.(request.input) ?? unavailable()
     if (request.handler === 'env-keys') return handlers['env-keys']?.(request.input) ?? unavailable()
     if (request.handler === 'adopt') return handlers.adopt?.(request.input) ?? unavailable()
+    if (request.handler === 'guard-prove') return handlers['guard-prove']?.(request.input) ?? unavailable()
     if (request.handler === 'env-schema') return handlers['env-schema']?.(request.input) ?? unavailable()
     // A person at approve answers the install; an agent's run leaves it for them.
     if (request.handler === 'upgrade') return handlers.upgrade?.({ ...request.input,

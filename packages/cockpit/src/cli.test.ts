@@ -358,7 +358,8 @@ describe('CLI help', () => {
             'Generate and verify:\n' +
             '  sync       Write the Compose ownership override and agent files from cockpit.toml\n' +
             '  approve    Show each step that waits for a person, and apply the ones you approve\n' +
-            '  check      Report generated files that no longer match cockpit.toml\n\n' +
+            '  check      Report generated files that no longer match cockpit.toml\n' +
+            '  guard      Prove the generated guard hooks answer as expected\n\n' +
             'Run the stack:\n' +
             '  up         Start or resume the declared environment\n' +
             '  preflight  Check that the environment is healthy and ready for work\n' +
@@ -381,7 +382,7 @@ describe('CLI help', () => {
             '  grade      Independently grade uncommitted work against a criteria file, with no work order\n' +
             '  browser    Drive, inspect and capture the declared application in a browser\n' +
             '  docs       Check living documents and decision records against the repositories\n\n' +
-            "Run 'cockpit <command> --help' for its options, and 'cockpit work --help', 'cockpit browser --help', 'cockpit docs --help' or 'cockpit env --help' for its subcommands.\n",
+            "Run 'cockpit <command> --help' for its options, and 'cockpit work --help', 'cockpit browser --help', 'cockpit docs --help', 'cockpit env --help' or 'cockpit guard --help' for its subcommands.\n",
         )
         expect(humanStderr(result.stderr)).toBe('')
     })

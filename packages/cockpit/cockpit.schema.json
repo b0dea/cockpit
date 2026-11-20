@@ -720,6 +720,13 @@
             "grant",
             "native"
           ]
+        },
+        "cases": {
+          "description": "A JSON file, relative to the cockpit, of commands guard prove drives through the generated hooks beside its standard probes: a list of {id, command, cwd?, expect?}, where expect is allow, refuse or ask and cwd is relative to the cockpit. It only checks the guard; it changes nothing agents may do.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$"
         }
       },
       "additionalProperties": false

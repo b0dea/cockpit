@@ -440,6 +440,7 @@ export const Guards = z
         unresolved: z.enum(['ask', 'deny']).default('ask').describe('What the guard does with a command it would ask a person about: ask prompts where the agent tool can (Claude Code) and refuses where it cannot; deny refuses everywhere, naming the reason and the route, so an autonomous session continues another way instead of waiting.'),
         write_paths: z.array(GuardWritePath).max(64).default([]).describe('Files and directories outside the cockpit where agents may write, create and remove files, such as a drop folder; never a working directory, Git hooks, a guard, an agent tool\'s or the shell\'s configuration, or a secret name.'),
         external_reads: z.enum(['grant', 'native']).default('native').describe('Who admits a shell read outside the cockpit, of a named file or by a read-only Git command run alone in another repository: grant needs its complete command under allow; native leaves it to the agent tool\'s own permissions. Secret names, recursive searches and writes stay guarded either way.'),
+        cases: z.string().min(1).max(4096).regex(/^[^\x00-\x1f\x7f]+$/).optional().describe('A JSON file, relative to the cockpit, of commands guard prove drives through the generated hooks beside its standard probes: a list of {id, command, cwd?, expect?}, where expect is allow, refuse or ask and cwd is relative to the cockpit. It only checks the guard; it changes nothing agents may do.'),
     })
     .strict()
 

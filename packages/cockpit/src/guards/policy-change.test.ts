@@ -124,6 +124,7 @@ describe('policyChange', () => {
             config.environment.profiles = []
         }],
         ['an added tool', config => { config.surfaces.tools.push('opencode') }],
+        ['a new guard prove case file', config => { config.guards.cases = 'guard-cases.json' }],
         // It only sets how long Codex waits for the server to answer.
         ['an MCP server declared to start the stack', config => {
             config.environment.machine = { runtime_memory_mb: 1024, runtime_cpus: 1, free_disk_mb: 1024, cold_start_seconds: 90 }

@@ -495,6 +495,10 @@ never applied silently. Installing a new cockpit also makes the guard hold every
 5. **Commit together.** Unless `--commit` did, commit exactly the files the upgrade's `next:` line
    names, by path, then run the `check` and `doctor` it names.
    Done when `./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml --json` exits 0.
+6. **Prove the guard.** Run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs guard prove --config cockpit.toml`.
+   It drives the standard probes and the `[guards] cases` file through every generated hook, and lists
+   each answer that differs from its expectation or was refused before the upgrade. Done when it exits
+   0, or the person has seen every line it lists.
 
 ## Keep checkouts and stacks current
 

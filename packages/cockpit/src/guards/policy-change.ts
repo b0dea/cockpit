@@ -128,6 +128,8 @@ const CHANGE_RULES: Rules = {
     'guards.hosted_db_hosts': onlyAdds,
     'guards.vendor_endpoint_hosts': onlyAdds,
     'guards.protected_branches': onlyAdds,
+    // Only guard prove reads it, to check the guard's answers; it changes none of them.
+    'guards.cases': safe,
     mcp: mcpPolicyWideningFields,
     sibling: siblings,
     ports: safe,

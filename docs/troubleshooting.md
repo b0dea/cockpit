@@ -361,6 +361,9 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GUARD_AUTHORITY_UNAVAILABLE` | [see above](#common-refusal-guidance) |
 | `GUARD_CONFIG_WIDENED` | this needs a person: they run npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent, or the change is reverted; [see above](#guard-refusals) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
+| `GUARD_PROVE_CASES_INVALID` | write the case file as a JSON list of {"id", "command", "cwd"?, "expect"?} entries, with expect one of allow, refuse or ask, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs guard prove --config <your cockpit.toml> |
+| `GUARD_PROVE_REPORT_FAILING` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs guard prove --config <your cockpit.toml> and act on each mismatch, regression and error it lists |
+| `GUARD_PROVE_REPORT_MISSING` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs guard prove --config <your cockpit.toml> |
 | `GUARD_RECORD_MISMATCH` | review what changed the guard script, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal; [see above](#codex-hooks-in-linked-worktrees) |
 | `GUARD_REFUSED` | [see above](#common-refusal-guidance) |
 | `GUARD_SEARCH_PATH_RELATIVE` | check PATH in the shell or launcher that starts the agent harness; if it contains relative or empty entries, remove them there and restart the harness |

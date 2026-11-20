@@ -122,7 +122,9 @@ has been cleared or reported to the human. Cockpit is usable once `check` passes
   and `cockpit.toml` it was generated for, so after an upgrade or a `cockpit.toml`
   edit it can hold tool calls. Follow the refusal as **Running cockpit** describes: a restrictive
   configuration edit can be synced under existing agent authority; a changed executable or widened
-  authority needs the person. Guide: *Upgrade cockpit*.
+  authority needs the person. After the sync, run
+  `./node_modules/@b00dea/cockpit/bin/cockpit.mjs guard prove --config cockpit.toml` to re-prove the guard's answers.
+  Guide: *Upgrade cockpit*.
 
 ## Shipped procedure
 
