@@ -28,6 +28,7 @@ import { ownDataValues } from './shared.js'
 import { cockpitCommand } from '../../fix-catalogue.js'
 import { unreadableStateWarning } from './lifecycle-state.js'
 import { inspectGuardConfigChange } from '../../guards/policy-change.js'
+import { guardProveDoctorDiagnostics } from './guard-prove.js'
 
 export interface DoctorCommandInput {
     readonly configPath: string
@@ -306,7 +307,9 @@ export async function runDoctor(
             message: `doctor could not read this machine's cockpit state, so it did not check for other cockpits' state this version cannot read: ${diagnostic.message}` }))
         : [unreadableStateWarning(stateInventory?.skipped ?? [])].filter((warning) => warning !== undefined)
     const orphanedStacks = await stacksPending ?? []
-    const warnings = [...guardConfig, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings, ...servedSiblings, ...mcp, ...unreadableState, ...orphanedStacks]
+    const loadedConfig = await config
+    const guardProve = loadedConfig.kind === 'complete' ? await guardProveDoctorDiagnostics(dirname(loadedConfig.result.source.path), loadedConfig.result.config) : []
+    const warnings = [...guardProve, ...guardConfig, ...guardHosts, ...testingGate, ...hookTrust, ...evaluator, ...readinessWarnings, ...servedSiblings, ...mcp, ...unreadableState, ...orphanedStacks]
     const reported = warnings.length === 0 ? outcome
         : { ...outcome, diagnostics: [...outcome.diagnostics, ...warnings] }
     // Doctor reports on a configuration; without one there is nothing to report on, and a zero

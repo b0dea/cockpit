@@ -180,6 +180,7 @@ Each section is one TOML table: `[name]` holds one, `[[name]]` repeats. A table 
 | `unresolved` | What the guard does with a command it would ask a person about: ask prompts where the agent tool can (Claude Code) and refuses where it cannot; deny refuses everywhere, naming the reason and the route, so an autonomous session continues another way instead of waiting. | string | `"ask"` | one of `"ask"`, `"deny"` |
 | `write_paths` | Files and directories outside the cockpit where agents may write, create and remove files, such as a drop folder; never a working directory, Git hooks, a guard, an agent tool's or the shell's configuration, or a secret name. | array of table: [`[[guards.write_paths]]`](#guardswrite_paths) | `[]` | at most 64 items |
 | `external_reads` | Who admits a shell read outside the cockpit, of a named file or by a read-only Git command run alone in another repository: grant needs its complete command under allow; native leaves it to the agent tool's own permissions. Secret names, recursive searches and writes stay guarded either way. | string | `"native"` | one of `"grant"`, `"native"` |
+| `cases` | A JSON file, relative to the cockpit, of commands guard prove drives through the generated hooks beside its standard probes: a list of {id, command, cwd?, expect?}, where expect is allow, refuse or ask and cwd is relative to the cockpit. It only checks the guard; it changes nothing agents may do. | string |  | pattern `^[^\x00-\x1f\x7f]+$`; 1–4096 characters |
 
 ### `[[guards.allow]]`
 
@@ -535,6 +536,6 @@ Agent tools load every skill's frontmatter into each session, so cockpit caps it
 | cursor | frontmatter_bytes | 8192 | each skill's procedure |
 | grokcli | frontmatter_bytes | 8192 | each skill's procedure |
 
-Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `0137b606b652787da050e445d6fa262bd5e193a1acb59a3afc28c76b741b1b87`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `72704e4e55a3d68e09163c729528b41713eafa329c8022fee5ca74d0f2ee04a1`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `f4cfad8a417c8ba017fcaf3b477abc8c32dced4755835fa9c3bb50b55f546bcb`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `2f8d0e098e858866d7766418ac1706ab2a035fe7a5bd5ddc843ad619ea011c25`).
+Each procedure is read on demand and has no size limit: `packages/cockpit/surfaces/skills/procedures/setup.md` (SHA-256 `22d44e427c8cfbd96ce68922a705ed8d04ccd40518bb3b0059dce6498b06863d`), `packages/cockpit/surfaces/skills/procedures/explain.md` (SHA-256 `72704e4e55a3d68e09163c729528b41713eafa329c8022fee5ca74d0f2ee04a1`), `packages/cockpit/surfaces/skills/procedures/fix.md` (SHA-256 `f4cfad8a417c8ba017fcaf3b477abc8c32dced4755835fa9c3bb50b55f546bcb`) and `packages/cockpit/surfaces/skills/procedures/work.md` (SHA-256 `2f8d0e098e858866d7766418ac1706ab2a035fe7a5bd5ddc843ad619ea011c25`).
 
 <!-- cockpit:ref schema=cockpit.guide_cap --> `cockpit.guide_cap` limits always-loaded guidance to 200 lines by default. The measured cost depends on each configuration's sibling guides, so it is not listed here.

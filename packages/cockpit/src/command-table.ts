@@ -17,6 +17,7 @@ export type HandlerIdentifier = WorkHandlerIdentifier
     | 'approve'
     | 'check'
     | 'docs-check'
+    | 'guard-prove'
     | 'env-keys'
     | 'env-schema'
     | 'doctor'
@@ -62,6 +63,7 @@ export const commandGroups: readonly Readonly<{ name: string; summary: string }>
     { name: 'browser', summary: 'Drive, inspect and capture the declared application in a browser' },
     { name: 'docs', summary: 'Check living documents and decision records against the repositories' },
     { name: 'env', summary: 'Read what environment schemas declare with nothing resolved: variable names, or one schema\'s text' },
+    { name: 'guard', summary: 'Prove the generated guard hooks answer as expected' },
 ])
 
 /**
@@ -94,7 +96,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     abandon: 'Close the order as abandoned; --note says why',
     clear: 'Serve the sibling from its declared checkout again',
     answers: 'Path to the init answers file',
-    cases: 'With --import-guard: JSON array of guard cases, each {"id", "command", "cwd"?, "expect"?}, cwd relative to the cockpit root',
+    cases: 'JSON array of guard cases, each {"id", "command", "cwd"?, "expect"?}, cwd relative to the cockpit root; guard prove uses it instead of [guards] cases',
     ask: 'Record the note as an open question, which blocks the order until it is answered',
     apply: 'Apply the displayed reversible operation',
     command: 'With --scaffold-compose: the command that starts the app, as words separated by spaces',
@@ -123,6 +125,7 @@ const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     purpose: 'Short purpose of the sibling repository',
     question: 'Number of the open question to answer, as work status lists it',
     reason: 'With --none: why the decision is not a lasting one',
+    'real-sessions': 'Also name the headless claude and codex sessions that would run each probe, which guard prove never runs itself',
     record: 'Write a new decision record under [docs] decisions for the decision',
     'record-file': 'An existing decision record under [docs] decisions that cites the order',
     supersedes: 'With --record: the number of the decision record the new one supersedes, which is marked superseded',
@@ -328,6 +331,16 @@ const sources = [
         handler: 'check',
         visibility: 'public',
         flags: configured,
+    },
+    // Runs the generated hooks on probe calls in a scratch clone and writes one ignored report; the
+    // probes are judged, never run.
+    {
+        name: 'guard prove',
+        stage: 'generate-and-verify',
+        summary: 'Drive standard probes and the declared cases through each generated guard hook and report every answer that differs',
+        handler: 'guard-prove',
+        visibility: 'public',
+        flags: { ...configured, cases: str(), 'real-sessions': bool() },
     },
     {
         name: 'up',
