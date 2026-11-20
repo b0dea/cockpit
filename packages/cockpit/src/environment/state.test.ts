@@ -1570,6 +1570,26 @@ describe('transactState', () => {
         expect(await readdir(dirname(namespace.paths.stateLock))).toEqual([])
     })
 
+    // On a loaded disk the owner record's sync outlasted the moment an ownerless lock is given, and a
+    // second command took over the lock of a command that was still alive and went on to use it.
+    it('never takes over the lock of a command whose owner record is still being written', async () => {
+        const { namespace, address } = await selectedNamespace()
+        let second: unknown
+        const first = await transactState(namespace, address, { ownerId: holderA, contentionTimeoutMs: 0,
+            beforeLockMetadata: async (operation) => {
+                if (operation !== 'owner-write' || second) return
+                // The write has taken longer than an ownerless lock is left alone.
+                const stood = new Date(Date.now() - 60_000)
+                await utimes(namespace.paths.stateLock, stood, stood).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error })
+                second = await transactState(namespace, address, { ownerId: holderB, contentionTimeoutMs: 0 }, () => lifecycleRecord(0, 1))
+            } }, () => lifecycleRecord(1, 2))
+
+        expect(second).toMatchObject({ kind: 'complete', value: lifecycleRecord(0, 1) })
+        expect(first).toMatchObject({ kind: 'complete', value: lifecycleRecord(1, 2) })
+        expect(takeStateLockReclaims(namespace)).toEqual([])
+        expect(await readdir(dirname(namespace.paths.stateLock))).toEqual([])
+    })
+
     // A record that parses but does not match the format may name a live holder this version cannot
     // read; only a missing, empty or unparsable record is one a killed command left half written.
     it('never takes over a lock whose owner record parses but does not match the lock format', async () => {
