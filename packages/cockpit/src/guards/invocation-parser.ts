@@ -475,9 +475,20 @@ export function foldGuardSpelling(path: string): string {
  * so every rule keyed on a program's name sees the folded one; on a case-sensitive volume such a file is some other
  * program, which no rule names, so judging it as git refuses no less.
  */
+// Homebrew installs GNU coreutils, findutils, sed, grep, tar, time, patch and make with a `g` prefix (`grm`, `gcp`,
+// `gtar`), and each runs as the command it names: `grm -rf .cockpit/guards` deleted the guard as an unknown program.
+// gawk is judged under its own name already.
+const GNU_PREFIXED = new Set(['base64', 'basename', 'cat', 'chgrp', 'chmod', 'chown', 'cp', 'csplit', 'cut', 'date', 'dd', 'df', 'dirname', 'du',
+    'echo', 'env', 'expand', 'false', 'head', 'install', 'link', 'ln', 'ls', 'md5sum', 'mkdir', 'mkfifo', 'mktemp', 'mv', 'nice', 'nl', 'nohup', 'od',
+    'printenv', 'printf', 'readlink', 'realpath', 'rm', 'rmdir', 'sha1sum', 'sha256sum', 'sha512sum', 'shred', 'sleep', 'sort', 'split', 'stat',
+    'stdbuf', 'tac', 'tail', 'tee', 'test', 'timeout', 'touch', 'tr', 'true', 'truncate', 'uniq', 'unlink', 'wc', 'find', 'xargs', 'sed', 'grep',
+    'egrep', 'fgrep', 'tar', 'time', 'patch', 'make'])
+
+/** A program as the guard judges it: its folded name, and a g-prefixed GNU tool under the name of the command it is. */
 export function foldGuardProgram(word: string): string {
     const at = word.lastIndexOf('/') + 1
-    return word.slice(0, at) + foldGuardSpelling(word.slice(at))
+    const name = foldGuardSpelling(word.slice(at))
+    return word.slice(0, at) + (name.startsWith('g') && GNU_PREFIXED.has(name.slice(1)) ? name.slice(1) : name)
 }
 
 const separators = new Set([';', '\n', '&&', '||', '|', '&'])
@@ -489,6 +500,84 @@ const wrappers = new Set(['timeout', 'nice', 'nohup', 'setsid', 'env', 'command'
 // not read, or a program that runs the rest of its command line in a form the guard does not read as a wrapper.
 const dynamicExecutables = new Set(['eval', 'dash', 'ksh', 'fish', 'csh', 'tcsh', 'mksh', 'yash', 'busybox', 'pwsh', 'builtin',
     'trap', 'let', 'chrt', 'taskset', 'unbuffer', 'watch', 'script', 'flock', 'parallel', 'entr'])
+// tmux commands that list, attach, capture or end sessions, which run no shell text.
+const TMUX_PLAIN = new Set(['ls', 'list-sessions', 'attach', 'attach-session', 'a', 'has-session', 'has', 'kill-session', 'kill-server', 'list-windows',
+    'lsw', 'list-panes', 'lsp', 'list-clients', 'lsc', 'capture-pane', 'capturep', 'detach-client', 'detach'])
+// Terminal emulators, each of which runs a command given after `-e`, `--`, `--command` or as an operand.
+// kitten drives a running kitty (`kitten @ launch`, `kitten @ send-text`).
+const TERMINALS = new Set(['xterm', 'uxterm', 'lxterm', 'rxvt', 'urxvt', 'alacritty', 'kitty', 'kitten', 'wezterm', 'konsole', 'gnome-terminal', 'foot', 'st',
+    'ghostty', 'terminator', 'tilix', 'xfce4-terminal', 'x-terminal-emulator', 'lxterminal', 'mate-terminal'])
+/**
+ * Whether a program runs shell text from its arguments or standard input, often in a session or job that outlives the
+ * call: tmux (any command but a listing or attaching one, a command list joined by `;`, a format's `#(…)`, which tmux
+ * runs through /bin/sh, or `detach -E`, which replaces the client with a shell command), screen (any form but `-ls`,
+ * `-r` or `-x`), `at` (but `-l` and `-r`, which list and remove jobs) and `batch`, a crontab it installs (from a file,
+ * `-e`, or standard input whenever it neither lists nor removes, as some crontabs read it bare), `systemd-run`, a
+ * terminal given anything but its help or version, `open --args`, which hands an application its command line, and
+ * AppleScript's `do shell script`.
+ */
+function launchesShellText(name: string, args: readonly string[]): boolean {
+    if (name === 'tmux') {
+        let at = 0
+        while (args[at] === '-L' || args[at] === '-S') at += 2
+        return !TMUX_PLAIN.has(args[at] ?? '') || args.some(arg => arg.endsWith(';') || arg.includes('#('))
+            || ['detach', 'detach-client'].includes(args[at]!) && args.some(arg => /^-[a-zA-Z]*E/.test(arg))
+    }
+    if (name === 'screen') return !['-ls', '-list', '-r', '-x', '-wipe'].includes(args[0] ?? '') || args.length > 2 || args.slice(1).some(arg => arg.startsWith('-'))
+    if (name === 'at') return !['-l', '-r', '-d'].includes(args[0] ?? '')
+    if (name === 'batch' || name === 'systemd-run') return true
+    // `-u` names a user; any other operand, or `-`, is the table it installs, and without `-l` or `-r` it reads one.
+    if (name === 'crontab') return !args.some(arg => arg === '-l' || arg === '-r')
+        || args.some((arg, at) => arg === '-' || arg === '-e' || !arg.startsWith('-') && args[at - 1] !== '-u')
+    if (name === 'open') return args.includes('--args')
+    if (TERMINALS.has(name)) return args.some(arg => !['-h', '-help', '--help', '-v', '-V', '-version', '--version'].includes(arg))
+    if (name === 'osascript') return args.some(arg => /do\s+shell\s+script/i.test(arg))
+    return false
+}
+// tmux commands that open a session, window or pane running a shell command. Without -c, spawn.c starts one in
+// server_client_get_cwd of the command client, which has no session, so in the invoking shell's directory; respawn-pane
+// reuses the pane's own directory instead, so it asks.
+const TMUX_OPENERS = new Set(['new-session', 'new', 'new-window', 'neww', 'split-window', 'splitw'])
+/**
+ * The one literal command string a tmux opener runs, with the directory its `-c` names, or undefined for any other form:
+ * `-e` sets its environment, a format's `#(…)` and a command list joined by `;` run more, `-k` destroys the window or
+ * pane already there, a `-c` format names a directory the guard cannot see, and several words are run without a shell,
+ * so those ask. With no command the session runs the person's shell and nothing of the agent's.
+ */
+function tmuxSessionCommand(tokens: readonly Token[], cwd: string): { readonly text: string; readonly cwd: string } | undefined {
+    if (!TMUX_OPENERS.has(tokens[0]?.value ?? '') || tokens.some((token) => token.dynamic || token.status || token.value.includes('#(') || token.value.endsWith(';'))) return undefined
+    let directory = cwd
+    let at = 1
+    while (tokens[at]?.value.startsWith('-')) {
+        const option = tokens[at]!.value
+        if (['-c', '-n', '-s', '-t', '-F', '-x', '-y', '-l', '-f'].includes(option)) {
+            const value = tokens[at + 1]?.value
+            if (value === undefined) return undefined
+            if (option === '-c') {
+                if (climbsOutOfName(value) || value.includes('#')) return undefined
+                directory = path(posix.resolve(cwd, value))
+            }
+            at += 2
+        } else if (/^-[AbdDEhIPvXZ]+$/.test(option)) at++
+        else return undefined
+    }
+    const rest = tokens.slice(at)
+    return rest.length <= 1 ? { text: rest[0]?.value ?? '', cwd: directory } : undefined
+}
+/** The command line `screen -dm` starts, after options that name the session or title only; any other form asks. */
+function detachedScreenCommand(tokens: readonly Token[]): { readonly command: Token[] } | undefined {
+    let at = 0
+    const flags = new Set<string>()
+    while (tokens[at]?.value.startsWith('-')) {
+        const option = tokens[at]!.value
+        if (['-S', '-t'].includes(option)) { if (tokens[at + 1] === undefined) return undefined; at += 2; continue }
+        const named = /^-([dm]+)(S)?$/.exec(option)
+        if (!named) return undefined
+        for (const letter of named[1]!) flags.add(letter)
+        if (named[2]) { if (tokens[at + 1] === undefined) return undefined; at += 2 } else at++
+    }
+    return flags.has('d') && flags.has('m') && at < tokens.length ? { command: tokens.slice(at) } : undefined
+}
 /**
  * Package and environment managers that run a program named on their line, by their words before it. Only the options
  * listed are read: any other may pick a shell, a directory, an environment file or another package. npm and yarn read an
@@ -751,6 +840,8 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
     assignments()
     let wrapped = false
     let detached = false
+    // `env` sets or clears variables the program starts with.
+    let environment = false
     // The word in command position, a wrapper's or the program's, is read under its folded name.
     const commandWord = () => {
         const token = args[cursor]
@@ -763,6 +854,7 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
             && args.length > cursor + 2 && args.slice(cursor + 2).every((token) => !token.value.startsWith('-'))) break
         const wrapper = posix.basename(args[cursor++].value)
         wrapped = true
+        if (wrapper === 'env') environment = true
         if (wrapper === 'nohup' || wrapper === 'setsid') { context.seen.background = true; detached = true }
         const take = () => {
             const token = args[cursor++]
@@ -839,12 +931,13 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
         if (directoryChangers.has(executable)) refuse(CD_REFUSAL)
         const name = posix.basename(executable)
         if (privileged.has(name) || name === 'osascript' && args.slice(cursor + 1).some((token) => /administrator\s+privileges/i.test(token.value))) forbid(`${shown(executable)} runs a command with another user's privileges. Privilege escalation is a person's action: ask them to run it in their own terminal.`)
+        // The string runs in a child shell: its commands are judged as these are, and its `cd` moves only that shell.
+        const childShell = (text: string, directory: string) => parseShell(text, directory, { ...context, depth: context.depth + 1 }).map((item) => ({ ...item, wrapped: true }))
         if (scriptShells.has(name)) {
             const [first, script, ...rest] = args.slice(cursor + 1)
             if (first?.value === '-c') {
                 if (!script || rest.length || script.dynamic || script.status) refuse(`${shown(executable)} -c is parsed only with one literal command string and nothing after it. Write the string in single quotes, or run the command itself.`)
-                // The string runs in a child shell: its commands are judged as these are, and its `cd` moves only that shell.
-                nested = parseShell(script.value, cwd, { ...context, depth: context.depth + 1 }).map((item) => ({ ...item, wrapped: true }))
+                nested = childShell(script.value, cwd)
             } else if (!first || /^[-+]/.test(first.value) || first.dynamic) {
                 refuse(`${shown(executable)} is parsed only as \`${name} SCRIPT [ARGUMENTS]\` or \`${name} -c '<command>'\` with a literal command string: with no script it runs whatever it reads. Run the command itself.`)
             }
@@ -856,7 +949,19 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
         if (subscriptEvaluators.has(name) && args.slice(cursor + 1).some((token) => /\[.*[$`]/s.test(outsideSubstitutions(token)))) {
             refuse(`${shown(executable)} evaluates an array subscript as arithmetic, which runs any command substitution in it. Write the index as a number.`)
         }
-        if (dynamicExecutables.has(name)) refuse(`${shown(executable)} runs a command or script built from its arguments, which the guard does not parse. Run the command itself.`)
+        // A tmux session, window or pane runs its one command string through a shell, and a detached screen runs its
+        // command line, after the call returns: each is judged as `sh -c` text or a launched command, in the background.
+        // Both read their configuration and socket from the environment, so one started with any change to it asks.
+        const changed = assigned.length > 0 || environment
+        const session = changed ? undefined : name === 'tmux' ? tmuxSessionCommand(args.slice(cursor + 1), cwd)
+            : name === 'screen' ? detachedScreenCommand(args.slice(cursor + 1)) : undefined
+        if (session) {
+            context.seen.background = true
+            const started = 'text' in session ? session.text ? childShell(session.text, session.cwd) : []
+                : (([program, ...rest]) => [{ ...program!, wrapped: true }, ...rest])(invocation(session.command, cwd, context))
+            nested = started.map((item) => ({ ...item, background: true as const }))
+        }
+        if (dynamicExecutables.has(name) || !session && launchesShellText(name, args.slice(cursor + 1).map((token) => token.value))) refuse(`${shown(executable)} runs a command or script built from its arguments, which the guard does not parse. Run the command itself.`)
         if (reserved.has(executable)) refuse(`Shell control flow (${executable}) is not parsed by the guard. Run each command on its own.`)
         words.push({ role: 'executable', value: executable })
         cursor++

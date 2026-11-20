@@ -165,6 +165,12 @@ interface PathInspectionRequest {
     readonly workspace?: true
     /** For a `search`, the reading tool follows links, so a link below the path leaves its `sensitive` unknown (null). */
     readonly followsLinks?: true
+    /**
+     * For a `search`, the command copies the tree, so its evidence carries `carried`: every existing path at or below it
+     * named as an agent tool's configuration, a guard directory or a repository, or null where the walk could not finish.
+     * Evidence for any search may carry it; for one that asked, a null or missing `carried` leaves the copy unknown.
+     */
+    readonly carries?: true
     /** For a `repository`, the command can print a commit, so its evidence also carries `committed`. */
     readonly history?: true
 }
@@ -814,7 +820,6 @@ function transferOperands(command: 'cp' | 'install' | 'mv' | 'ln', args: readonl
             if (valueLong.has(option!)) {
                 if (attached === undefined && args[++index] === undefined) uncertain = true
             } else if (!plainLong.has(option!)) uncertain = true
-            if (command === 'cp' && ['recursive', 'archive'].includes(option!)) uncertain = true
             continue
         }
         if (options && arg.startsWith('-') && arg !== '-') {
@@ -826,7 +831,6 @@ function transferOperands(command: 'cp' | 'install' | 'mv' | 'ln', args: readonl
                 // `ln -sft dir source` names the target directory inside a cluster.
                 else if (letters[valueAt] === 't') targetDirectory = value
             } else if ([...letters].some(letter => !plainShort.includes(letter))) uncertain = true
-            if (command === 'cp' && /[Rr]/.test(letters)) uncertain = true
             continue
         }
         operands.push(arg)
@@ -910,11 +914,21 @@ function writesUnseenMembers(invocation: ParsedInvocation, git: GitInvocation | 
     const name = posix.basename(invocation.executable)
     if (['rsync', 'unzip', 'cpio', 'pax', 'ditto', 'bsdtar', 'gtar', '7z', '7za', '7zz', 'scp'].includes(name)) return true
     if (name === 'tar') return createsLink(invocation, undefined)
-    if (name === 'cp') return invocation.argv.some(arg => /^--(?:archive|recursive)$/.test(arg) || /^-[A-Za-z]*[aRr]/.test(arg))
+    if (name === 'cp') return copiesRecursively(invocation.argv)
     if (name === 'gh') return materialisesRepository(invocation)
     if (name === 'wget') return invocation.argv.some(arg => /^--(?:recursive|mirror|page-requisites)$/.test(arg) || /^-[A-Za-z]*[rmp]/.test(arg))
     return false
 }
+
+/** The directory before a path's first globbed component, which holds every tree the glob can match; any other path as it is. */
+function globDirectory(path: string): string {
+    const parts = path.split('/')
+    const globbed = parts.findIndex(part => /[*?[]/.test(part))
+    return globbed < 0 ? path : parts.slice(0, globbed).join('/') || (path.startsWith('/') ? '/' : '.')
+}
+
+/** `cp -R`, `-r` or `-a`: a copy of each source directory's whole tree. */
+const copiesRecursively = (argv: readonly string[]) => argv.some(arg => /^--(?:archive|recursive)$/.test(arg) || /^-[A-Za-z]*[aRr]/.test(arg))
 
 interface VisibleWrites {
     readonly paths: readonly string[]
@@ -1158,7 +1172,8 @@ function visibleWrites(invocation: ParsedInvocation): VisibleWrites | undefined 
         // `cp -s` and `cp -l` make each destination a symbolic or hard link to its source, as `ln` does, and so does BSD `install -l`.
         const linking = name === 'cp' && invocation.argv.some(arg => ['--symbolic-link', '--link'].includes(arg) || /^-[A-Za-z]*[sl]/.test(arg))
             || name === 'install' && invocation.argv.some(arg => /^-[A-Za-z]*l/.test(arg) && !arg.startsWith('--'))
-        return { paths: transfer.writes, reads: name === 'mv' ? [] : transfer.sources, removes: linking, uncertain: transfer.uncertain,
+        // A recursive copy's sources are trees, which sourceTrees reads.
+        return { paths: transfer.writes, reads: name === 'mv' || name === 'cp' && copiesRecursively(invocation.argv) ? [] : transfer.sources, removes: linking, uncertain: transfer.uncertain,
             ...linking ? { links: transfer.sources } : {} }
     }
     // `link <file> <name>` makes a hard link, as `ln` without options does.
@@ -1446,6 +1461,8 @@ const SYSTEM_RUN_CONFIGURATION = ['/etc', '/private/etc', '/library', '/system',
 // them, and direnv's `.envrc`, which runs when a shell enters its directory.
 const NAMED_RUN_CONFIGURATION = new Set(['.cockpit', '.claude', '.codex', '.opencode', '.cursor', '.grok', '.gemini', '.git', '.husky', '.githooks'])
 const NAMED_RUN_FILES = new Set(['opencode.json', 'opencode.jsonc', '.envrc', '.mcp.json'])
+/** A folded name of what runs from a checkout: an agent tool's configuration, a guard, Git hooks or direnv's file. */
+export const runsFromCheckout = (name: string) => NAMED_RUN_CONFIGURATION.has(name) || NAMED_RUN_FILES.has(name)
 // What an agent tool loads from the directory a session starts in, beyond its configuration directory.
 const NAMED_INSTRUCTION_FILES = new Set(['claude.md', 'claude.local.md', 'agents.md', 'agents.override.md'])
 function externalWriteHazard(spelled: string, home: string | undefined, searchDirectories: readonly string[]): string | undefined {
@@ -1912,13 +1929,14 @@ function gitProgramOption(git: GitInvocation): boolean {
  * What an assignment does to the commands after it. Git's location variables point it at state the guard does not
  * inspect, HOME and XDG_CONFIG_HOME choose the configuration that names its hooks, BASH_ENV and ENV run a file as a
  * shell starts, and the session markers say an agent runs: a person decides those. A hook manager's skip variable
- * is `--no-verify` by another name. Any other variable, `DOCKER_BUILDKIT` among them, runs; one naming a program Git runs is
+ * is `--no-verify` by another name. screen's and tmux's variables choose the configuration file and server a session
+ * starts from. Any other variable, `DOCKER_BUILDKIT` among them, runs; one naming a program Git runs is
  * judged by its value where Git runs.
  */
 function steers({ name, value }: { readonly name?: string; readonly value: string }): 'ask' | 'deny' | undefined {
     if (name === undefined) return 'ask'
     if (name === 'SKIP' || /^(?:HUSKY|LEFTHOOK)$/.test(name) && /^(?:0|false)$/i.test(value) || name === 'OVERCOMMIT_DISABLE' && !/^(?:0|false|)$/i.test(value)) return 'deny'
-    return /^(?:GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_CONFIG.*|GIT_EXEC_PATH|GIT_COMMON_DIR|GIT_OBJECT_DIRECTORY|GIT_ALTERNATE_OBJECT_DIRECTORIES|HOME|XDG_CONFIG_HOME|BASH_ENV|ENV|CLAUDECODE|CODEX_THREAD_ID|OPENCODE)$/.test(name) ? 'ask' : undefined
+    return /^(?:GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_CONFIG.*|GIT_EXEC_PATH|GIT_COMMON_DIR|GIT_OBJECT_DIRECTORY|GIT_ALTERNATE_OBJECT_DIRECTORIES|HOME|XDG_CONFIG_HOME|BASH_ENV|ENV|CLAUDECODE|CODEX_THREAD_ID|OPENCODE|SCREENRC|SYSSCREENRC|SCREENDIR|TMUX|TMUX_TMPDIR)$/.test(name) ? 'ask' : undefined
 }
 
 // Variables that name a program Git runs: a diff driver, an ssh, proxy or password helper, or an editor. A pager, `GIT_PAGER`
@@ -1981,6 +1999,10 @@ function sourceTrees(invocation: ParsedInvocation): { readonly paths: readonly s
         followsLinks: flags.some(flag => /^--copy-(?:links|dirlinks|unsafe-links)$/.test(flag) || /^-[a-zA-Z]*[Lk]/.test(flag)) }
     if (['scp', 'ditto'].includes(name)) return { paths: operands.slice(0, -1).filter(local), followsLinks: name === 'scp' }
     if (name === 'diff') return { paths: operands, followsLinks: true }
+    // cp copies a link below a source as a link unless `-L` says to follow it (cp(1) on GNU and macOS); macOS reads `-r`
+    // as `-RL` (its cp(1), COMPATIBILITY), and which cp runs is not known, so `-r` follows too.
+    if (name === 'cp' && copiesRecursively(invocation.argv)) return { paths: transferOperands('cp', invocation.argv).sources,
+        followsLinks: flags.some(flag => flag === '--dereference' || /^-[A-Za-z]*[Lr]/.test(flag)) }
     return undefined
 }
 
@@ -2303,8 +2325,10 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     // and key files do, as `$PWD/.claude/settings.json` is the cockpit's own; the home directory itself does.
     const restNamesCredential = (run: string): boolean => {
         if (home === undefined) return false
-        const directory = AGENT_HOME_DIRECTORIES.find(item => within(fold(run), item))
-        return directory !== undefined && fold(run) !== directory ? agentHomeCredential(fold(posix.join(home, run))) : namesCredential(fold(posix.join(home, run)))
+        // `.aws/` names the directory `.aws` does.
+        const below = run.replace(/\/+$/, '')
+        const directory = AGENT_HOME_DIRECTORIES.find(item => within(fold(below), item))
+        return directory !== undefined && fold(below) !== directory ? agentHomeCredential(fold(posix.join(home, below))) : namesCredential(fold(posix.join(home, below)))
     }
     const textDenial = (text: string, cwd: string, code = false): GuardDecision | undefined => {
         if (holdsLiveKey(text)) return liveKeyDenial
@@ -2332,7 +2356,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const runs = [...new Set([...tokens, ...text.replace(/['"\\]/g, '').split(/[^\w./@~+-]+/)])]
                 .filter(token => token !== '' && (code || !/^\.(?:pem|p12|pfx|key)$/i.test(token)))
                 .map(token => /^\/\.[^./]/.test(token) ? token.slice(1) : token).filter(token => !/^[/~.]\./.test(token) && !token.startsWith('/'))
-            if (runs.some(run => namesCredential(fold(posix.join(home, run))))) return credentialDenial
+            // `.aws/`, as `glob('.aws/*')` leaves it, names the directory `.aws` does.
+            if (runs.some(run => namesCredential(fold(posix.resolve(home, run))))) return credentialDenial
         }
         if (fold(text).split(/[^\w./@~+-]+/).some(token => /^(?:sudo|doas|pkexec)$/.test(posix.basename(token)))) return deny('Refusing privilege escalation: it is a person\'s action. Ask them to run it in their own terminal.')
         if (/\b(?:curl|wget)\b[^|;&]*\|\s*(?:\S*\/)?(?:sh|bash|zsh|dash|source|\.|python[\d.]*|node|perl|ruby)(?![\w.-])/.test(fold(text))) return deny('Refusing to run downloaded text as code. Download the file into the cockpit, read it, then run it by path.')
@@ -2428,7 +2453,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         catch (error) { inspectionFailure = errorCause(error); return undefined }
         inspectedLink = record(evidence) && evidence.symlink === true
         const lexical = posix.resolve(request.cwd, request.path)
-        const listed = request.operation === 'search' || request.operation === 'unignored-search' ? ['sensitive']
+        const listed = request.operation === 'search' || request.operation === 'unignored-search'
+            ? ['sensitive', ...record(evidence) && Object.hasOwn(evidence, 'carried') ? ['carried'] : []]
             : request.operation === 'repository' ? ['tracked', ...request.history ? ['committed'] : []] : []
         const canonicalPath = evidence !== undefined && record(evidence) ? evidence.canonicalPath : undefined
         const observedPath = canonicalPath ?? lexical
@@ -2741,7 +2767,10 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const inspectReadOnly = (access: ReadOnlyAccess, chainReadOnly = false, approvedExternalRead = false): boolean => {
         let safe = true
         searchBlocker = undefined
-        const visit = (path: string, kind: 'read' | 'tree' | 'listing') => {
+        const visit = (spelled: string, kind: 'read' | 'tree' | 'listing') => {
+            // A glob searches every tree the shell expands it to, which the walk cannot expand: a walk of the literal
+            // `src/*` finds nothing, so it walks `src`.
+            const path = kind === 'tree' ? globDirectory(spelled) : spelled
             if (descriptor(path)) return
             // Names xargs hands a reader are read, so a listing in such a call names what it reads.
             if (kind === 'listing' && feedsXargs) kind = 'read'
@@ -2771,7 +2800,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             // protected file leaves every recursive search unproven: either may reach it unnamed.
             if (kind !== 'listing' && !secretFiles || kind === 'tree' && resolved.protectedFilesLinked) safe = false
             const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: kind === 'tree' ? access.skipsIgnored ? 'unignored-search' : 'search' : kind === 'listing' && external ? 'list' : 'read',
-                ...kind === 'tree' && access.followsLinks ? { followsLinks: true as const } : {} })
+                ...kind === 'tree' && access.followsLinks ? { followsLinks: true as const } : {}, ...kind === 'tree' && access.carries ? { carries: true as const } : {} })
             if (!evidence || external && evidence.identity === null && !(kind === 'read' && access.revisionOperands)) {
                 if (external && kind === 'tree' && evidence) searchBlocker ??= ask(`${shownGuardWord(path)} does not exist outside the configured roots. Name an existing regular file.`)
                 else if (external && kind === 'tree') searchBlocker ??= ask(`A search of ${shownGuardWord(path)} outside the configured roots must name a regular file: there the guard recognises only .env and .secrets names, not other credential files, so it does not search a directory or follow a link. Search the named files instead.`)
@@ -2804,13 +2833,19 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const reached = searchedProtections.filter((target) => within(fold(target), folded) || covers(target))
             const present = reached.find((target) => identityOf(target) !== null && read(target))
             const unseen = sensitive?.find((found) => !documentation(fold(found)))
-            if (present === undefined && sensitive !== null && unseen === undefined && chainReadOnly) return
+            // A copy carries an agent tool's settings, a guard directory or a repository to where a session or Git loads it.
+            // A walk that could not finish, or evidence that does not say, leaves what the copy carries unknown.
+            const carries = evidence.carried as readonly string[] | null | undefined
+            const carried = access.carries ? carries === null || carries === undefined ? null : carries[0] : undefined
+            if (present === undefined && sensitive !== null && unseen === undefined && carried === undefined && chainReadOnly) return
             safe = false
             const shown = (target: string) => posix.relative(access.cwd, target) || '.'
             // A protected path that exists now is a person's to read past; one that might appear first is not.
             searchBlocker = present !== undefined || sensitive !== null && unseen !== undefined ? deny(present !== undefined
                 ? `A recursive search of ${path} would read ${shown(present)}, ${(resolved.secretPaths ?? []).includes(present) ? 'a path [guards] secret_paths declares secret' : 'a declared environment instance or secrets directory'}. Search a path that does not contain it.`
                 : `A recursive search of ${path} would read ${shown(unseen!)}, an environment file or secrets directory that is not a declared template. Search a path that does not contain it.`) : undefined
+            if (carried === null) searchBlocker ??= ask(`The guard could not walk all of ${path} to tell whether copying it carries an agent tool's configuration, a guard directory, a repository or Git hooks, or direnv's .envrc, which a session, Git or a shell entering it then runs. Copy the files it needs by name; otherwise a person approves it.`)
+            else if (carried !== undefined) searchBlocker ??= ask(`Copying ${path} carries ${shown(carried)}, an agent tool's configuration, a guard directory, a repository or Git hooks, or direnv's .envrc, which a session, Git or a shell entering it then runs. Copy the files it needs by name; otherwise a person approves it.`)
         }
         for (const path of access.requires ?? []) {
             const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: 'read' })
@@ -2930,8 +2965,20 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     // `git stash && git rebase main && git stash pop` runs, while `git checkout topic -- links && echo x > links/l` does not.
     const outsideGit = invocations.some(invocation => !gitInvocation(invocation) && (invocation.executable !== null || invocation.redirects.length))
     const linkMakers = invocations.filter(invocation => (outsideGit || !gitInvocation(invocation)) && makesLink(invocation))
-    if (linkMakers.length && invocations.some(invocation => !linkMakers.includes(invocation) && (invocation.executable !== null || invocation.redirects.length))
-        || linkMakers.length > 1) {
+    // Only a command that runs once the link exists can follow it, so one link maker may end a sequential list: not
+    // piped or in the background, beside no background job, and in no loop, which runs the commands before it again.
+    // `:`, `true` and a bare `wait` after it read no path, unless the call can make one run something else: `enable -n`,
+    // zsh's `disable`, `hash -p`, `builtin`, an alias, zsh loading, copying or removing a function (`FPATH=build;
+    // autoload -U true` ran build/true), or a new PATH or FPATH. The parser also asks before a name a definition holds.
+    const redefines = invocations.some(invocation => ['enable', 'disable', 'hash', 'builtin', 'alias', 'unalias', 'autoload', 'functions', 'zmodload',
+        'unfunction'].includes(posix.basename(invocation.executable ?? ''))
+        || invocation.words.some(word => word.role === 'environment-assignment-value' && /^(?:PATH|path|FPATH|fpath)$/.test(word.name ?? ''))
+        || VARIABLE_SETTERS.has(posix.basename(invocation.executable ?? '')) && invocation.argv.some(arg => /^(?:PATH|path|FPATH|fpath)(?:=|$)/.test(arg)))
+    const acting = invocations.filter(invocation => invocation.redirects.length || invocation.executable !== null
+        && (redefines || !(['true', ':', 'wait'].includes(invocation.executable) && !invocation.argv.length)))
+    const last = linkMakers.length === 1 && acting.at(-1) === linkMakers[0] && !linkMakers[0]!.piped && !input.loop
+        && !acting.some(invocation => invocation.background)
+    if (linkMakers.length && !last && acting.some(invocation => !linkMakers.includes(invocation)) || linkMakers.length > 1) {
         hold(deny(`Refusing ${named(linkMakers[0]!)} with other commands in one call: it can make or move a symbolic link, which a later command could move to where its text reaches a guard control or a secret, and the guard judges every other path against the filesystem before the call. Make or move the link on its own, then run the rest in a later call.`))
     }
     // Every path a call names, as a word, an option value, a redirect or a file tool's target, and every
@@ -3143,7 +3190,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
                 hold(unavailable('Visible writer source is unavailable or unsafe to read.'))
             }
             if (writes.uncertain) hold(unavailable(`${named(invocation)} uses a form of this writer the guard does not model, so it cannot tell where it writes. `
-                + 'Use one it reads: `tar -xf <archive> -C <dir>`, `tar -czf <archive> <paths>` or `tar -tf <archive>`, `rsync -a <src>/ <dst>/` for a recursive copy, '
+                + 'Use one it reads: `tar -xf <archive> -C <dir>`, `tar -czf <archive> <paths>` or `tar -tf <archive>`, `cp -R <src> <dst>` or `rsync -a <src>/ <dst>/` for a recursive copy, '
                 + 'or `cp`, `mv`, `ln` and `install` with plain operands; otherwise a person runs it.'))
         } else if (!access && git?.verb !== 'add' && git?.verb !== 'commit') {
             // Staging writes the index, never the named file, and its operands, and a commit's, are inspected as staged below.
@@ -3216,8 +3263,20 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         }
         // Archivers, copiers and recursive diffs read every file below a source, as a recursive search does.
         const sources = sourceTrees(invocation)
+        // A recursive copy carries everything below a source, so one that covers guard files places them where a
+        // session loads them, as rsync's operands are judged; one that covers a root's `.git` places its configuration
+        // and hooks where Git runs them.
+        if (executableName === 'cp') for (const path of sources?.paths ?? []) {
+            const tree = globDirectory(path)
+            inspectPossibleControlOperand(invocation, tree, invocation.cwd, true)
+            const folded = fold(posix.resolve(invocation.cwd, tree))
+            if (resolved.allowedRoots.some(root => within(fold(`${root}/.git`), folded))) holdBoundary(invocation, ask(`${named(invocation)} names ${shownGuardWord(path)}, which holds a repository's .git, and the copy carries its configuration and hooks where Git runs them. `
+                + 'Name the files it needs, or use `git worktree add` for another checkout; otherwise a person approves it or runs it.'))
+        }
         const othersReadOnly = invocations.every(other => other === invocation || accesses.get(other) !== undefined || other.executable === null && !other.redirects.some(redirect => redirect.write))
-        if (sources?.paths.length && !inspectReadOnly({ cwd: invocation.cwd, reads: [], trees: sources.paths, listings: [], ...sources.followsLinks ? { followsLinks: true as const } : {} }, othersReadOnly)
+        const copies = ['cp', 'rsync', 'ditto', 'scp'].includes(executableName)
+        if (sources?.paths.length && !inspectReadOnly({ cwd: invocation.cwd, reads: [], trees: sources.paths, listings: [], ...sources.followsLinks ? { followsLinks: true as const } : {},
+            ...copies ? { carries: true as const } : {} }, othersReadOnly)
             && searchBlocker && !approvalBarriers.has(invocation)) {
             approvalBarriers.set(invocation, searchBlocker)
         }
@@ -3338,7 +3397,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             const effect = steers(assignment)
             if (effect === 'deny') hold(deny(`Refusing ${named(invocation)}: setting ${assignment.name} skips the hooks a commit or push runs, as --no-verify does. Fix what the hook reports instead.`))
             else if (effect === 'ask') holdBoundary(invocation, ask(assignment.name === undefined ? 'An environment assignment the guard could not name requires human approval.'
-                : `${named(invocation)} sets ${assignment.name}, which changes where Git looks for its repository and configuration, what a shell runs as it starts, or whether an agent is marked as running. Run it without that assignment.`))
+                : `${named(invocation)} sets ${assignment.name}, which changes where Git looks for its repository and configuration, what a shell, screen or tmux runs as it starts, or whether an agent is marked as running. Run it without that assignment.`))
         }
         // Removing a session marker, or every variable with `env -i`, hides that an agent runs what follows.
         const marker = (word: string) => /^(?:CLAUDECODE|CODEX_THREAD_ID|OPENCODE)$/.test(word)

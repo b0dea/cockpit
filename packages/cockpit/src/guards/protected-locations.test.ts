@@ -9,6 +9,7 @@ import { executeProbe } from '../environment-exec/execute.js'
 import { GUARD_SECRET_FILE_LIMIT } from './evaluator.js'
 import { guardArchiveEntries, guardBranchFacts, guardInstalledDirectories, guardPackageManifest, guardPatchTargets, guardRemoteCredentials, guardSearchDirectories, guardSearchPathRelativeEntry,
     guardCommittedSensitivePaths, guardSecretFiles, guardSensitivePathsBelow, guardTrackedSensitivePaths, guardUnignoredSensitivePaths, guardWorktreeChanges } from './protected-locations.js'
+import { guardCarriedPathsBelow } from './protected-locations.js'
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -53,6 +54,29 @@ describe('guard protected locations', () => {
         expect(guardSearchPathRelativeEntry('/usr/bin::/bin')).toBe('')
         expect(guardSearchPathRelativeEntry('./node_modules/.bin:/usr/bin')).toBe('./node_modules/.bin')
         expect(guardSearchPathRelativeEntry('/usr/bin:/bin')).toBeNull()
+    })
+
+    it('finds every agent configuration, guard directory and repository a copy of a tree would carry, without entering them', () => {
+        const root = scratch()
+        mkdirSync(join(root, 'tree/src'), { recursive: true })
+        writeFileSync(join(root, 'tree/src/a.ts'), 'export {}\n')
+        expect(guardCarriedPathsBelow(join(root, 'tree'))).toEqual([])
+        for (const directory of ['pkg/.Claude', 'pkg/.codex', 'vendor/lib/.git/hooks', 'stage/.cockpit/guards', 'tool/.opencode']) mkdirSync(join(root, 'tree', directory), { recursive: true })
+        writeFileSync(join(root, 'tree/pkg/.Claude/settings.json'), '{}\n')
+        for (const file of ['pkg/.mcp.json', 'app/opencode.json', 'src/.gitignore']) { mkdirSync(join(root, 'tree', file, '..'), { recursive: true }); writeFileSync(join(root, 'tree', file), '{}\n') }
+        expect(guardCarriedPathsBelow(join(root, 'tree'))).toEqual(['app/opencode.json', 'pkg/.Claude', 'pkg/.codex', 'pkg/.mcp.json', 'stage/.cockpit', 'tool/.opencode', 'vendor/lib/.git']
+            .map(path => join(root, 'tree', path)))
+        expect(guardCarriedPathsBelow(join(root, 'tree/src'))).toEqual([])
+        expect(guardCarriedPathsBelow(join(root, 'tree'), 3)).toBeNull()
+    })
+
+    // The names are the guard's own list of what runs from a checkout, so a copy carrying direnv's file, Git hook
+    // managers' directories or another agent tool's configuration is found too.
+    it('finds every name the guard holds runs from a checkout below a copied tree', () => {
+        const root = scratch()
+        for (const directory of ['a/.cursor', 'b/.gemini', 'c/.husky', 'd/.githooks', 'e/.grok']) mkdirSync(join(root, 'tree', directory), { recursive: true })
+        writeFileSync(join(root, 'tree/a/.envrc'), 'export SYNTHETIC=1\n')
+        expect(guardCarriedPathsBelow(join(root, 'tree'))).toEqual(['a/.cursor', 'a/.envrc', 'b/.gemini', 'c/.husky', 'd/.githooks', 'e/.grok'].map(path => join(root, 'tree', path)))
     })
 
     it('finds every environment file and secrets directory a recursive search would reach, without following links, up to its bound', () => {

@@ -21,6 +21,7 @@ import { CockpitConfig } from '../../schema.js'
 import { instructionFrontmatterAsk } from '../../guards/instruction-frontmatter.js'
 import { readBoundedFile } from '../../bounded-read.js'
 import { policyChange } from '../../guards/policy-change.js'
+import { relatedCheckoutHoldsRoot, relatedCheckoutPath } from '../../guards/related-checkouts.js'
 import {
     evaluateGuard,
     approvedReadOnlyInvocation,
@@ -55,6 +56,7 @@ import {
     guardSearchDirectories,
     guardSecretFiles,
     guardSensitivePathsBelow,
+    guardCarriedPathsBelow,
     guardBranchFacts,
     guardPackageManifest,
     guardPatchTargets,
@@ -363,7 +365,7 @@ export async function runGuardEvaluationApplication(
             // did not, so calls are judged under it at once.
             const recorded = await lastSynced()
             if (!recorded) return unrecorded(`${identity.configPath} changed since the guards were generated`)
-            const change = policyChange(recorded.config, loaded.result.config)
+            const change = policyChange(recorded.config, loaded.result.config, { root: realpathSync(identity.root), home: homedir() })
             declared = change.kind === 'widening' ? recorded : loaded.result
             if (change.kind === 'widening') notice = underRecord(`${identity.configPath} has an unapproved edit that widens what agents may do (${change.fields.join(', ')})`, personSyncs)
         }
@@ -679,6 +681,7 @@ export async function runGuardEvaluationApplication(
             const search = request.operation === 'search' || request.operation === 'unignored-search'
             return { status: 'resolved', path, symlink: false, identity: exists ? chain.at(-1)! : null, ancestors: exists ? chain.slice(0, -1) : chain,
                 ...(search ? { sensitive: exists ? searched(path, request.operation === 'unignored-search', request.followsLinks === true) : [] } : {}),
+                ...(search && request.carries ? { carried: exists ? guardCarriedPathsBelow(path, undefined, request.followsLinks === true) : [] } : {}),
                 ...(request.operation === 'repository' ? { tracked: tracked.get(path) ?? null, ...request.history ? { committed: committed.get(path) ?? null } : {} } : {}),
                 ...(request.operation === 'write' && exists && inspected.get(path)!.isFile() ? { links: inspected.get(path)!.nlink } : {}) }
         }
@@ -964,7 +967,7 @@ export async function prepareGuardEvaluationPolicy(
                 }
             }
             if (allowedRoots.size > 256 || instances.length > 256) throw new RefusalError('guard policy exceeds restriction root or instance bounds')
-            const relatedSpellings = config.guards.related_checkouts.map(spelled => spelled.startsWith('~/') ? join(homedir(), spelled.slice(2)) : resolve(canonicalRoot, spelled))
+            const relatedSpellings = config.guards.related_checkouts.map(spelled => relatedCheckoutPath(spelled, canonicalRoot, homedir()))
             // A declared secret path lies in the cockpit, or in every checkout of the sibling it names.
             const secretPaths: string[] = []
             for (const declared of config.guards.secret_paths) {
@@ -1020,13 +1023,13 @@ export async function prepareGuardEvaluationPolicy(
                     // The filesystem root, the home directory or a directory above it is no checkout, and one
                     // overlapping a managed root would make that root read-only.
                     if (real !== path || !lstatSync(real).isDirectory() || real === '/' || confinedPath(real, home)
-                        || [...allowedRoots].some(root => confinedPath(root, real) || confinedPath(real, root))) return []
+                        || [...allowedRoots].some(root => confinedPath(root, real)) || relatedCheckoutHoldsRoot(real, allowedRoots)) return []
                     return [real]
                 }),
                 // Every declared spelling and its missing ancestors stay unwritten, so no agent can create one. A
                 // spelling that is a root or holds one names no other checkout: one cockpit.toml serves every
                 // checkout of a product, and reserving its own root refused every write in it.
-                relatedReserved: [...new Set(relatedSpellings.filter(path => ![...allowedRoots].some(root => confinedPath(path, root))).flatMap(path => {
+                relatedReserved: [...new Set(relatedSpellings.filter(path => !relatedCheckoutHoldsRoot(path, allowedRoots)).flatMap(path => {
                     const reserved = [path]
                     for (let cursor = dirname(path); cursor !== '/' && !lstatIfPresentSync(cursor); cursor = dirname(cursor)) reserved.push(cursor)
                     return reserved

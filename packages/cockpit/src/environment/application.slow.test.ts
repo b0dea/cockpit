@@ -752,6 +752,21 @@ describe('guard policy construction', () => {
         }
     }, 120_000)
 
+    it('asks before a copy carries an agent tool\'s settings to where a session loads them, through the installed guard', async () => {
+        const { root, request, adapters } = await installedGuardRequest()
+        const decide = async (command: string) => (await runGuardEvaluationApplication({ ...request, payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+        mkdirSync(join(root, 'carried/pkg/.claude'), { recursive: true })
+        writeFileSync(join(root, 'carried/pkg/.claude/settings.json'), '{}\n')
+        try {
+            for (const command of ['cp -R carried sub/', 'rsync -a carried/ sub/']) {
+                expect(await decide(command), command).toMatchObject({ decision: 'ask', reason: expect.stringContaining('carried/pkg/.claude') })
+            }
+            expect(await decide('cp -R fixtures build/out')).toMatchObject({ decision: 'allow' })
+        } finally {
+            rmSync(join(root, 'carried'), { recursive: true, force: true })
+        }
+    }, 120_000)
+
     it('judges a move or copy onto an existing file as a write of that file, through the installed guard', async () => {
         const { root, request, adapters } = await installedGuardRequest()
         mkdirSync(join(root, 'notes'), { recursive: true })

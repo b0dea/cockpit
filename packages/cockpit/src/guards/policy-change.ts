@@ -13,7 +13,9 @@
 // The rules read the configuration rather than compare the guard policy each side would build: most
 // of what they judge (Compose files and profiles, resettable volumes, the tools guarded, a sibling's
 // operator gate) never reaches that policy, and building it observes the checkouts on disk.
-import { join } from 'node:path'
+import { realpath } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import { parseCockpitConfigBytes, readBoundedInput } from '../config/load.js'
@@ -24,6 +26,7 @@ import { McpAllowedTools, type CockpitConfig } from '../schema.js'
 import { sha256Hex } from '../sha256.js'
 import { GUARD_HELD_CALLS, GUARD_UNHELD_CALLS } from '../surfaces/harness-registry.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from './local-identity.js'
+import { relatedCheckoutHoldsRoot, relatedCheckoutPath } from './related-checkouts.js'
 
 type PolicyChange = Readonly<{ kind: 'non-widening' }> | Readonly<{ kind: 'widening'; fields: readonly string[] }>
 
@@ -157,12 +160,30 @@ const CHANGE_RULES: Rules = {
 export const POLICY_CHANGE_RULE_PATHS: readonly string[] = Object.freeze([...Object.keys(CHANGE_RULES),
     ...Object.keys(SIBLING_RULES).map(field => `sibling[].${field}`)])
 
+/** Where the configuration applies: the cockpit root and the home directory its paths resolve from. */
+export type PolicyChangeContext = Readonly<{ root: string; home: string }>
+
+/**
+ * The related checkouts as the guard resolves them for `context`, without an entry that is or holds the cockpit root
+ * or a declared sibling's, which the guard drops. A sibling a checkout serves from elsewhere is left out of the
+ * roots, so an entry naming it still counts.
+ */
+function relatedCheckouts(config: CockpitConfig, { root, home }: PolicyChangeContext): readonly string[] {
+    const siblings = resolve(root, config.cockpit.siblings_root)
+    const roots = [root, ...config.sibling.map(sibling => resolve(siblings, sibling.dir))]
+    return [...new Set(config.guards.related_checkouts.map(spelled => relatedCheckoutPath(spelled, root, home)))]
+        .filter(path => !relatedCheckoutHoldsRoot(path, roots))
+}
+
 /**
  * Whether `after` lets agents do anything `before` did not, over the loaded configurations. Only a
- * difference a rule above proves safe is non-widening; every other difference widens.
+ * difference a rule above proves safe is non-widening; every other difference widens. With `context`,
+ * related checkouts are compared as the guard resolves them there; without it, as spelled.
  */
-export function policyChange(before: CockpitConfig, after: CockpitConfig): PolicyChange {
-    const fields = walk(before, after, CHANGE_RULES, '')
+export function policyChange(before: CockpitConfig, after: CockpitConfig, context?: PolicyChangeContext): PolicyChange {
+    const resolved = (config: CockpitConfig) => context
+        ? { ...config, guards: { ...config.guards, related_checkouts: relatedCheckouts(config, context) } } : config
+    const fields = walk(resolved(before), resolved(after), CHANGE_RULES, '')
     return fields.length ? { kind: 'widening', fields: [...new Set(fields)] } : { kind: 'non-widening' }
 }
 
@@ -174,10 +195,10 @@ type GuardConfigChange = Readonly<{ kind: 'unchanged' | 'unrecorded' }> | Policy
  * names, cannot show the edit is safe.
  */
 export function guardConfigChange(generatedSha256: string, recorded: Uint8Array | undefined,
-    current: Readonly<{ sha256: string; config: CockpitConfig }>): GuardConfigChange {
+    current: Readonly<{ sha256: string; config: CockpitConfig }>, context?: PolicyChangeContext): GuardConfigChange {
     if (current.sha256 === generatedSha256) return { kind: 'unchanged' }
     const before = recorded && sha256Hex(recorded) === generatedSha256 ? parseCockpitConfigBytes(recorded) : undefined
-    return before ? policyChange(before, current.config) : { kind: 'unrecorded' }
+    return before ? policyChange(before, current.config, context) : { kind: 'unrecorded' }
 }
 
 /** Why a changed configuration needs a person before the guard applies it, for a hold or a check. */
@@ -206,7 +227,9 @@ export async function observeGuardConfigChange(root: string,
     const identityBytes = await local(GUARD_LOCAL_PATHS.identity)
     const identity = identityBytes && parseGuardLocalIdentity(identityBytes.toString('utf8'))
     if (!identity) return undefined
-    return guardConfigChange(identity.configSha256, await local(GUARD_LOCAL_PATHS.generatedConfig), current)
+    // The guard resolves related checkouts from the real cockpit root and the home directory.
+    const context = { root: await realpath(root), home: homedir() }
+    return guardConfigChange(identity.configSha256, await local(GUARD_LOCAL_PATHS.generatedConfig), current, context)
 }
 
 /**

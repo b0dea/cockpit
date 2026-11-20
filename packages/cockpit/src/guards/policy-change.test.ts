@@ -97,6 +97,19 @@ describe('policyChange', () => {
         expect(changed(edit)).toEqual({ kind: 'widening', fields })
     })
 
+    // One cockpit.toml serves every checkout of a product, so in the checkout an entry names, that entry is the cockpit
+    // itself, which the guard drops: restoring it there widens nothing.
+    it('compares related checkouts as the guard resolves them, without an entry that is or holds a root', () => {
+        const related = (...entries: string[]) => CockpitConfig.parse({ ...declared, guards: { ...declared.guards, related_checkouts: entries } })
+        const context = { root: '/workspace/person/upstream', home: '/workspace/person' }
+        for (const entries of [['../upstream'], ['/workspace'], ['~/upstream'], ['../web'], ['../upstream', '/workspace/person/upstream']]) {
+            expect(policyChange(related(), related(...entries), context), entries.join()).toEqual({ kind: 'non-widening' })
+        }
+        expect(policyChange(related(), related('../upstream', '../tool'), context)).toEqual({ kind: 'widening', fields: ['guards.related_checkouts'] })
+        expect(policyChange(related(), related('../upstream'), { root: '/workspace/person/project', home: '/workspace/person' }))
+            .toEqual({ kind: 'widening', fields: ['guards.related_checkouts'] })
+    })
+
     it.each<[string, (config: Declared) => void]>([
         ['an unchanged configuration', () => {}],
         ['an added secret path and a removed related checkout', config => {
