@@ -588,6 +588,15 @@ done
         }
     })
 
+    it('writes a step\'s standard input to the process, and a process that exits unread keeps its own status', async () => {
+        const echoed = await executeProbe(nodeStep('stdin-echo', "process.stdin.pipe(process.stdout)", { stdin: '{"tool_name":"Bash"}' }))
+        expect(echoed).toMatchObject({ kind: 'complete', stdout: Buffer.from('{"tool_name":"Bash"}') })
+        // A hook that decides before reading closes the pipe; its exit status is still its answer.
+        const unread = await executeProbe(nodeStep('stdin-unread', 'process.exit(2)', { stdin: 'x'.repeat(60_000) }))
+        expect(unread).toMatchObject({ kind: 'refusal', code: 'EXECUTION_STEP_FAILED', execution: { exitCode: 2 } })
+        expect(unread.kind === 'refusal' && unread.receipt).toBeTruthy()
+    })
+
     it('executes without temporary storage when no input needs staging', async () => {
         const directory = mkdtempSync(join(tmpdir(), 'cockpit-no-staging-'))
         scratch.push(directory)

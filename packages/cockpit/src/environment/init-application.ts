@@ -159,6 +159,9 @@ export interface InitApplicationAdapters {
                 provenance: Readonly<{ kind: 'derived' | 'inferred'; source: string; reason: string }> }>[]
             skipped: readonly Readonly<{ source: string; reason: string }>[]
         }>>
+    /** What adopting cockpit takes over from the repositories' existing setup, and what stays theirs. */
+    readonly observeTakeover?: (input: Readonly<{ root: string; configurationRoot: string; repositories: readonly Readonly<{ path: string }>[] }>)
+        => Promise<Readonly<{ takesOver: readonly TakeoverRow[]; staysYours: readonly TakeoverRow[] }>>
     /** What the container runtime on this machine offers, read when the interview will ask for the machine floor. */
     readonly measureMachine?: (input: Readonly<{ root: string }>) => Promise<MachineMeasurement>
     /** The grading mode to recommend for these tools, from which of them are on PATH here. */
@@ -235,7 +238,12 @@ interface InterviewPlan {
     readonly inferenceSkipped: readonly Readonly<{ source: string; reason: string }>[]
     /** Where the accepted cockpit lives, when init runs for a product repository; it is kept like any other answer. */
     readonly cockpitRoot?: CockpitRootAnswer
+    /** Existing files whose job cockpit takes over, each with how; listed beside what stays the repositories'. */
+    readonly takesOver?: readonly TakeoverRow[]
+    readonly staysYours?: readonly TakeoverRow[]
 }
+
+type TakeoverRow = Readonly<{ path: string; note: string }>
 
 export interface InitResult {
     readonly stage: BootstrapStateRecord['value']['stage']
@@ -379,8 +387,9 @@ async function interviewPlan(
     const answered = answers.length
     const outstanding = planned.slice(answered)
     const observedRoot = estateInput(input).root
-    const inference = await adapters.infer?.({ root: observedRoot, configurationRoot: input.root,
-        repositories: classification.runnable.map(row => ({ slug: row.slug, path: relative(observedRoot, resolve(observedRoot, row.path)) || '.' })) })
+    const repositories = classification.runnable.map(row => ({ slug: row.slug, path: relative(observedRoot, resolve(observedRoot, row.path)) || '.' }))
+    const inference = await adapters.infer?.({ root: observedRoot, configurationRoot: input.root, repositories })
+    const takeover = await adapters.observeTakeover?.({ root: observedRoot, configurationRoot: input.root, repositories })
     const skipped = [...inference?.skipped ?? []]
     // Each proposal is listed under every field it helps answer.
     const proposals: (Proposal & Readonly<{ field: string }>)[] = [...nameProposal(input.root).map(row => ({ ...row, field: 'cockpit.name' })),
@@ -403,6 +412,8 @@ async function interviewPlan(
         }),
         inferenceSkipped: skipped,
         ...(input.cockpitRoot === undefined ? {} : { cockpitRoot: input.cockpitRoot.kind }),
+        ...takeover?.takesOver.length ? { takesOver: takeover.takesOver } : {},
+        ...takeover?.staysYours.length ? { staysYours: takeover.staysYours } : {},
     }
 }
 

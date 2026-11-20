@@ -68,6 +68,25 @@ Reads `cockpit.toml` from `--config`.
 | 2 | failure |
 | 130 | cancelled |
 
+## cockpit adopt
+
+Replay guard cases through an existing PreToolUse hook and cockpit's guard, and propose deny rules for the gaps.
+
+Reads `cockpit.toml` from `--config`.
+
+| Flag | Type | Default |
+| --- | --- | --- |
+| `--config` | string | unset |
+| `--import-guard` | string | unset |
+| `--cases` | string | unset |
+| `--json` | boolean | `false` |
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | success |
+| 2 | failure |
+| 130 | cancelled |
+
 ## cockpit pull
 
 Fast-forward the cockpit and its siblings to their upstreams.

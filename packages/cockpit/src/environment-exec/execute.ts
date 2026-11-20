@@ -394,7 +394,7 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
                 argv0: step.argv0,
                 cwd: step.cwd,
                 env: step.env,
-                stdio: ['ignore', 'pipe', 'pipe'],
+                stdio: [step.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
                 detached: true,
             })
     } catch {
@@ -552,6 +552,12 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
             if (stderrBytes > step.stderrLimitBytes) stop(ENVIRONMENT_CODES.EXECUTION_STDERR_LIMIT)
         })
         runningProcess.on('error', () => stop(ENVIRONMENT_CODES.EXECUTION_SPAWN_FAILED))
+        if (step.stdin !== undefined) {
+            // A process that exits before reading its input closes the pipe (EPIPE); its exit status is
+            // still its answer. Any other write failure means the input never arrived.
+            runningProcess.stdin?.on('error', error => { if (!hasErrorCode(error, 'EPIPE')) stop(ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) })
+            runningProcess.stdin?.end(step.stdin)
+        }
         runningProcess.on('close', (code, closeSignal) => {
             closed = { code, signal: closeSignal }
             clearTimeout(timer)

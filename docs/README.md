@@ -15,6 +15,8 @@ on cockpit itself, start with [CONTRIBUTING.md](../CONTRIBUTING.md).
 ## Guides
 
 - [Joining a team's cockpit](joining-a-team.md): install and verify a cockpit from a fresh clone.
+- [Migrating an existing setup](migrating-an-existing-setup.md): carry a PreToolUse guard and its
+  cases, and a Makefile-driven Compose stack, over to cockpit.
 - [Environment lifecycle](environment.md): setup, bring-up, health, logs, reset and seeding;
   worktrees, Compose profiles, one-service commands and pruning stacks across the machine.
 - [Compose patterns](compose-patterns.md): vendor stubs, TLS and data restore in plain Compose.

@@ -593,6 +593,9 @@ export interface ExecutionStep {
     // Absent: a failed step's output never leaves the executor. 'stderr-tail': the refusal carries a
     // bounded, redacted tail of stderr, for tools whose own error is the only statement of the cause.
     failureOutput?: 'stderr-tail'
+    // Absent: the process reads no standard input. Present: these bytes, then end of input; a process
+    // that exits without reading them keeps its own status.
+    stdin?: string
     paths: readonly string[]
     ports: readonly number[]
     labels: Readonly<Record<string, string>>
@@ -731,6 +734,8 @@ function expectedObservations(value: unknown): boolean {
 
 // Product test stages declare up to two hours; every other owner bounds its steps far lower itself.
 export const MAX_STEP_TIMEOUT_MS = 7_200_000
+// One JSON scalar of the step snapshot holds at most this many bytes.
+const MAX_STEP_STDIN_BYTES = 65_536
 
 interface ExecutionTraversal { count: number; readonly ids: Set<string> }
 
@@ -739,7 +744,8 @@ function executionStepSnapshot(snapshot: JsonSnapshot | undefined, traversal: Ex
     const item = snapshot as unknown as ExecutionStep
     const baseKeys = ['id', 'argv', 'argv0', 'cwd', 'env', 'timeoutMs', 'stdoutLimitBytes', 'stderrLimitBytes', 'paths', 'ports', 'labels', 'expected', 'consumedFiles', 'filesystemChecks', 'compensation']
     const optionalKeys = [item.spawnNotAfter === undefined ? undefined : 'spawnNotAfter',
-        item.outputOverflow === undefined ? undefined : 'outputOverflow', item.failureOutput === undefined ? undefined : 'failureOutput']
+        item.outputOverflow === undefined ? undefined : 'outputOverflow', item.failureOutput === undefined ? undefined : 'failureOutput',
+        item.stdin === undefined ? undefined : 'stdin']
         .filter((key): key is string => key !== undefined)
     if (!exactKeys(snapshot, [...baseKeys, ...optionalKeys])
         || typeof item.id !== 'string' || item.id.length === 0 || item.id.includes('\0') || traversal.count >= 256
@@ -748,6 +754,7 @@ function executionStepSnapshot(snapshot: JsonSnapshot | undefined, traversal: Ex
         || !Number.isSafeInteger(item.timeoutMs) || item.timeoutMs <= 0 || item.timeoutMs > MAX_STEP_TIMEOUT_MS
         || item.outputOverflow !== undefined && item.outputOverflow !== 'retain-tail'
         || item.failureOutput !== undefined && item.failureOutput !== 'stderr-tail'
+        || item.stdin !== undefined && (typeof item.stdin !== 'string' || Buffer.byteLength(item.stdin) > MAX_STEP_STDIN_BYTES)
         || item.spawnNotAfter !== undefined && (!isCanonicalTimestamp(item.spawnNotAfter) || !Number.isFinite(Date.parse(item.spawnNotAfter)))
         || !Number.isSafeInteger(item.stdoutLimitBytes) || item.stdoutLimitBytes < 0 || item.stdoutLimitBytes > 16_777_216
         || !Number.isSafeInteger(item.stderrLimitBytes) || item.stderrLimitBytes < 0 || item.stderrLimitBytes > 16_777_216 || !canonicalPaths(item.paths)

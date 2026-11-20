@@ -95,7 +95,7 @@ function sameDirectory(left: DirectoryRead, right: DirectoryRead): boolean {
         && left.path === right.path && left.dev === right.dev && left.ino === right.ino
 }
 
-async function readBounded(root: string, directory: string, name: string): Promise<Read> {
+export async function readBounded(root: string, directory: string, name: string): Promise<Read> {
     const parent = await inspectDirectory(root, directory)
     if (parent.kind !== 'complete') return parent
     try {
