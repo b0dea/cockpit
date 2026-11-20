@@ -26,7 +26,9 @@ brace groups, `time` before either, judging every command inside as it would on 
 over numbers and operators. A plain `"$NAME"` as a redirect or an operand, or `"$NAME/file"` with a literal rest as an operand, in a
 call's second command is read as the path its first command, a plain `NAME=path`, assigns; any other variable in a redirect asks. Shell it does not read, such as `case`, `[[ … ]]`, `eval`, `watch`,
 shell text a session, job or terminal runs (`tmux` other than its listing, attaching and capturing commands,
-`screen` other than `-ls`, `-r` and `-x`, `at`, `batch`, `xterm -e` and osascript's `do shell script`), `xargs -I`, arithmetic over a name, a `cd` after `!` or an expanding heredoc, asks: what runs inside it
+and those too with a format's `#(…)` or `detach -E`, `screen` other than `-ls`, `-r` and `-x`, `at`, `batch`,
+`crontab` installing a table, `systemd-run`, a terminal such as `xterm`, `kitty` or `gnome-terminal` given a
+command, and osascript's `do shell script`), `xargs -I`, arithmetic over a name, a `cd` after `!` or an expanding heredoc, asks: what runs inside it
 is not known, and bash runs code from places such as a case pattern, a `[[` operand or a name's value in
 arithmetic. Its words are checked first, and it is refused when they name a secret, a credential store,
 a guard file or a declared host, or spell a forbidden push, downloaded code piped into an interpreter,

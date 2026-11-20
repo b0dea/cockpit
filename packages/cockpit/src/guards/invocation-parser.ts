@@ -503,20 +503,27 @@ const dynamicExecutables = new Set(['eval', 'dash', 'ksh', 'fish', 'csh', 'tcsh'
 // tmux commands that list, attach, capture or end sessions, which run no shell text.
 const TMUX_PLAIN = new Set(['ls', 'list-sessions', 'attach', 'attach-session', 'a', 'has-session', 'has', 'kill-session', 'kill-server', 'list-windows',
     'lsw', 'list-panes', 'lsp', 'list-clients', 'lsc', 'capture-pane', 'capturep', 'detach-client', 'detach'])
+// Terminal emulators, each of which runs a command given after `-e`, `--`, `--command` or as an operand.
+const TERMINALS = new Set(['xterm', 'uxterm', 'lxterm', 'rxvt', 'urxvt', 'alacritty', 'kitty', 'wezterm', 'konsole', 'gnome-terminal', 'foot', 'st'])
 /**
  * Whether a program runs shell text from its arguments or standard input, often in a session or job that outlives the
- * call: tmux (any command but a listing or attaching one, or a command list joined by `;`), screen (any form but
- * `-ls`, `-r` or `-x`), `at` and `batch`, a terminal's `-e`, and AppleScript's `do shell script`.
+ * call: tmux (any command but a listing or attaching one, a command list joined by `;`, a format's `#(…)`, which tmux
+ * runs through /bin/sh, or `detach -E`, which replaces the client with a shell command), screen (any form but `-ls`,
+ * `-r` or `-x`), `at` and `batch`, a crontab it installs (from a file, standard input or `-e`), `systemd-run`, a
+ * terminal given anything but its help or version, and AppleScript's `do shell script`.
  */
 function launchesShellText(name: string, args: readonly string[]): boolean {
     if (name === 'tmux') {
         let at = 0
         while (args[at] === '-L' || args[at] === '-S') at += 2
-        return !TMUX_PLAIN.has(args[at] ?? '') || args.some(arg => arg.endsWith(';'))
+        return !TMUX_PLAIN.has(args[at] ?? '') || args.some(arg => arg.endsWith(';') || arg.includes('#('))
+            || ['detach', 'detach-client'].includes(args[at]!) && args.some(arg => /^-[a-zA-Z]*E/.test(arg))
     }
     if (name === 'screen') return !['-ls', '-list', '-r', '-x', '-wipe'].includes(args[0] ?? '') || args.length > 2 || args.slice(1).some(arg => arg.startsWith('-'))
-    if (name === 'at' || name === 'batch') return true
-    if (name === 'xterm') return args.includes('-e')
+    if (name === 'at' || name === 'batch' || name === 'systemd-run') return true
+    // `-u` names a user; any other operand, or `-`, is the table it installs.
+    if (name === 'crontab') return args.some((arg, at) => arg === '-' || arg === '-e' || !arg.startsWith('-') && args[at - 1] !== '-u')
+    if (TERMINALS.has(name)) return args.some(arg => !['-h', '-help', '--help', '-v', '-V', '-version', '--version'].includes(arg))
     if (name === 'osascript') return args.some(arg => /do\s+shell\s+script/i.test(arg))
     return false
 }

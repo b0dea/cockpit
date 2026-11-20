@@ -3469,6 +3469,28 @@ describe('everyday directory changes and held paths', () => {
         for (const command of ['tmux ls', 'tmux attach -t x', 'screen -ls']) expect(run(command), command).toMatchObject({ decision: 'allow' })
     })
 
+    // A tmux format runs `#(…)` through /bin/sh, and `detach -E` replaces the client with a shell command, so a
+    // listing or detaching form that carries either runs shell text too.
+    it('judges a tmux listing or detaching form that runs shell text as unread shell', () => {
+        for (const command of [`tmux ls -F '#(cat .env > build/l)'`, `tmux list-windows -F '#(cat .env)'`, `tmux list-panes -F '#(cat .env)'`, `tmux detach -E 'cat .env'`,
+            `tmux detach-client -E 'cat .env'`]) {
+            expect(run(command), command).toMatchObject({ decision: 'deny' })
+        }
+        for (const command of [`tmux ls -F '#(make)'`, `tmux lsw -F '#(make)'`, `tmux detach -E make`, `tmux detach-client -E make`]) expect(run(command), command).toMatchObject({ decision: 'ask' })
+        for (const command of [`tmux ls -F '#{session_name}'`, 'tmux detach', 'tmux detach-client -s x']) expect(run(command), command).toMatchObject({ decision: 'allow' })
+    })
+
+    // An installed crontab, a transient systemd unit and a terminal's command run shell text later or elsewhere.
+    it('judges shell text that crontab, systemd-run or a terminal runs as unread shell', () => {
+        for (const command of ['crontab build/jobs', 'crontab -', 'crontab -u me build/jobs', `crontab - <<< '* * * * * cat .env'`, 'crontab -e', "systemd-run --user sh -c 'make'",
+            'systemd-run make', ...['uxterm', 'lxterm', 'rxvt', 'urxvt', 'xterm'].map(term => `${term} -e make`), 'alacritty -e make', 'alacritty --command make',
+            'kitty make', 'kitty -- make', 'wezterm start -- make', 'konsole -e make', 'gnome-terminal -- make', 'foot make', 'st -e make']) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+        expect(run(`crontab - <<< '* * * * * cat .env'`)).toMatchObject({ decision: 'deny' })
+        for (const command of ['crontab -l', 'crontab -u me -l', 'kitty --version', 'alacritty --help']) expect(run(command), command).toMatchObject({ decision: 'allow' })
+    })
+
     // `.aws/` and `.aws/*` name the store as `.aws` does: a sync, a recursive copy or a glob reaches every file in it.
     it('judges a directory spelled with a trailing slash or a glob after it as the directory itself', () => {
         for (const command of ['rsync -a "$X/.aws/" build/', `python3 -c "import os, glob; os.chdir(os.environ['HO'+'ME']); print(glob.glob('.codex/*'))"`,
