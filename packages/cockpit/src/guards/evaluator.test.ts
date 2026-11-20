@@ -3129,6 +3129,18 @@ describe('installed code, search path and secret links', () => {
         }
     })
 
+    // `enable -n`, zsh's `disable`, `hash -p`, an alias, a function or a new PATH can make `true`, `:` or `wait` a program
+    // that reads through the link, so beside any of them the builtin counts as a later command.
+    it('counts a no-op builtin as a later command when the call can make it run something else', () => {
+        const run = (command: string) => evaluateGuard(parseGuardInput(shellPayload(command), { home: '/workspace/home' }), policy(), withGit)
+        for (const command of ['enable -n true; hash -p build/evil true; cp -r src out; true', 'export PATH=build:$PATH; enable -n true; cp -r src out; true',
+            'disable true; cp -r src out; true', 'hash -p build/evil wait; cp -r src out; wait', 'enable -n :; cp -r src out; :', 'PATH=build; cp -r src out; true',
+            'export PATH=build; cp -r src out; true', 'builtin true; cp -r src out; true', 'alias true=cat; cp -r src out; true',
+            'true() { cat out/x; }; cp -r src out; true']) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+    })
+
     it('treats hard links and materialised repositories as links, and never writes a file another hard link shares', () => {
         const configured = { ...policy(), homeDirectory: '/workspace/person' }
         const run = (command: string, evidence: PathInspection = withGit) => evaluateGuard(parseGuardInput(shellPayload(command)), configured, evidence)
