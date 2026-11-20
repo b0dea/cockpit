@@ -436,7 +436,8 @@ check as read-only commands. A recursive copy (`cp -R`, `-r` or `-a`) reads each
 A source that is or covers guard files, or a root's `.git`, asks, as rsync's operands do, since the
 copy carries them where a session or Git loads them (`cp -R . build/snapshot`). So does a `cp -R`,
 `rsync`, `ditto` or `scp -r` source whose walk finds an agent tool's configuration, a guard directory or a
-repository below it (`.claude`, `.codex`, `.opencode`, `.cockpit`, `.mcp.json`, `opencode.json` or `.git`),
+repository below it (the names the guard holds as running from a checkout: `.claude`, `.codex`,
+`.opencode`, `.cursor`, `.gemini`, `.cockpit`, `.git`, `.husky`, `.githooks`, `.mcp.json`, `opencode.json` or `.envrc`),
 naming it, and one whose walk cannot finish: past its bound, or at a link when the copy follows links.
 What `cp` writes is judged together with everything below each destination, and what `rsync`,
 `scp`, `ditto`, `pax`, `cpio`, `uniq`, `split`, `csplit`, `zip`, `sponge`, `patch` and the

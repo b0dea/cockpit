@@ -1461,6 +1461,8 @@ const SYSTEM_RUN_CONFIGURATION = ['/etc', '/private/etc', '/library', '/system',
 // them, and direnv's `.envrc`, which runs when a shell enters its directory.
 const NAMED_RUN_CONFIGURATION = new Set(['.cockpit', '.claude', '.codex', '.opencode', '.cursor', '.grok', '.gemini', '.git', '.husky', '.githooks'])
 const NAMED_RUN_FILES = new Set(['opencode.json', 'opencode.jsonc', '.envrc', '.mcp.json'])
+/** A folded name of what runs from a checkout: an agent tool's configuration, a guard, Git hooks or direnv's file. */
+export const runsFromCheckout = (name: string) => NAMED_RUN_CONFIGURATION.has(name) || NAMED_RUN_FILES.has(name)
 // What an agent tool loads from the directory a session starts in, beyond its configuration directory.
 const NAMED_INSTRUCTION_FILES = new Set(['claude.md', 'claude.local.md', 'agents.md', 'agents.override.md'])
 function externalWriteHazard(spelled: string, home: string | undefined, searchDirectories: readonly string[]): string | undefined {
@@ -2841,8 +2843,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             searchBlocker = present !== undefined || sensitive !== null && unseen !== undefined ? deny(present !== undefined
                 ? `A recursive search of ${path} would read ${shown(present)}, ${(resolved.secretPaths ?? []).includes(present) ? 'a path [guards] secret_paths declares secret' : 'a declared environment instance or secrets directory'}. Search a path that does not contain it.`
                 : `A recursive search of ${path} would read ${shown(unseen!)}, an environment file or secrets directory that is not a declared template. Search a path that does not contain it.`) : undefined
-            if (carried === null) searchBlocker ??= ask(`The guard could not walk all of ${path} to tell whether copying it carries an agent tool's configuration, a guard directory or a repository, which a session started there loads or whose hooks Git runs. Copy the files it needs by name; otherwise a person approves it.`)
-            else if (carried !== undefined) searchBlocker ??= ask(`Copying ${path} carries ${shown(carried)}, an agent tool's configuration, a guard directory or a repository, which a session started there loads or whose hooks Git runs. Copy the files it needs by name; otherwise a person approves it.`)
+            if (carried === null) searchBlocker ??= ask(`The guard could not walk all of ${path} to tell whether copying it carries an agent tool's configuration, a guard directory, a repository or Git hooks, or direnv's .envrc, which a session, Git or a shell entering it then runs. Copy the files it needs by name; otherwise a person approves it.`)
+            else if (carried !== undefined) searchBlocker ??= ask(`Copying ${path} carries ${shown(carried)}, an agent tool's configuration, a guard directory, a repository or Git hooks, or direnv's .envrc, which a session, Git or a shell entering it then runs. Copy the files it needs by name; otherwise a person approves it.`)
         }
         for (const path of access.requires ?? []) {
             const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: 'read' })

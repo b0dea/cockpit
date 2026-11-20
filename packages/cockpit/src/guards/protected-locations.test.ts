@@ -70,6 +70,15 @@ describe('guard protected locations', () => {
         expect(guardCarriedPathsBelow(join(root, 'tree'), 3)).toBeNull()
     })
 
+    // The names are the guard's own list of what runs from a checkout, so a copy carrying direnv's file, Git hook
+    // managers' directories or another agent tool's configuration is found too.
+    it('finds every name the guard holds runs from a checkout below a copied tree', () => {
+        const root = scratch()
+        for (const directory of ['a/.cursor', 'b/.gemini', 'c/.husky', 'd/.githooks', 'e/.grok']) mkdirSync(join(root, 'tree', directory), { recursive: true })
+        writeFileSync(join(root, 'tree/a/.envrc'), 'export SYNTHETIC=1\n')
+        expect(guardCarriedPathsBelow(join(root, 'tree'))).toEqual(['a/.cursor', 'a/.envrc', 'b/.gemini', 'c/.husky', 'd/.githooks', 'e/.grok'].map(path => join(root, 'tree', path)))
+    })
+
     it('finds every environment file and secrets directory a recursive search would reach, without following links, up to its bound', () => {
         const root = scratch()
         mkdirSync(join(root, 'tree/src'), { recursive: true })

@@ -13,7 +13,7 @@ import { ENVIRONMENT_CODES, snapshotExecutionStep, type ExecutionStep, RefusalEr
 import { GIT_CHILD_CONFIG, type ResolvedExecutable } from '../environment/executable.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { instructionRisk } from './instruction-frontmatter.js'
-import { agentInstructionFile, foldGuardSpelling, GUARD_ARCHIVE_ENTRIES, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity, isSensitiveGuardName, plantedAgentControl, type GitTreeTarget } from './evaluator.js'
+import { agentInstructionFile, foldGuardSpelling, GUARD_ARCHIVE_ENTRIES, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity, isSensitiveGuardName, plantedAgentControl, runsFromCheckout, type GitTreeTarget } from './evaluator.js'
 
 function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
 
@@ -97,16 +97,13 @@ export function guardSensitivePathsBelow(path: string, entryLimit = GUARD_SEARCH
     return namedPathsBelow(path, sensitiveName, true, entryLimit, followsLinks)
 }
 
-// What a copy of a tree carries to where a session or Git then loads it: an agent tool's configuration, a
-// guard directory, or a repository's `.git`, whose configuration and hooks Git runs. Case-folded names.
-const CARRIED_NAMES = new Set(['.claude', '.codex', '.opencode', '.cockpit', '.mcp.json', 'opencode.json', 'opencode.jsonc', '.git'])
-
 /**
- * Every path at or below `path` named as `CARRIED_NAMES` holds, walked as guardSensitivePathsBelow walks, without
+ * Every path at or below `path` named as what runs from a checkout (an agent tool's configuration, a guard
+ * directory, a repository's `.git`, Git hook managers' directories or direnv's `.envrc`), walked as guardSensitivePathsBelow walks, without
  * entering one it found: one found is enough to name, and a repository's objects would spend the walk's bound.
  */
 export function guardCarriedPathsBelow(path: string, entryLimit = GUARD_SEARCH_ENTRY_LIMIT, followsLinks = false): readonly string[] | null {
-    return namedPathsBelow(path, name => CARRIED_NAMES.has(name.toLowerCase()), false, entryLimit, followsLinks)
+    return namedPathsBelow(path, name => runsFromCheckout(foldGuardSpelling(name)), false, entryLimit, followsLinks)
 }
 
 function namedPathsBelow(path: string, named: (name: string) => boolean, entersNamed: boolean, entryLimit: number, followsLinks: boolean): readonly string[] | null {
