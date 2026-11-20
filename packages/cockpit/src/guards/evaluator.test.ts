@@ -3540,6 +3540,18 @@ describe('everyday directory changes and held paths', () => {
         for (const command of ['crontab -l', 'crontab -u me -l', 'kitty --version', 'alacritty --help']) expect(run(command), command).toMatchObject({ decision: 'allow' })
     })
 
+    // More terminals, kitten's remote control, `open --args` handing a terminal its command, and a crontab that reads
+    // its table from standard input all run shell text; listing or removing `at` jobs runs none.
+    it('judges more terminals, open --args and a crontab read from standard input as launchers', () => {
+        for (const command of [...['ghostty', 'terminator', 'tilix', 'xfce4-terminal', 'x-terminal-emulator', 'lxterminal', 'mate-terminal'].map(term => `${term} -e make`),
+            'kitten @ launch make', "kitten @ send-text 'make\\n'", "open -na Ghostty --args -e sh -c 'make'", 'crontab < build/jobs', "echo '* * * * * make' | crontab",
+            'crontab -u me < build/jobs']) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+        expect(run("open -na Ghostty --args -e sh -c 'cat .env'")).toMatchObject({ decision: 'deny' })
+        for (const command of ['at -l', 'at -r 3', 'open README.md', 'open -a Preview build/a.pdf', 'kitten --version', 'crontab -r']) expect(run(command), command).toMatchObject({ decision: 'allow' })
+    })
+
     // `.aws/` and `.aws/*` name the store as `.aws` does: a sync, a recursive copy or a glob reaches every file in it.
     it('judges a directory spelled with a trailing slash or a glob after it as the directory itself', () => {
         for (const command of ['rsync -a "$X/.aws/" build/', `python3 -c "import os, glob; os.chdir(os.environ['HO'+'ME']); print(glob.glob('.codex/*'))"`,

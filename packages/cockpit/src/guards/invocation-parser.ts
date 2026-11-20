@@ -504,13 +504,17 @@ const dynamicExecutables = new Set(['eval', 'dash', 'ksh', 'fish', 'csh', 'tcsh'
 const TMUX_PLAIN = new Set(['ls', 'list-sessions', 'attach', 'attach-session', 'a', 'has-session', 'has', 'kill-session', 'kill-server', 'list-windows',
     'lsw', 'list-panes', 'lsp', 'list-clients', 'lsc', 'capture-pane', 'capturep', 'detach-client', 'detach'])
 // Terminal emulators, each of which runs a command given after `-e`, `--`, `--command` or as an operand.
-const TERMINALS = new Set(['xterm', 'uxterm', 'lxterm', 'rxvt', 'urxvt', 'alacritty', 'kitty', 'wezterm', 'konsole', 'gnome-terminal', 'foot', 'st'])
+// kitten drives a running kitty (`kitten @ launch`, `kitten @ send-text`).
+const TERMINALS = new Set(['xterm', 'uxterm', 'lxterm', 'rxvt', 'urxvt', 'alacritty', 'kitty', 'kitten', 'wezterm', 'konsole', 'gnome-terminal', 'foot', 'st',
+    'ghostty', 'terminator', 'tilix', 'xfce4-terminal', 'x-terminal-emulator', 'lxterminal', 'mate-terminal'])
 /**
  * Whether a program runs shell text from its arguments or standard input, often in a session or job that outlives the
  * call: tmux (any command but a listing or attaching one, a command list joined by `;`, a format's `#(…)`, which tmux
  * runs through /bin/sh, or `detach -E`, which replaces the client with a shell command), screen (any form but `-ls`,
- * `-r` or `-x`), `at` and `batch`, a crontab it installs (from a file, standard input or `-e`), `systemd-run`, a
- * terminal given anything but its help or version, and AppleScript's `do shell script`.
+ * `-r` or `-x`), `at` (but `-l` and `-r`, which list and remove jobs) and `batch`, a crontab it installs (from a file,
+ * `-e`, or standard input whenever it neither lists nor removes, as some crontabs read it bare), `systemd-run`, a
+ * terminal given anything but its help or version, `open --args`, which hands an application its command line, and
+ * AppleScript's `do shell script`.
  */
 function launchesShellText(name: string, args: readonly string[]): boolean {
     if (name === 'tmux') {
@@ -520,9 +524,12 @@ function launchesShellText(name: string, args: readonly string[]): boolean {
             || ['detach', 'detach-client'].includes(args[at]!) && args.some(arg => /^-[a-zA-Z]*E/.test(arg))
     }
     if (name === 'screen') return !['-ls', '-list', '-r', '-x', '-wipe'].includes(args[0] ?? '') || args.length > 2 || args.slice(1).some(arg => arg.startsWith('-'))
-    if (name === 'at' || name === 'batch' || name === 'systemd-run') return true
-    // `-u` names a user; any other operand, or `-`, is the table it installs.
-    if (name === 'crontab') return args.some((arg, at) => arg === '-' || arg === '-e' || !arg.startsWith('-') && args[at - 1] !== '-u')
+    if (name === 'at') return !['-l', '-r', '-d'].includes(args[0] ?? '')
+    if (name === 'batch' || name === 'systemd-run') return true
+    // `-u` names a user; any other operand, or `-`, is the table it installs, and without `-l` or `-r` it reads one.
+    if (name === 'crontab') return !args.some(arg => arg === '-l' || arg === '-r')
+        || args.some((arg, at) => arg === '-' || arg === '-e' || !arg.startsWith('-') && args[at - 1] !== '-u')
+    if (name === 'open') return args.includes('--args')
     if (TERMINALS.has(name)) return args.some(arg => !['-h', '-help', '--help', '-v', '-V', '-version', '--version'].includes(arg))
     if (name === 'osascript') return args.some(arg => /do\s+shell\s+script/i.test(arg))
     return false
