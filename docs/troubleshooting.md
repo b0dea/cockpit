@@ -400,6 +400,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `RUNTIME_UNAVAILABLE` | [see above](#common-refusal-guidance) |
 | `SECRET_FILE_TRACKED` | a person decides with the repository owner: stop tracking each file with git rm --cached <file>, add it to .gitignore, commit, and rotate any credential it held; commit a .env.example with the variable names instead |
 | `SERVICE_NOT_DECLARED` | rerun with --service set to one of the declared services |
+| `SESSION_SERVICES_UNHEALTHY` | fix the cause its logs show (./node_modules/@b00dea/cockpit/bin/cockpit.mjs logs --config <your cockpit.toml> --service <service>), then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs restart --config <your cockpit.toml> --service <service> |
 | `SETUP_CLONE_FAILED` | check that this machine can reach the remote (git ls-remote <remote>) and that the sibling remote in cockpit.toml is right, or clone it into the named directory yourself; then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> again |
 | `SETUP_INSTRUCTION_FILES_OFFERED` | review the proposed change with a person, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> --write-instruction-files |
 | `SETUP_INSTRUCTION_POINTER_OFFERED` | review the proposed AGENTS.md block, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs setup --config <your cockpit.toml> --write-instruction-pointers |

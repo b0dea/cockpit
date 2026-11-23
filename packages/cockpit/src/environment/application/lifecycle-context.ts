@@ -28,6 +28,12 @@ import { ownerDiagnostic, sameSource } from './shared.js'
 
 export interface UpCommandInput {
     readonly configPath: string
+    /**
+     * Set by `session`: a service that is not running healthy is named rather than refused, and the
+     * services that do not depend on it still start. Which services a command needs is unknowable,
+     * and an unrelated unhealthy add-on turned away commands that needed only a healthy database.
+     */
+    readonly tolerateUnhealthy?: true
 }
 
 export interface SleepCommandInput {
@@ -206,6 +212,8 @@ export type UpCommandResult = EnvironmentCommandOutcome<Readonly<{
     coldStart?: Readonly<{ measuredMillis: number; limitMillis: number; headroomMillis: number }>
     /** Present when environment.seed is declared: whether this up ran it or found the data current. */
     seed?: 'ran' | 'current'
+    /** With `tolerateUnhealthy`: the services not running healthy, which the command runs without. */
+    unhealthy?: readonly string[]
 }>>
 
 export type SleepCommandResult = EnvironmentCommandOutcome<Readonly<{

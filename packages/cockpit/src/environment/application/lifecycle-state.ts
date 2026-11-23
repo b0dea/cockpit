@@ -193,11 +193,14 @@ export async function invalidateCompletedLifecycle(
     return undefined
 }
 
-export function exactCommandConfigPath(input: unknown): string | undefined {
+/** The config path of an input that holds it and, as plain values, at most the `optional` keys. */
+export function exactCommandConfigPath(input: unknown, optional: readonly string[] = []): string | undefined {
     try {
         if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined
         const descriptors = Object.getOwnPropertyDescriptors(input)
-        if (Reflect.ownKeys(descriptors).length !== 1 || !descriptors.configPath || !('value' in descriptors.configPath)
+        const extra = Reflect.ownKeys(descriptors).filter((key) => key !== 'configPath')
+        if (extra.some((key) => typeof key !== 'string' || !optional.includes(key) || !('value' in descriptors[key]!))
+            || !descriptors.configPath || !('value' in descriptors.configPath)
             || typeof descriptors.configPath.value !== 'string' || descriptors.configPath.value.length === 0
             || descriptors.configPath.value.includes('\0')) return undefined
         return resolve(descriptors.configPath.value)
