@@ -442,6 +442,14 @@ it('consumes vendor and exact build/test authority through installed hook regist
     expect(invoke('cat web/.env.local').stdout).toContain('permissionDecision":"deny')
     await writeFile(join(root, 'app/.env.schema'), '# @required\nAPI_KEY=\n')
     expect(invoke('cat .env.schema')).toMatchObject(permitted)
+    // A shell left in a removed directory, such as a worktree, is judged from the root, so its cd back out runs.
+    const fromRemoved = (command: string) => {
+        spawnSync('mkdir', ['-p', join(root, 'app/gone')])
+        return invoke(command, join(root, 'app/gone'), `rmdir "$PWD" && ${hook}`)
+    }
+    // bash warns on stderr that it cannot read the removed directory; the answer is on stdout.
+    expect(fromRemoved(`cd ${JSON.stringify(root)} && npm run build`)).toMatchObject({ status: 0, stdout: permitted.stdout })
+    expect(fromRemoved('cat app/.env').stdout).toContain('permissionDecision":"deny')
     const launcher = fileURLToPath(new URL('../../bin/cockpit.mjs', import.meta.url))
     expect(invoke(`${JSON.stringify(launcher)} check --config ${JSON.stringify(configPath)}`, root)).toMatchObject(permitted)
     // The reset preview deletes nothing; applying one waits for a person where no seed refills the data.
