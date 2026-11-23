@@ -64,7 +64,7 @@ export type GuardParseResult = {
      * The shell text holds a construct the parser does not read, such as `$((…))`, `if` or `eval`, so no invocation
      * was captured from it: the evaluator judges the text by the names it spells.
      */
-    readonly unreadable?: Readonly<{ text: string; reason: string }>
+    readonly unreadable?: Readonly<{ text: string; reason: string; outlives?: true }>
     /** The shell text of a call that changes directory by a name without `./`, judged as text after that cd. */
     readonly cdByName?: string
 } | { readonly status: 'unavailable'; readonly reason: string }
@@ -80,6 +80,8 @@ function refuse(reason: string): never { throw new RefusalError(reason) }
 // code run as code, and a dump of the environment; or input past the parser's bounds. It refuses the whole call.
 class ForbiddenConstruct extends RefusalError {}
 function forbid(reason: string): never { throw new ForbiddenConstruct(reason) }
+// Shell text a session, job or terminal runs, often after the call ends and outside the agent tool's own permissions.
+class OutlivingShell extends RefusalError {}
 /** A word as a refusal quotes it: JSON-escaped, with the controls a harness rejects in a reason escaped too, and bounded. */
 export function shownGuardWord(word: string): string {
     const characters = [...word]
@@ -534,6 +536,17 @@ function launchesShellText(name: string, args: readonly string[]): boolean {
     if (name === 'osascript') return args.some(arg => /do\s+shell\s+script/i.test(arg))
     return false
 }
+/**
+ * Whether unread shell text may start something that outlives the call: the parser stops at the first construct it
+ * does not read, so a later `&` or launcher is found in the text itself. A bare `at` or `batch` is too common a word
+ * in prose to count unless a time or option follows it.
+ */
+function textOutlives(text: string): boolean {
+    if (/(?:^|[^&>|])&(?![&>])/.test(text)) return true
+    const words = text.split(/[\s;&|()<>`"'{}]+/).filter(Boolean).map((word) => posix.basename(word))
+    return words.some((word, at) => ['tmux', 'screen', 'crontab', 'systemd-run', 'nohup', 'setsid', 'disown', 'osascript'].includes(word) || TERMINALS.has(word)
+        || ['at', 'batch'].includes(word) && /^(?:-|now$|noon$|midnight$|tomorrow$|\d)/.test(words[at + 1] ?? ''))
+}
 // tmux commands that open a session, window or pane running a shell command. Without -c, spawn.c starts one in
 // server_client_get_cwd of the command client, which has no session, so in the invoking shell's directory; respawn-pane
 // reuses the pane's own directory instead, so it asks.
@@ -961,7 +974,9 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
                 : (([program, ...rest]) => [{ ...program!, wrapped: true }, ...rest])(invocation(session.command, cwd, context))
             nested = started.map((item) => ({ ...item, background: true as const }))
         }
-        if (dynamicExecutables.has(name) || !session && launchesShellText(name, args.slice(cursor + 1).map((token) => token.value))) refuse(`${shown(executable)} runs a command or script built from its arguments, which the guard does not parse. Run the command itself.`)
+        const built = `${shown(executable)} runs a command or script built from its arguments, which the guard does not parse. Run the command itself.`
+        if (!session && launchesShellText(name, args.slice(cursor + 1).map((token) => token.value))) throw new OutlivingShell(built)
+        if (dynamicExecutables.has(name)) refuse(built)
         if (reserved.has(executable)) refuse(`Shell control flow (${executable}) is not parsed by the guard. Run each command on its own.`)
         words.push({ role: 'executable', value: executable })
         cursor++
@@ -1457,7 +1472,7 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
         let invocations: ParsedInvocation[] = []
         let content: GuardFileContent | undefined
         const seen: Seen = { background: false, loop: false }
-        let unreadable: { text: string; reason: string } | undefined
+        let unreadable: { text: string; reason: string; outlives?: true } | undefined
         const shell = (command: string): ParsedInvocation[] => {
             try {
                 const parsed = parseShell(command, cwd, { options, definitions: new Set(), depth: 0, seen })
@@ -1466,7 +1481,7 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
             }
             catch (error) {
                 if (!(error instanceof RefusalError) || error instanceof ForbiddenConstruct) throw error
-                unreadable = { text: command, reason: error.message }
+                unreadable = { text: command, reason: error.message, ...error instanceof OutlivingShell || seen.background || textOutlives(command) ? { outlives: true as const } : {} }
                 return []
             }
         }

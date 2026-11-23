@@ -29,15 +29,19 @@ format, a `;` command list, several command words, and a session started with an
 point screen or tmux at a configuration file the call wrote, ask. It also reads here-strings,
 `source FILE`, `${NAME:-word}` (its default word is name-checked wherever a word is) and arithmetic
 over numbers and operators. A plain `"$NAME"` as a redirect or an operand, or `"$NAME/file"` with a literal rest as an operand, in a
-call's second command is read as the path its first command, a plain `NAME=path`, assigns; any other variable in a redirect asks. Shell it does not read, such as `case`, `[[ … ]]`, `eval`, `watch`,
-shell text a session, job or terminal runs (`tmux` other than its listing, attaching and capturing commands,
+call's second command is read as the path its first command, a plain `NAME=path`, assigns; any other variable in a redirect is shell it does not read. Shell it does not read, such as `case`, `[[ … ]]`, `eval`, `watch`,
+`xargs -I`, arithmetic over a name, a `cd` after `!` or an expanding heredoc, is left to the agent tool's own
+permissions: the guard gives no answer, so Claude Code and Codex decide as they would without it. Shell
+text a session, job or terminal runs (`tmux` other than its listing, attaching and capturing commands,
 and those too with a format's `#(…)` or `detach -E`, `screen` other than `-ls`, `-r`, `-x` and a detached
 command, `at` other
 than `-l` and `-r`, `batch`, `crontab` installing a table, from standard input too, `systemd-run`, a terminal
 such as `xterm`, `kitty`, `kitten @`, `ghostty` or `gnome-terminal` given a command, `open --args`, and
-osascript's `do shell script`), `xargs -I`, arithmetic over a name, a `cd` after `!` or an expanding heredoc, asks: what runs inside it
-is not known, and bash runs code from places such as a case pattern, a `[[` operand or a name's value in
-arithmetic. Its words are checked first, and it is refused when they name a secret, a credential store,
+osascript's `do shell script`) still asks, as it can run after the call ends, outside those permissions;
+so does unread text with a `&`, an environment dump (`env`, `printenv`, `set`, `export -p`) or a
+substituted download.
+What runs inside unread shell is not known, and bash runs code from places such as a case pattern, a `[[`
+operand or a name's value in arithmetic. Its words are checked first, and it is refused when they name a secret, a credential store,
 a guard file or a declared host, or spell a forbidden push, downloaded code piped into an interpreter,
 privilege escalation or a person's `[[guards.deny]]` command. Inline code is read as one list of words
 too, since code splits a push across lines and list items, so prose that mentions a push and a
@@ -624,7 +628,7 @@ or a URL; `gh api` is left out, because its `GET` returns any file the repositor
 - A subshell `( … )`, a brace group `{ …; }`, an `if`, a `for`, `while` or `until` loop and a process
   substitution `<(…)` are judged by the commands inside them, so each is allowed when every command
   inside is. A `cd` inside a subshell moves only the subshell; one inside a loop or an `if`, or inside a
-  group that feeds a pipeline, leaves the call unread, so it asks. Redirects after a loop, `if` or
+  group that feeds a pipeline, leaves the call unread, so the agent tool decides it. Redirects after a loop, `if` or
   subshell are judged as writes or reads of their own. `<(…)` must be a word of its own; `>(…)` asks. A
   shell or interpreter given any word that names `<(…)`, `/dev/stdin` or another descriptor, as its
   script, a module it preloads or an option's value (`bash <(…)`, `node -r ./x.js /dev/fd/63`), and
