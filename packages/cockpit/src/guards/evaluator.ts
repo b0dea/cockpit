@@ -268,7 +268,8 @@ const allowed: GuardDecision = Object.freeze({ decision: 'allow', reason: 'Every
 // outside the configured roots. The adapter answers them with nothing, so the tool's own prompt still applies.
 const mcpDeferred = 'MCP tool satisfies the declared tool restrictions.'
 const outsideDeferred = 'Nothing the guard checks refuses this call; what it reaches outside the configured roots is left to the agent tool\'s own permissions.'
-export const GUARD_DEFERRED_REASONS = Object.freeze([mcpDeferred, outsideDeferred])
+const unreadDeferred = 'The guard does not read this shell form and its words name nothing it refuses, so the call is left to the agent tool\'s own permissions.'
+export const GUARD_DEFERRED_REASONS = Object.freeze([mcpDeferred, outsideDeferred, unreadDeferred])
 function record(value: JsonSnapshot | undefined): value is JsonSnapshotObject {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
@@ -2367,7 +2368,10 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         return code && refusal === spelledPushDenial ? codePushDenial : refusal
     }
     // Shell the parser does not read is judged by the words its text spells: a refused name, host or push, or a person's
-    // declared deny. Nothing else about it is known, so it otherwise asks; Codex and OpenCode refuse an ask.
+    // declared deny. Nothing else about it is known, so the rest is left to the agent tool's own permissions: forcing a
+    // prompt there stopped autonomous sessions on everyday forms, and Codex and OpenCode refuse an ask outright. Text a
+    // session or job runs can outlive the call and those permissions, so it still asks, as does text that may dump the
+    // environment or substitute a download, which a readable call refuses but no name in the text gives away.
     if (input.unreadable) {
         const words = input.unreadable.text.split(/[\s;&|()<>`"'{}]+/).filter(Boolean)
         const declared = resolved.declaredDenies.find(rule => words.some((_, at) => rule.argv.every((_, offset) => ruleWordMatches(rule.argv, offset, words[at + offset], true))))
@@ -2375,7 +2379,8 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // Running cockpit beside a form the guard cannot read is refused for the form; name it, so the fix is plain.
         if (refusal === unreadInstalledCodeDenial) return deny(`${refusal.reason} Here it is a form the guard does not read: ${input.unreadable.reason}`)
         return refusal ?? (declared ? deny(`${declared.reason}${declared.fix ? ` Fix: ${declared.fix}` : ''}`)
-            : ask(`The guard does not read this shell form (${input.unreadable.reason}) Write it as plain commands joined with &&, use \`[ … ] &&\` or \`if\`, or put it in a script file.`))
+            : input.unreadable.outlives || /(?:^|[\s;&|(`{])(?:env|printenv|set|(?:export|declare|typeset)\s+-p)\s*(?:$|[;&|)>`}])|[$<]\(\s*(?:curl|wget)\b/m.test(input.unreadable.text) ? ask(`The guard does not read this shell form (${input.unreadable.reason}) Write it as plain commands joined with &&, use \`[ … ] &&\` or \`if\`, or put it in a script file.`)
+            : { decision: 'allow', reason: unreadDeferred })
     }
     // The current branch and where a bare push goes, for the repository at `cwd`, as Git reports them.
     const branchFacts = (cwd: string): BranchFacts | undefined => {
