@@ -13,6 +13,12 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.38
+
+### Patch Changes
+
+- 615e56c: A call whose words hold a `[` without its `]`, as a Python heredoc's indexing does, gets a normal answer instead of being refused with `SyntaxError`. If the guard ever fails to judge a command inside shell it does not read, it asks and names that command.
+
 ## 0.1.37
 
 ### Patch Changes
