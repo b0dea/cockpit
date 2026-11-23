@@ -1504,6 +1504,19 @@ describe('allow by default', () => {
         for (const command of ['eval "grep -rn sk_ docs/"', '[[ -d src ]] && ls src']) expect(verdict(run(command)), command).toBe('deferred')
     })
 
+    // A word with a `[` and no `]`, as a Python heredoc's indexing leaves after the guard splits it, once made an invalid
+    // regular expression, and the call was refused with the exception's name instead of an answer.
+    it('answers a call whose words hold an unmatched bracket', () => {
+        const command = String.raw`S=/private/tmp/scratch; E=workorders/WO-1/evidence; diff <(jq -S . $E/secret-path-cases-0.1.35.json) <(jq -S . $S/secret-0.1.37.json) >/dev/null && echo SECRET-IDENTICAL; F=$E/guard-parity-cockpit.json; sed -i '' "s#/Org/app-isolated#/Org/app#g" $F && python3 $E/probe-guard.py --matrix-only > $S/parity.json 2>$S/parity.err; echo matrix=$?; git checkout -- $F; python3 - $S/a.json $S/b.json <<'EOF'
+import json,sys
+a=json.load(open(sys.argv[1]))["matrix"]; b=json.load(open(sys.argv[2]))["matrix"]
+d=[(k,t,a[k][t]["decision"],b[k][t]["decision"]) for k in a for t in ("claude","codex") if a[k].get(t,{}).get("decision")!=b.get(k,{}).get(t,{}).get("decision")]
+print("rows",len(a),"decision diffs",len(d),d[:5])
+EOF
+git status -s | rg -v "^\?\?"`
+        expect(['allow', 'ask', 'deny']).toContain(run(command).decision)
+    })
+
     it('refuses what shell it does not read names, and leaves the rest to the agent tool', () => {
         // Each row once ran: a case pattern or a [[ ]] substitution unjudged, a quoted cd moving the commands after it,
         // arithmetic over a name evaluating its value as code, a default word never name-checked, and a cd hiding a removal.
