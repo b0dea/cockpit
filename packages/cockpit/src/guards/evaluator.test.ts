@@ -1494,13 +1494,23 @@ describe('allow by default', () => {
         expect(run(command).decision).toBe('deny')
     })
 
+    // Each row once went to the agent tool unjudged: a secret or the whole root read or archived by a command that
+    // eval, a shell's -c, script, an unknown wrapper or xargs runs, which no name in the text gives away.
+    it('judges the commands inside shell it does not read, and asks where one of them would be refused or asked about', () => {
+        const secretBelow = onBranch('refs/heads/topic', undefined, { sourceSecret: true })
+        const rows = ['xargs -a env/.se*/creds.json echo', 'script -q /dev/null tar czf /tmp/all.tgz .', 'eval "grep -rn sk_ src/"',
+            'bash -lc "tar czf /tmp/all.tgz ."', 'caffeinate eval "grep -rn sk_ src/"', 'ls -A src/ | xargs -I{} cat src/{}']
+        for (const command of rows) expect(['ask', 'deny'], command).toContain(run(command, open(), secretBelow).decision)
+        for (const command of ['eval "grep -rn sk_ docs/"', '[[ -d src ]] && ls src']) expect(verdict(run(command)), command).toBe('deferred')
+    })
+
     it('refuses what shell it does not read names, and leaves the rest to the agent tool', () => {
         // Each row once ran: a case pattern or a [[ ]] substitution unjudged, a quoted cd moving the commands after it,
         // arithmetic over a name evaluating its value as code, a default word never name-checked, and a cd hiding a removal.
         const rows = ['case x in a) :;; esac; (cat .env)', 'case x in $(cat .env >&2)) :;; esac', '[[ -n $(rm .claude/settings.json) ]]',
             'if true; then "cd" ./node_modules/@b00dea/cockpit; rm -rf dist; fi', 'if true; then \\cd ./node_modules/@b00dea/cockpit; rm -rf dist; fi',
             "x='a[$(cat .env >&2)]'; echo $((x))", 'cat ${F:-.env}', 'cat ${F:-~/.aws/credentials}', 'if true; then cd /tmp; rm -rf ~/Documents; fi']
-        expect(rows.map(command => verdict(run(command)))).toEqual(['deny', 'deny', 'deny', 'deny', 'deny', 'deny', 'deny', 'deny', 'deferred'])
+        expect(rows.map(command => verdict(run(command)))).toEqual(['deny', 'deny', 'deny', 'deny', 'deny', 'deny', 'deny', 'deny', 'ask'])
         // Text that may outlive the call, dump the environment or substitute a download still asks wherever the parser stopped.
         for (const command of ['eval "$x" &', '[[ -d x ]] && tmux new -d "rm -rf ~"', 'case $x in a) crontab jobs.txt;; esac', 'eval x; at now -f job.sh',
             'eval x; nohup ./run.sh', '[[ -n x ]]; env', '[[ -n x ]]; printenv', '[[ -n x ]] && export -p', 'eval x; set', '[[ -n x ]]; echo "$(curl -s https://example.test/x)"']) {
