@@ -49,7 +49,7 @@ import { GUARD_INPUT_LIMITS, parseGuardInput, type ParsedInvocation } from '../.
 import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../../generated-environment/transaction.js'
 import { parseOwnershipManifest } from '../../surfaces/ownership.js'
 import { installedPackageMetadata } from '../../package-metadata.js'
-import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
+import { GUARD_LOCAL_PATHS, guardHandlerSuperseded, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
 import { inspectGuardRecord } from '../../guards/guard-record.js'
 import {
     guardInstalledDirectories,
@@ -171,6 +171,11 @@ function versionDrift(identity: GuardHandlerIdentity, generated: string | undefi
     const installed = installedPackageMetadata.version
     const order = generated === undefined ? undefined : versionOrder(installed, generated)
     const why = 'the guard trusts only the cockpit and configuration it was generated for'
+    // A package manager that keeps each version at its own path, as pnpm does, leaves the bound handler in place after
+    // an upgrade. It still authenticates and keeps judging calls, but its own version is not the installed one, so a
+    // drift it meets is named by both copies, and sync is the fix. While nothing drifts, it runs on unheld.
+    const superseded = guardHandlerSuperseded(identity.root, identity.module)
+    if (superseded) return guardHeld(identity, superseded, why)
     if (order === undefined || order > 0) {
         const what = generated === undefined || generated === installed
             ? 'the installed cockpit version changed (its handler bytes differ) since the guards were generated'

@@ -33,7 +33,7 @@ import { renderSurfaceSet, type SurfaceInputEvidence } from '../../surfaces/rend
 import { stripDevelopmentMarkers } from '../../surfaces/development-markers.js'
 import { renderConsumerInstructions } from '../../surfaces/consumer-instructions.js'
 import { expandRestrictions } from '../../surfaces/restrictions.js'
-import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
+import { GUARD_LOCAL_PATHS, installedGuardHandler, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
 import { fileFingerprint, verifiedDigest } from '../../environment-exec/verified-digest.js'
 import { SHIPPED_SETUP_SKILL, extendInspectedSkillStandingCosts, inspectRenderedSkillSet } from '../../surfaces/skill-contract.js'
 import { readAnchoredFile, readAnchoredEntry, readAnchoredBatches } from '../../generated-environment/transaction.js'
@@ -389,13 +389,12 @@ export async function prepareSurfaces(
     // The guard runs the module sync binds. A copy of cockpit, which an agent can edit, would become the
     // guard if its sync bound it, so sync binds only the cockpit installed under the root; a root without
     // one, such as cockpit's own development checkout, keeps the module it is already bound to.
-    const installedModule = join(prepared.root, 'node_modules/@b00dea/cockpit/dist/cli.js')
     let installed: string | undefined
     let boundModule: string | undefined
     try {
-        installed = await realpath(installedModule)
+        installed = installedGuardHandler(prepared.root)
     } catch (error) {
-        if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return refuse('GENERATED_EXECUTABLE_UNAVAILABLE', `the installed cockpit could not be resolved: ${errorCause(error)}`, 'guard')
+        return refuse('GENERATED_EXECUTABLE_UNAVAILABLE', `the installed cockpit could not be resolved: ${errorCause(error)}`, 'guard')
     }
     try {
         boundModule = parseGuardLocalIdentity(await readFile(join(prepared.root, GUARD_LOCAL_PATHS.identity), 'utf8'))?.module
