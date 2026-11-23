@@ -965,7 +965,10 @@ of cockpit. So sync refuses unless the running module is the installed
 `<root>/node_modules/@b00dea/cockpit/dist/cli.js`, compared by real path. In a root with no installed
 package, such as cockpit's own development checkout, it refuses only when it would rebind the guard
 from a different module than the one already bound. The guard refuses `node <copy>/dist/cli.js sync`
-and `upgrade` from a copy of cockpit inside the roots.
+and `upgrade` from a copy of cockpit inside the roots. Once the installed package resolves to another
+path than the bound one, as after a pnpm upgrade, which keeps the earlier version in place, the guard
+keeps judging calls with the earlier version; where that version meets generated files another version
+made, its hold names both versions and sync as the fix, and `doctor` reports `GUARD_HANDLER_SUPERSEDED`.
 
 "Allowed" means the guard does not object. Claude Code also needs its own allow rule, which the
 generated settings carry for the commands the shipped skills use

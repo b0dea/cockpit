@@ -2,9 +2,11 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { dirname } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { inspectAgentSettingsHazards, inspectClaudeLocalGuard, writeClaudeLocalGuard } from './served-checkout-grants.js'
 import { writeGuardRecord } from '../guards/guard-record.js'
+import { encodeGuardLocalIdentity } from '../guards/local-identity.js'
 
 describe('Claude Code local guard registration', () => {
     it('repeats the committed guard hook in the local settings beside a person\'s own, and doctor flags it missing', async () => {
@@ -191,6 +193,43 @@ describe('Claude Code local guard registration', () => {
             expect(codes()).toEqual([])
             writeFileSync(join(root, '.cockpit/guards/bash-guard.sh'), 'exit 0\n')
             expect(codes()).toEqual(['GUARD_RECORD_MISMATCH .cockpit/guards/bash-guard.sh'])
+        } finally {
+            rmSync(root, { recursive: true, force: true })
+            rmSync(home, { recursive: true, force: true })
+        }
+    })
+
+    // pnpm keeps each version at its own path, so an upgrade left the bound version in place and the
+    // guard went on running it until a person ran sync, with nothing saying one was needed.
+    it('flags a guard still bound to a cockpit the package manager has since replaced, naming both versions', async () => {
+        const root = realpathSync(mkdtempSync(join(tmpdir(), 'guard-handler-')))
+        const home = realpathSync(mkdtempSync(join(tmpdir(), 'guard-handler-home-')))
+        try {
+            const release = (version: string) => {
+                const directory = join(root, `node_modules/.pnpm/@b00dea+cockpit@${version}/node_modules/@b00dea/cockpit`)
+                mkdirSync(join(directory, 'dist'), { recursive: true })
+                writeFileSync(join(directory, 'package.json'), JSON.stringify({ name: '@b00dea/cockpit', version }))
+                writeFileSync(join(directory, 'dist/cli.js'), '')
+                return directory
+            }
+            const [bound, upgraded] = [release('1.0.0'), release('1.0.1')]
+            const link = join(root, 'node_modules/@b00dea/cockpit')
+            mkdirSync(dirname(link))
+            symlinkSync(bound, link)
+            mkdirSync(join(root, '.cockpit/guards'), { recursive: true })
+            mkdirSync(join(root, '.cockpit/local'))
+            writeFileSync(join(root, '.cockpit/guards/bash-guard.sh'), 'guard\n')
+            const digest = '0'.repeat(64)
+            writeFileSync(join(root, '.cockpit/local/guard-identity'), encodeGuardLocalIdentity({ root, rootInode: '1', configPath: join(root, 'cockpit.toml'),
+                configSha256: digest, configInode: '2', node: '/usr/bin/node', nodeSha256: digest, nodeFingerprint: 'synthetic',
+                module: join(bound, 'dist/cli.js'), moduleSha256: digest }))
+            await writeGuardRecord(root, home)
+            expect(inspectAgentSettingsHazards(root, [], home)).toEqual([])
+            rmSync(link)
+            symlinkSync(upgraded, link)
+            expect(inspectAgentSettingsHazards(root, [], home)).toEqual([expect.objectContaining({ severity: 'error', code: 'GUARD_HANDLER_SUPERSEDED',
+                target: '.cockpit/local/guard-identity', fix: expect.stringContaining('sync --config'),
+                message: expect.stringContaining(`sync bound the guard to @b00dea/cockpit 1.0.0 at ${bound}, and @b00dea/cockpit 1.0.1 at ${upgraded} is installed now`) })])
         } finally {
             rmSync(root, { recursive: true, force: true })
             rmSync(home, { recursive: true, force: true })

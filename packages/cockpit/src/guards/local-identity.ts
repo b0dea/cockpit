@@ -1,13 +1,16 @@
-// Owns the machine-local guard identity file: its path, its bytes and how `sync` writes it.
+// Owns the machine-local guard identity file: its path, its bytes, how `sync` writes it and which
+// installed cockpit it may name.
 // Tracked guard bytes must be identical on every clone, so everything that names this machine
 // (the Node path, the installed cockpit module, root and configuration inode numbers) lives here,
 // in a directory that ignores itself. It decides nothing: the guard application authenticates the
 // file against the running process and the published surfaces before any policy is resolved.
 import { exactKeys } from '../exact-keys.js'
 import { randomBytes } from 'node:crypto'
+import { realpathSync } from 'node:fs'
 import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
+import { readBoundedFile } from '../bounded-read.js'
 import { readBoundedInput } from '../config/load.js'
 import { errorCause, hasErrorCode } from '../environment/contract.js'
 
@@ -48,6 +51,41 @@ const LOCAL_FILE_MAX_BYTES = 65_536
 const KEYS = ['root', 'rootInode', 'configPath', 'configSha256', 'configInode',
     'node', 'nodeSha256', 'nodeFingerprint', 'module', 'moduleSha256'] as const satisfies readonly (keyof GuardHandlerIdentity)[]
 const IGNORE_BYTES = '# cockpit-owned: machine-local files, written by `cockpit sync`, never committed\n*\n'
+const INSTALLED_HANDLER = 'node_modules/@b00dea/cockpit/dist/cli.js'
+
+/** The canonical handler of the cockpit installed under `root`, or undefined when none is installed there. */
+export function installedGuardHandler(root: string): string | undefined {
+    try { return realpathSync(join(root, INSTALLED_HANDLER)) }
+    catch (error) {
+        if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return undefined
+        throw error
+    }
+}
+
+function describeHandler(handler: string): string {
+    const directory = dirname(dirname(handler))
+    let version: unknown
+    try {
+        const read = readBoundedFile(join(directory, 'package.json'), LOCAL_FILE_MAX_BYTES)
+        if (read.kind === 'complete') version = (JSON.parse(read.bytes.toString('utf8')) as { version?: unknown } | null)?.version
+    } catch (error) {
+        // The version only words the message; without it the directory still names the copy.
+        if (!(error instanceof SyntaxError) && !hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'EISDIR', 'EACCES', 'ELOOP', 'EIO')) throw error
+    }
+    return typeof version === 'string' && /^[0-9A-Za-z.+-]{1,64}$/.test(version) ? `@b00dea/cockpit ${version} at ${directory}` : `the cockpit at ${directory}`
+}
+
+/**
+ * What changed when the cockpit installed under `root` is no longer the handler sync bound the guard to,
+ * or undefined while it is, or while none is installed there. A package manager that keeps each version
+ * at its own path, as pnpm does, leaves the bound one in place after an upgrade, so its bytes still
+ * authenticate and nothing else shows that the install moved on.
+ */
+export function guardHandlerSuperseded(root: string, bound: string): string | undefined {
+    const installed = installedGuardHandler(root)
+    if (installed === undefined || installed === bound) return undefined
+    return `the installed cockpit changed since the guards were generated: sync bound the guard to ${describeHandler(bound)}, and ${describeHandler(installed)} is installed now`
+}
 
 export function encodeGuardLocalIdentity(identity: GuardHandlerIdentity): string {
     const ordered = Object.fromEntries(KEYS.map(key => [key, identity[key]]))

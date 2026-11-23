@@ -22,7 +22,7 @@ import { appendFile, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promise
 import { lstatSync, readdirSync, realpathSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { readBoundedFile } from '../bounded-read.js'
-import { GUARD_LOCAL_PATHS, writeCockpitLocalFiles } from '../guards/local-identity.js'
+import { GUARD_LOCAL_PATHS, guardHandlerSuperseded, parseGuardLocalIdentity, writeCockpitLocalFiles, type GuardHandlerIdentity } from '../guards/local-identity.js'
 import { GUARD_SCRIPT_PATH, inspectGuardRecord } from '../guards/guard-record.js'
 import { foldGuardSpelling, nestedAgentConfiguration } from '../guards/evaluator.js'
 import type { SurfaceTarget } from '../surfaces/contract.js'
@@ -469,6 +469,13 @@ export function inspectAgentSettingsHazards(root: string, siblings: readonly str
         message: `${GUARD_SCRIPT_PATH} or ${GUARD_LOCAL_PATHS.identity} does not match the digest cockpit sync recorded for this cockpit, so every guarded call is held until a person runs sync`,
         target: GUARD_SCRIPT_PATH,
         fix: 'review what changed the guard script, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal' })
+    const identity = readLocalIdentity(root)
+    const superseded = identity && guardHandlerSuperseded(root, identity.module)
+    if (superseded) findings.push({ severity: 'error',
+        code: 'GUARD_HANDLER_SUPERSEDED' satisfies typeof ENVIRONMENT_CODES.GUARD_HANDLER_SUPERSEDED,
+        message: `${superseded}, so every guarded call is held until a person runs sync`,
+        target: GUARD_LOCAL_PATHS.identity,
+        fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal, which binds the guard to the installed cockpit' })
     const unguarded = worktrees.filter(worktree => !guarded(join(root, worktree)) || inspectGuardRecord(realpathSync(join(root, worktree)), home) !== 'match')
     if (unguarded.length) findings.push({ severity: 'warning',
         code: 'GUARD_WORKTREE_UNGUARDED' satisfies typeof ENVIRONMENT_CODES.GUARD_WORKTREE_UNGUARDED,
@@ -476,6 +483,16 @@ export function inspectAgentSettingsHazards(root: string, siblings: readonly str
         target: unguarded[0]!,
         fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml in each worktree, or remove the worktree' })
     return findings
+}
+
+function readLocalIdentity(root: string): GuardHandlerIdentity | undefined {
+    try {
+        const read = readBoundedFile(join(root, GUARD_LOCAL_PATHS.identity), 65_536)
+        return read.kind === 'complete' ? parseGuardLocalIdentity(read.bytes.toString('utf8')) : undefined
+    } catch (error) {
+        if (isMissing(error)) return undefined // no identity is GUARD_RECORD_MISMATCH's finding
+        throw error
+    }
 }
 
 function readSmallText(path: string): string | undefined {

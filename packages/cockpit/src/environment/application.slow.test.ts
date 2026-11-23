@@ -1071,6 +1071,48 @@ describe('guard policy construction', () => {
         }
     }, 120_000)
 
+    // pnpm installs each version at its own path and keeps the earlier one for a while, so after an
+    // upgrade the hook still ran the version sync bound, whose bytes authenticate. It called itself the
+    // installed cockpit, older than the upgrade's own generated files, and named an install as the fix.
+    it('names both versions and sync when the package manager installed another cockpit beside the one the guard is bound to', async () => {
+        const { root, configPath, request, adapters } = await installedGuardRequest()
+        const path = join(root, '.cockpit/generated-environment-ownership.json')
+        const original = readFileSync(path, 'utf8')
+        const { integrity: _integrity, ...payload } = JSON.parse(original)
+        payload.producer.version = '999.0.0'
+        const bytes = JSON.stringify({ ...payload, integrity: createHash('sha256').update(JSON.stringify(payload)).digest('hex') })
+        expect(parseOwnershipManifest(bytes, { root, configPath, cockpitId: payload.cockpitId }).kind).toBe('complete')
+        writeFileSync(path, bytes)
+        writeFileSync(join(root, 'package-lock.json'), '{}\n')
+        const installed = join(root, 'node_modules/@b00dea/cockpit')
+        const bound = realpathSync(installed)
+        const upgraded = join(root, 'node_modules/.pnpm/@b00dea+cockpit@999.0.0/node_modules/@b00dea/cockpit')
+        mkdirSync(join(upgraded, 'dist'), { recursive: true })
+        mkdirSync(join(upgraded, 'bin'))
+        writeFileSync(join(upgraded, 'package.json'), JSON.stringify({ name: '@b00dea/cockpit', version: '999.0.0' }))
+        writeFileSync(join(upgraded, 'dist/cli.js'), '')
+        writeFileSync(join(upgraded, 'bin/cockpit.mjs'), '', { mode: 0o755 })
+        rmSync(installed)
+        symlinkSync(upgraded, installed)
+        try {
+            const boundVersion = JSON.parse(readFileSync(join(bound, 'package.json'), 'utf8')).version
+            // The bound copy still authenticates, so it keeps judging calls until it meets another version's files.
+            writeFileSync(path, original)
+            expect((await runGuardEvaluationApplication(request, adapters)).decision.decision).not.toBe('unavailable')
+            writeFileSync(path, bytes)
+            const { decision } = await runGuardEvaluationApplication(request, adapters)
+            expect(decision).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining(
+                `sync bound the guard to @b00dea/cockpit ${boundVersion} at ${bound}, and @b00dea/cockpit 999.0.0 at ${upgraded} is installed now`) })
+            expect(decision.reason).toContain(`Fix: a human must run \`${root}/node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${configPath}\``)
+            expect(decision.reason).not.toContain('npm ci')
+        } finally {
+            rmSync(join(root, 'package-lock.json'))
+            rmSync(installed)
+            symlinkSync(bound, installed)
+            rmSync(join(root, 'node_modules/.pnpm'), { recursive: true, force: true })
+        }
+    }, 120_000)
+
     // After switching to a branch the upgrade had not reached, the committed generated files came from
     // the earlier cockpit and an earlier cockpit.toml, while node_modules held the newer one. Every
     // guarded call was held as "stale or unauthenticated", which named neither the versions nor the fix.

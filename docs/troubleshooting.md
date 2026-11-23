@@ -72,6 +72,7 @@ the command to a person, or proposes a `[[guards.allow]]` rule, rather than rewo
 | `… [guards] unresolved = "deny" … refuses what would wait for a person` | The cockpit refuses asks instead of prompting. | Take the route the reason names: the allow entry, or a literal local target the guard can judge. |
 | `… does not load` | `cockpit.toml` does not parse or match the schema, or is missing or a link; calls are judged under the configuration last synced until it loads. | Repair it with any tool, and read `check --config cockpit.toml` for what is wrong. |
 | `… only once the file's TOML \u escapes are read as the characters they stand for` | The edit's old text holds a character the file spells as an escape such as `\u2014`. | Spell the escape with its backslash in the old and new text (`\\u2014` in the tool's JSON), or edit a span without escapes. |
+| `the installed cockpit changed since the guards were generated: sync bound the guard to …` | The package manager installed another cockpit at a new path, as pnpm does on an upgrade, and the guard is still bound to the earlier one. | A person runs the sync command the message names in a terminal; it binds the guard to the installed cockpit. |
 | `the installed cockpit is older than the one that generated the guards` | The checkout's dependencies install an older cockpit than the one that generated its guards, as after a branch switch. | Run the install the message names, such as `npm ci`; sync only when the older version is intended. |
 | `cockpit guard failed (<status>): <script>; sync the cockpit` | The hook could not run the guard script, or it failed: 127 means the script is missing. | Start the agent from the cockpit root on a branch that has the cockpit, or a person runs sync. |
 | `… has an unapproved edit that widens what agents may do` (appended) | `cockpit.toml` widens the policy; calls are judged under the configuration last synced. | A person runs `npx --no cockpit approve` in a terminal outside the agent, reads the widened fields and answers yes, or reverts the edit. |
@@ -140,6 +141,11 @@ both before it runs the guard, and holds every call with "guard script changed o
 person reviews what changed the script and runs sync; a linked `.cockpit`, `.cockpit/guards` or
 `.cockpit/local` holds it too, naming the link. `GUARD_WORKTREE_UNGUARDED`
 names a worktree kept below the root that holds no guard script, or one sync did not record there.
+
+`GUARD_HANDLER_SUPERSEDED` means the cockpit installed under the root resolves to another path than
+the one sync bound the guard to. A package manager that keeps each version at its own path, as pnpm
+does, leaves the earlier version in place after an upgrade. The guard keeps judging calls with it until
+a person runs sync, and holds only where it meets generated files another version made.
 
 `AGENT_SETTINGS_NESTED` names agent tool settings below the cockpit root, which a session started in
 that directory loads in place of the cockpit's: Claude Code reads `.claude/settings.json` from where
@@ -360,6 +366,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GENERATED_STALE_ARTIFACT` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>, which removes it |
 | `GUARD_AUTHORITY_UNAVAILABLE` | [see above](#common-refusal-guidance) |
 | `GUARD_CONFIG_WIDENED` | this needs a person: they run npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent, or the change is reverted; [see above](#guard-refusals) |
+| `GUARD_HANDLER_SUPERSEDED` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal, which binds the guard to the installed cockpit; [see above](#codex-hooks-in-linked-worktrees) |
 | `GUARD_HOSTS_UNDECLARED` | list the database and live vendor API hosts of every non-local environment (production, staging, shared) under [guards] in cockpit.toml, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>; if no such environment exists, record that by writing hosted_db_hosts = [] and vendor_endpoint_hosts = [] under [guards] |
 | `GUARD_PROVE_CASES_INVALID` | write the case file as a JSON list of {"id", "command", "cwd"?, "expect"?} entries, with expect one of allow, refuse or ask, then rerun ./node_modules/@b00dea/cockpit/bin/cockpit.mjs guard prove --config <your cockpit.toml> |
 | `GUARD_PROVE_REPORT_FAILING` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs guard prove --config <your cockpit.toml> and act on each mismatch, regression and error it lists |
