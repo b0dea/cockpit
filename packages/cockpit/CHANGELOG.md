@@ -13,6 +13,15 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.37
+
+### Patch Changes
+
+- b9c6d42: After a package manager installs cockpit at a new path, as pnpm does on an upgrade, a guard hold no longer reports the earlier version as the installed one or says sync is not the fix: it names both versions and the sync command. `doctor` reports the state as `GUARD_HANDLER_SUPERSEDED`.
+- 6dc869e: Shell the guard does not read is no longer left to the agent tool when a command inside it would be refused: a secret or the whole root read or archived through `eval`, `bash -c`, `script`, an unknown wrapper or `xargs` asks again, as it did before 0.1.36.
+- b72ba15: A shell left in a directory that was removed, such as a worktree after `git worktree remove`, no longer has every call refused: the guard judges its calls from the cockpit root, so `cd` back into a checkout works.
+- c6ae4d9: `cockpit session` no longer refuses its command because a service it may not need is unhealthy: it starts every service that does not depend on the unhealthy one, runs the command, and names each service it runs without in a `SESSION_SERVICES_UNHEALTHY` warning. A session still refuses a stack with no healthy service, and a plain `up` still refuses until every service is healthy.
+
 ## 0.1.36
 
 ### Patch Changes
