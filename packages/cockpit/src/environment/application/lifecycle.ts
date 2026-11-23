@@ -43,6 +43,7 @@ import {
     revalidateRuntimeService,
     startRuntimeService,
     observeRuntimeServiceColdStart,
+    observeRuntimeServiceStates,
     resolveRuntimeServiceOrder,
     runtimeServiceHealthShortfall,
     stopRuntime,
@@ -238,6 +239,19 @@ async function reportFailedService(
     ]
 }
 
+// A literal fix, so the diagnostic inventory captures it.
+function unhealthyForSession(service: string, why: Readonly<{ dependency: string } | { unread: string }> | undefined): EnvironmentDiagnostic {
+    return {
+        severity: 'warning',
+        code: 'SESSION_SERVICES_UNHEALTHY' satisfies typeof ENVIRONMENT_CODES.SESSION_SERVICES_UNHEALTHY,
+        message: why === undefined ? `${service} is not running healthy, so the session runs its command without it`
+            : 'dependency' in why ? `${service} was not started because it depends on ${why.dependency}, which is not running healthy, so the session runs its command without it`
+                : `${service} could not be confirmed healthy (${why.unread}), so the session runs its command without waiting for it`,
+        target: service,
+        fix: 'fix the cause its logs show (./node_modules/@b00dea/cockpit/bin/cockpit.mjs logs --config <your cockpit.toml> --service <service>), then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs restart --config <your cockpit.toml> --service <service>',
+    }
+}
+
 export async function collectFailureLogs(
     evidence: RuntimeServiceFailureEvidence | RuntimeServiceObservation | undefined,
     service: string,
@@ -335,6 +349,7 @@ async function executeUpRound(
     rememberAcquisition: (value: LeasePortFamilyResult, projection: PortLeaseProjection) => void,
     rememberRuntimeStart: () => void,
     initialAcquisition: PortLeaseProjection | undefined,
+    tolerate: boolean,
 ): Promise<UpRoundResult> {
     const operate = async (runtime: RuntimeReadiness, stage: LifecycleStageProjection, ports: AcquiredPorts): Promise<UpRoundResult> => {
         const started = startedWith(runtime, ports)
@@ -402,8 +417,12 @@ async function executeUpRound(
         const currentHolderActive = ports.projection.ownership.holderIds.includes(context.holderId)
         const completedCoTenant = stored !== null && stored.value.holderId !== context.holderId && progressComplete
             && previousHolderActive && currentHolderActive
+        // Another holder's start that stopped short, as one does at a service that never became healthy.
+        // One up of a stack runs at a time, so that start has ended; a session joins what it left running.
+        const stalledCoTenant = tolerate && stored !== null && !resetProgress && stored.value.holderId !== context.holderId
+            && !progressComplete && previousHolderActive && currentHolderActive
         if (stored && stored.value.holderId !== context.holderId
-            && (previousHolderActive || !currentHolderActive) && !completedCoTenant) {
+            && (previousHolderActive || !currentHolderActive) && !completedCoTenant && !stalledCoTenant) {
             const others = await otherLeaseHolders(context, ports.projection.ownership.holderIds)
             return { kind: 'complete' as const, result: lifecycleRefusal(
                 ENVIRONMENT_CODES.CLAIM_CO_TENANT,
@@ -416,7 +435,20 @@ async function executeUpRound(
         const operationGeneration = stored && !resetProgress
             ? stored.value.operationGeneration
             : randomBytes(32).toString('hex')
-        const revalidateCompletedServices = async (): Promise<
+        // What a session runs its command without, and why.
+        const unhealthy: string[] = []
+        const unhealthyDiagnostics: EnvironmentDiagnostic[] = []
+        const setAside = (service: string, logs: readonly EnvironmentDiagnostic[], why?: Parameters<typeof unhealthyForSession>[1]) => {
+            unhealthy.push(service)
+            unhealthyDiagnostics.push(unhealthyForSession(service, why), ...logs.map((diagnostic) => ({ ...diagnostic, severity: 'warning' as const })))
+        }
+        // A stack with no healthy service has nothing a command could use, so it is refused as up refuses it.
+        const nothingHealthy = (): UpRoundResult => {
+            const primary = lifecycleRefusal(ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
+                'no service of the stack is running healthy, so the session has nothing to run its command against', context.stackId)
+            return { kind: 'complete', result: { ...primary, diagnostics: uniqueDiagnostics([...primary.diagnostics, ...unhealthyDiagnostics]) } }
+        }
+        const revalidateCompletedServices = async (tolerant = false): Promise<
             | Readonly<{ kind: 'complete'; evidence: readonly RuntimeServiceEvidence[] }>
             | Readonly<{ kind: 'retry' }>
             | Readonly<{ kind: 'refusal'; result: UpCommandResult }>
@@ -439,6 +471,10 @@ async function executeUpRound(
                 }
                 if (admitted.kind !== 'complete') {
                     const logDiagnostics = await reportFailedService(admitted.logs, completed.service, context, adapters)
+                    if (tolerant) {
+                        setAside(completed.service, logDiagnostics)
+                        continue
+                    }
                     const primary = lifecycleRefusal(
                         ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
                         `completed runtime service could not be revalidated: its recorded container is no longer running and healthy, for example after it was killed — fix: run \`${cockpitCommand('sleep', { config: context.source.path })}\`, then \`${lifecycleSuggestion(context, 'up')}\` to start the stack again`,
@@ -453,17 +489,33 @@ async function executeUpRound(
             }
             return { kind: 'complete', evidence }
         }
-        if (completedCoTenant) {
-            const revalidated = await revalidateCompletedServices()
+        if (completedCoTenant || stalledCoTenant) {
+            const revalidated = await revalidateCompletedServices(tolerate)
             if (revalidated.kind === 'retry') return { kind: 'complete', result: lifecycleRefusal(
                 ENVIRONMENT_CODES.CLAIM_CO_TENANT,
                 'completed lifecycle progress belongs to an active holder but its runtime evidence is stale',
                 context.stackId,
             ) }
             if (revalidated.kind === 'refusal') return { kind: 'complete', result: revalidated.result }
+            // The services past the recorded prefix have no recorded container to check, so Compose's
+            // own report says which run healthy. Nothing in another holder's stack is restarted.
+            const recorded = new Set(stored.value.completedServices.map(({ service }) => service))
+            const unrecorded = runtime.topology.services.filter(({ id }) => !recorded.has(id))
+            if (unrecorded.length > 0) {
+                const states = await observeRuntimeServiceStates({ topology: runtime.topology, execute: (step) => adapters.execute(step) })
+                for (const service of unrecorded) {
+                    if (states.kind !== 'complete') setAside(service.id, [], { unread: states.reason })
+                    else {
+                        const state = states.services.find(({ service: name }) => name === service.id)
+                        if (state?.state !== 'running' || state.health !== (service.healthcheck ? 'healthy' : null)) setAside(service.id, [])
+                    }
+                }
+            }
+            if (unhealthy.length > 0 && unhealthy.length === runtime.topology.services.length) return nothingHealthy()
             return { kind: 'complete' as const, result: {
-                kind: 'complete', status: 0, diagnostics: [],
-                result: { stackId: context.stackId, change: 'unchanged', ports: ports.projection.lease.ports, entrypoints: ports.projection.entrypoints },
+                kind: 'complete', status: 0, diagnostics: unhealthyDiagnostics,
+                result: { stackId: context.stackId, change: 'unchanged', ports: ports.projection.lease.ports, entrypoints: ports.projection.entrypoints,
+                    ...unhealthy.length > 0 ? { unhealthy } : {} },
             } }
         }
 
@@ -577,8 +629,16 @@ async function executeUpRound(
                 result: { stackId: context.stackId, change: 'unchanged', ports: ports.projection.lease.ports, entrypoints: ports.projection.entrypoints },
             } satisfies UpCommandResult }
         }
+        // The durable progress is a dependency prefix, so it stops at the first service set aside; the
+        // next up starts that service again, and finds the ones after it already running.
+        let recording = true
         for (let index = issuance.firstIncompleteServiceIndex; index < orderedServices.length; index += 1) {
             const service = orderedServices[index]!
+            const blocked = unhealthy.length > 0 ? service.dependsOn.find((dependency) => unhealthy.includes(dependency)) : undefined
+            if (blocked !== undefined) {
+                setAside(service.id, [], { dependency: blocked })
+                continue
+            }
             ports.retainOnFailure()
             rememberRuntimeStart()
             const admitted = await startService(issuance.topology, service.id, adapters)
@@ -590,6 +650,11 @@ async function executeUpRound(
                     adapters,
                     admitted.kind === 'failure' ? admitted.stop : undefined,
                 )
+                if (tolerate) {
+                    setAside(service.id, logDiagnostics)
+                    recording = false
+                    continue
+                }
                 const primary = lifecycleRefusal(
                     ENVIRONMENT_CODES.LIFECYCLE_EVIDENCE_INVALID,
                     `runtime service did not become healthy${admitted.kind === 'failure' && admitted.reason ? `: ${admitted.reason}` : ''}`,
@@ -602,6 +667,7 @@ async function executeUpRound(
             }
             completedEvidence.push(admitted.evidence)
             startedEvidence.push(admitted.evidence)
+            if (!recording) continue
             const nextValue: LifecycleRecordValue = {
                 ...plannedValue,
                 completedServices: [
@@ -628,6 +694,14 @@ async function executeUpRound(
                 context.stackId,
             ) }
         }
+        if (unhealthy.length > 0 && completedEvidence.length === 0) return nothingHealthy()
+        const unhealthyResult = unhealthy.length > 0 ? { unhealthy } : {}
+        // Every service this run started was set aside, so there is no start to time.
+        if (startedEvidence.length === 0) return { kind: 'complete' as const, result: {
+            kind: 'complete', status: 0, diagnostics: [...planned.plan.diagnostics, ...unhealthyDiagnostics],
+            result: { stackId: context.stackId, change: planned.mode === 'start' ? 'started' : 'resumed',
+                ports: ports.projection.lease.ports, entrypoints: ports.projection.entrypoints, ...unhealthyResult },
+        } satisfies UpCommandResult }
         const coldStartObservation = observeRuntimeServiceColdStart({ services: startedEvidence })
         if (coldStartObservation.observed.state !== 'available'
             || typeof coldStartObservation.observed.value !== 'number'
@@ -654,13 +728,14 @@ async function executeUpRound(
             headroomMillis: coldStartObservation.expectation.value - coldStartObservation.observed.value,
         }
         return { kind: 'complete' as const, result: {
-            kind: 'complete', status: 0, diagnostics: planned.plan.diagnostics,
+            kind: 'complete', status: 0, diagnostics: [...planned.plan.diagnostics, ...unhealthyDiagnostics],
             result: {
                 stackId: context.stackId,
                 change: planned.mode === 'start' ? 'started' : 'resumed',
                 ports: ports.projection.lease.ports,
                 entrypoints: ports.projection.entrypoints,
                 coldStart,
+                ...unhealthyResult,
             },
         } satisfies UpCommandResult }
     }
@@ -695,7 +770,7 @@ export async function runUp(
     input: UpCommandInput,
     adapters: UpCommandAdapters,
 ): Promise<UpCommandResult> {
-    const configPath = exactCommandConfigPath(input)
+    const configPath = exactCommandConfigPath(input, ['tolerateUnhealthy'])
     if (!configPath) return lifecycleContextRefusal()
     const loaded = await adapters.load({ configPath })
     if (loaded.kind === 'refusal') return loaded
@@ -712,7 +787,8 @@ export async function runUp(
         )
     }
     const context = loaded.result
-    const locked = await withStackBringUp(context.namespace, context.stackId, context.holderId, () => upWithContext(context, adapters))
+    const locked = await withStackBringUp(context.namespace, context.stackId, context.holderId,
+        () => upWithContext(context, adapters, input.tolerateUnhealthy === true))
     return withLifecycleRunNotices(context, 'status' in locked ? locked : forwardedRefusal(locked.diagnostics))
 }
 
@@ -776,7 +852,7 @@ function releaseOwnHold(context: LifecycleRunContext) {
         holderId: context.holderId, now: new Date().toISOString() })
 }
 
-async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAdapters): Promise<UpCommandResult> {
+async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAdapters, tolerate: boolean): Promise<UpCommandResult> {
     type AcquiredLeaseResult = Extract<LeasePortFamilyResult, { kind: 'complete' }> & { readonly change: 'acquired' }
     let acquired: AcquiredLeaseResult | undefined
     let initialAcquisition: PortLeaseProjection | undefined
@@ -805,16 +881,17 @@ async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAd
         earlierNameRefusalMessage(context.source.path, earlier.name), context.stackId)
     let forceReset = false
     for (let attempt = 0; attempt < 3; attempt += 1) {
-        const round = await executeUpRound(context, adapters, forceReset, rememberAcquisition, rememberRuntimeStart, initialAcquisition)
+        const round = await executeUpRound(context, adapters, forceReset, rememberAcquisition, rememberRuntimeStart, initialAcquisition, tolerate)
         if (round.kind === 'retry') {
             forceReset = round.forceReset
             continue
         }
         let result = round.result
         if (result.kind === 'complete') {
-            const seeded = await recordLifecycleSeeded({ namespace: context.namespace, stackId: context.stackId,
-                holderId: context.holderId })
-            if (seeded.kind === 'refusal') return forwardedRefusal(seeded.diagnostics)
+            // A stack with a service set aside has not come up; the up that starts it records that.
+            const seeded = result.result.unhealthy ? undefined : await recordLifecycleSeeded({ namespace: context.namespace,
+                stackId: context.stackId, holderId: context.holderId })
+            if (seeded?.kind === 'refusal') return forwardedRefusal(seeded.diagnostics)
             // The stack stays up when its seed fails: the containers are healthy, and the next up
             // runs the seed again because no success was recorded.
             const data = await adapters.seed?.(context, result.result)
@@ -917,7 +994,7 @@ export async function runSession(
         input.argv[0],
         'name the command after -- by an absolute path, a path inside the session working directory, or a name found on PATH',
     )
-    const up = await adapters.up({ configPath: input.configPath })
+    const up = await adapters.up({ configPath: input.configPath, tolerateUnhealthy: true })
     if (up.kind === 'refusal') {
         // An up that refused once a service had started keeps its hold, so down can still remove what
         // it started. The session ends here, so it releases that hold as its closing sleep would, and

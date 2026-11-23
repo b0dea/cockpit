@@ -311,8 +311,8 @@ that progress before touching containers left by the earlier attempt.
 When a service `up` started does not become healthy, cockpit reports its last log lines as one
 diagnostic, then stops its container and keeps it, so a restart policy cannot leave it restarting.
 Failure logs are limited to that service and time window, and never follow the process that failed.
-The holder and lease stay, so the next `up` resumes and `down` removes the stack. A `session` whose
-`up` refused this way releases them at once, as its closing `sleep` would.
+The holder and lease stay, so the next `up` resumes and `down` removes the stack. A `session` does
+not refuse this way; [Release the stack](#release-the-stack) says what it does instead.
 
 One `up` of a stack runs at a time. Another, such as each MCP server an agent tool starts at once
 through `session`, waits for it holding nothing, then joins the stack it started, or starts the
@@ -342,6 +342,14 @@ cannot confirm the group stopped, it keeps the holder so you can clean up explic
 commands run inside the wrapper use the same private identity, and a second `session` wrapper is
 refused. Once cleanup completes, `session` exits with the command's own status, or 128 plus the
 signal number when a signal ended it. It exits 2 when cleanup fails and 130 when you cancel it.
+
+A session cannot know which services its command needs, so a service that is not running healthy
+does not refuse it. Its `up` starts every service that does not depend on that one, and the command
+runs with a `SESSION_SERVICES_UNHEALTHY` warning naming each service it runs without; a command
+that needs one of them fails on its own. Only a stack with no healthy service at all is refused, as
+`up` refuses it. Joining a stack another session holds works the same way,
+and restarts nothing there. Such a start does not mark the stack as having come up, though the seed
+still runs when it is due. A plain `up` still refuses until every service is healthy.
 
 The command gets the stack's addresses in its environment:
 

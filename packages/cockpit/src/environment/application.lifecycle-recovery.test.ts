@@ -21,10 +21,13 @@ vi.mock('./lifecycle.js', async (importOriginal) => {
         planAdmittedUp: (...args: Parameters<typeof actual.planAdmittedUp>) => applicationOwners.lifecycle.planAdmittedUp?.(...args) ?? actual.planAdmittedUp(...args),
     }
 })
+// What a session reads of the services another holder's start left running.
+const serviceStates = vi.hoisted(() => ({ observe: undefined as undefined | typeof import('./runtime.js').observeRuntimeServiceStates }))
 vi.mock('./runtime.js', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./runtime.js')>()
     return {
         ...actual,
+        observeRuntimeServiceStates: (...args: Parameters<typeof actual.observeRuntimeServiceStates>) => serviceStates.observe?.(...args) ?? actual.observeRuntimeServiceStates(...args),
         admitRuntimeServiceHealth: (...args: Parameters<typeof actual.admitRuntimeServiceHealth>) => applicationOwners.runtime.admitRuntimeServiceHealth?.(...args) ?? actual.admitRuntimeServiceHealth(...args),
         revalidateRuntimeService: (...args: Parameters<typeof actual.revalidateRuntimeService>) => applicationOwners.runtime.revalidateRuntimeService?.(...args) ?? actual.revalidateRuntimeService(...args),
         startRuntimeService: (...args: Parameters<typeof actual.startRuntimeService>) => applicationOwners.runtime.startRuntimeService?.(...args) ?? actual.startRuntimeService(...args),
@@ -54,7 +57,9 @@ vi.mock('./ports.js', async (importOriginal) => {
 })
 import { loadCockpitConfig } from '../config/load.js'
 import { collectFailureLogs, runSleep, runUp } from './application/lifecycle.js'
+import { runSession } from './application/lifecycle.js'
 import { type LifecycleRunContext } from './application/lifecycle-context.js'
+import { type UpCommandAdapters } from './application/lifecycle-context.js'
 import { readState, transactState, type StateRecord } from './state.js'
 import { createApplicationFixtureSupport } from '../../test-support/application-fixture.js'
 // The digest of each file a fixture stack is started from, as lifecycle readiness reports it.
@@ -94,6 +99,24 @@ function stubColdStart(stackId: StackId, measuredMillis = 1_250, limitMillis = 3
         expectation: { kind: 'maximum', value: limitMillis }, applicability: { state: 'required', posture: 'environment' },
         freshness: { state: 'current' }, remedy: 'restore the declared cold-start budget',
     } as never)
+}
+
+// A session over the real up, whose stack the owner stubs describe: what its command saw, and how it ended.
+async function sessionOver(configPath: string, stackId: StackId, up: UpCommandAdapters) {
+    const commands: Readonly<Record<string, string>>[] = []
+    const outcome = await runSession({ configPath, argv: ['synthetic-db-tests'], cwd: '/synthetic', env: { PATH: '/synthetic/bin' } }, {
+        up: (request) => runUp(request, up),
+        sleep: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: { stackId, change: 'stopped' } }),
+        resolveExecutable: async () => ({ state: 'available', value: {
+            canonicalPath: '/synthetic/bin/synthetic-db-tests', invocationPath: '/synthetic/bin/synthetic-db-tests',
+            sha256: '2'.repeat(64), executionMode: 'verified-path',
+        } }),
+        executeForeground: async (input) => {
+            commands.push(input.env)
+            return { kind: 'complete', exitCode: 0, signal: null, terminationConfirmed: true }
+        },
+    })
+    return { outcome, commands }
 }
 
 describe('lifecycle application contracts', () => {
@@ -744,6 +767,118 @@ describe('lifecycle application contracts', () => {
         expect(result.diagnostics[1]!.fix).toContain('stopped')
     })
 
+    // A session was refused because a browser add-on service never became healthy, though its
+    // command needed only the database, which was. Only the add-on and what depends on it are missing.
+    it('runs a session\'s command beside a service that did not become healthy, starting what does not depend on it', async () => {
+        const { configPath, context } = await lifecycleContextFixture()
+        const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
+        const projection = Object.freeze({
+            lease,
+            ownership: Object.freeze({
+                change: 'unchanged' as const, holderId: context.holderId, recordRevision: 2,
+                holderCount: 1, holderIds: Object.freeze([context.holderId]),
+            }),
+            entrypoints: Object.freeze([]),
+        })
+        stubUpPlanner((input) => ({
+            kind: 'execute', mode: 'start',
+            plan: { progress: { workBasisSha256: 'd'.repeat(64), operationGeneration: input.operationGeneration, completedServices: [] }, diagnostics: [] },
+        } as never))
+        applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
+            topology: { services: [{ id: 'browser', dependsOn: [] }, { id: 'browser-recorder', dependsOn: ['browser'] }, { id: 'postgres', dependsOn: [] }] },
+            firstIncompleteServiceIndex: 0, portOwnership: { holderId: context.holderId },
+        } as never)
+        applicationOwners.runtime.resolveRuntimeServiceOrder = () => ['browser', 'browser-recorder', 'postgres']
+        applicationOwners.runtime.startRuntimeService = async ({ service, execute }) => {
+            await execute({ id: `${service}:start` } as never)
+            return (service === 'browser' ? { kind: 'failure', logs: { service }, stop: { id: 'browser:stop' } }
+                : { kind: 'observed', observation: { service, containerId: 'd'.repeat(64) } }) as never
+        }
+        applicationOwners.runtime.admitRuntimeServiceHealth = (observation) => observation as never
+        applicationOwners.logs.planFailureLogs = () => ({ kind: 'planned', step: { id: 'browser:logs' } } as never)
+        applicationOwners.logs.admitFailureLogs = () => ({ kind: 'complete', records: [{ service: 'browser',
+            timestamp: '2026-09-10T08:00:00.000Z', stream: 'stderr', message: 'synthetic browser crash' }] } as never)
+        stubColdStart(context.stackId)
+        const executed: string[] = []
+
+        const { outcome, commands } = await sessionOver(configPath, context.stackId, {
+            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS, activeProfiles: [] } as never),
+            withLifecycleStage: async (_context, use) => use({} as never),
+            withAcquiredPorts: async (_context, use) => use({
+                retainOnFailure: vi.fn(),
+                leaseResult: { kind: 'complete', change: 'unchanged', holderId: context.holderId, recordRevision: 2, lease },
+                projection,
+            } as never),
+            execute: async (step) => {
+                executed.push(step.id)
+                return { kind: 'complete' } as never
+            },
+        })
+
+        expect(executed).toEqual(['browser:start', 'browser:logs', 'browser:stop', 'postgres:start'])
+        expect(commands).toEqual([expect.objectContaining({ APP_PORT: '4100' })])
+        expect(outcome).toMatchObject({ kind: 'complete', status: 0 })
+        expect(outcome.diagnostics.filter(({ code }) => code === 'SESSION_SERVICES_UNHEALTHY')).toEqual([
+            expect.objectContaining({ severity: 'warning', target: 'browser' }),
+            expect.objectContaining({ severity: 'warning', target: 'browser-recorder', message: expect.stringContaining('depends on browser') }),
+        ])
+        expect(outcome.diagnostics.every(({ severity }) => severity !== 'error')).toBe(true)
+    })
+
+    // Joining is refused for a stack another session holds unless its services are healthy, so one
+    // unhealthy add-on there turned every later session away. The joiner restarts nothing it does not hold.
+    it.each([
+        ['a service it started has since become unhealthy', [{ service: 'browser', containerId: 'c'.repeat(64) }, { service: 'postgres', containerId: 'e'.repeat(64) }]],
+        ['its start stopped at a service that did not become healthy', []],
+    ] as const)('runs a session\'s command on a stack another session holds when %s', async (_case, completedServices) => {
+        const { configPath, context } = await lifecycleContextFixture()
+        const previousHolder = `holder:${'f'.repeat(64)}:session` as const
+        const lifecycleAddress = context.namespace.paths.lifecycle(context.stackId)
+        await transactState(context.namespace, lifecycleAddress, { ownerId: context.holderId }, () => ({
+            format: 'cockpit-state/v1', kind: 'lifecycle', cockpitId: context.cockpitId,
+            subjectId: context.stackId, revision: 0, updatedAt: new Date().toISOString(),
+            value: { holderId: previousHolder, workBasisSha256: 'a'.repeat(64), operationGeneration: 'b'.repeat(64), completedServices: completedServices.map((item) => ({ ...item })) },
+        }))
+        const topology = Object.freeze({ services: Object.freeze([{ id: 'browser', dependsOn: [], healthcheck: true }, { id: 'postgres', dependsOn: [], healthcheck: true }]) })
+        const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
+        applicationOwners.runtime.revalidateRuntimeService = async ({ service }) => (service === 'browser'
+            ? { kind: 'failure' } : { kind: 'observed', observation: { service } }) as never
+        applicationOwners.runtime.admitRuntimeServiceHealth = (observation) => observation as never
+        serviceStates.observe = async () => ({ kind: 'complete', services: [
+            { service: 'browser', state: 'exited', health: null, status: 'Exited (1)', exitCode: 1 },
+            { service: 'postgres', state: 'running', health: 'healthy', status: 'Up', exitCode: 0 },
+        ] })
+        const executed: string[] = []
+
+        const { outcome, commands } = await sessionOver(configPath, context.stackId, {
+            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
+            withRuntimeReadiness: async (_context, use) => use({ topology, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS, activeProfiles: [] } as never),
+            withLifecycleStage: async (_context, use) => use({} as never),
+            withAcquiredPorts: async (_context, use) => use({
+                retainOnFailure: vi.fn(),
+                leaseResult: { kind: 'complete', change: 'unchanged', holderId: context.holderId, recordRevision: 2, lease },
+                projection: {
+                    lease,
+                    ownership: { change: 'unchanged', holderId: context.holderId, recordRevision: 2, holderCount: 2, holderIds: [context.holderId, previousHolder] },
+                    entrypoints: [],
+                },
+            } as never),
+            execute: async (step) => {
+                executed.push(step.id)
+                return { kind: 'complete' } as never
+            },
+        })
+
+        expect(commands).toHaveLength(1)
+        expect(outcome).toMatchObject({ kind: 'complete', status: 0 })
+        expect(outcome.diagnostics.filter(({ code }) => code === 'SESSION_SERVICES_UNHEALTHY')).toEqual([
+            expect.objectContaining({ severity: 'warning', target: 'browser' }),
+        ])
+        expect(executed.filter((id) => /:(start|stop)$/.test(id))).toEqual([])
+        expect(await readState(lifecycleAddress)).toMatchObject({ kind: 'complete', value: { value: { holderId: previousHolder } } })
+    })
+
     it('keeps the lease of a partial startup that reached Compose and completes from its durable prefix on the next invocation', async () => {
         const value = await unissuedContextFixture()
         const firstLoaded = await loadCockpitConfig(value.configPath)
@@ -942,6 +1077,7 @@ afterEach(() => {
     vi.restoreAllMocks()
     applicationOwners.lifecycle = {}
     applicationOwners.runtime = {}
+    serviceStates.observe = undefined
     applicationOwners.logs = {}
     applicationOwners.ports = {}
     for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true })
