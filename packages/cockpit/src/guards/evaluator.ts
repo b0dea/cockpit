@@ -1640,10 +1640,20 @@ function downloadWrites(invocation: ParsedInvocation): { readonly paths: readonl
         : { paths: names.map(item => posix.join(directory, item!)), directories: [] }
 }
 
+/**
+ * A shell glob as regular-expression source: `*` spans any run, `?` one character, and `[…]` is a class. A `[` without
+ * its `]` is a literal, as in the shell, and a backslash in a class stays one; either once made an invalid expression
+ * of a word such as `a[k]["x"],b[` that held every call.
+ */
+export function globSource(pattern: string): string {
+    return pattern.split(/(\*+|\?|\[[^\]]*\])/).map((part, at) => at % 2
+        ? part.startsWith('*') ? '.*' : part === '?' ? '.' : part.replace(/\\/g, '\\\\')
+        : part.replace(/[.+^${}()|[\]\\]/g, '\\$&')).join('')
+}
+
 /** A shell glob as a regular expression over one name: `*` and `?` stay within it, and `[…]` is a class. */
 function globExpression(pattern: string): RegExp {
-    return new RegExp(`^${pattern.split(/(\*+|\?|\[[^\]]*\])/).map((part, at) => at % 2
-        ? part.startsWith('*') ? '.*' : part === '?' ? '.' : part : part.replace(/[.+^${}()|\\]/g, '\\$&')).join('')}$`)
+    return new RegExp(`^${globSource(pattern)}$`)
 }
 
 /**
@@ -2383,9 +2393,19 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // Only a refusal counts, since a run may be prose, such as a heredoc's body, and a path outside the roots is read every day.
         if (!refusal && !declared) {
             const inner = unreadInner(input)
+            // A run may be prose no command would hold, so a run the guard fails to judge asks, naming its words.
+            const judgeRun = (call: (typeof inner.commands)[number], counts: (judged: GuardDecision) => boolean): GuardDecision | undefined => {
+                try {
+                    const judged = judgeGuard(call, policy, inspect)
+                    return counts(judged) ? judged : undefined
+                } catch (error) {
+                    const first = call.status === 'parsed' ? call.invocations[0] : undefined
+                    return unavailable(`the guard could not judge ${first ? named(first) : 'a command'} in it (${error instanceof Error ? error.message : String(error)})`)
+                }
+            }
             let held: GuardDecision | undefined
-            for (const call of inner.commands) if (!held) { const judged = judgeGuard(call, policy, inspect); if (judged.decision === 'deny' || judged.decision === 'unavailable') held = judged }
-            for (const call of inner.reads) if (!held) { const judged = judgeGuard(call, policy, inspect); if (judged.decision === 'deny') held = judged }
+            for (const call of inner.commands) held ??= judgeRun(call, judged => judged.decision === 'deny' || judged.decision === 'unavailable')
+            for (const call of inner.reads) held ??= judgeRun(call, judged => judged.decision === 'deny')
             if (held) return ask(`The guard does not read this shell form (${input.unreadable.reason}) and a command inside it is one it would not run unasked: ${held.reason}`)
         }
         return refusal ?? (declared ? deny(`${declared.reason}${declared.fix ? ` Fix: ${declared.fix}` : ''}`)
@@ -2742,8 +2762,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const controlPathspec = (spec: string, cwd: string) => {
         const pattern = spec.replace(/^:(?:\([^)]*\)|[/!^]*)/, '')
         const source = fold(posix.resolve(spec.startsWith(':/') ? resolved.canonicalRoot : cwd, pattern))
-        const expression = new RegExp(`^${source.split(/(\*+|\?|\[[^\]]*\])/).map((part, at) => at % 2
-            ? part.startsWith('*') ? '.*' : part === '?' ? '.' : part : part.replace(/[.+^${}()|\\]/g, '\\$&')).join('')}(?:/.*)?$`)
+        const expression = new RegExp(`^${globSource(source)}(?:/.*)?$`)
         return [...controlFiles, ...controlDirectories.map((directory) => `${directory}/x`)].some((target) => expression.test(fold(target)))
     }
     const inspectLinkSource = (invocation: ParsedInvocation, source: string, cwd: string, destinations: readonly string[], symbolic: boolean) => {
@@ -2951,7 +2970,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     const globNamesProtected = (word: string, cwd: string) => {
         const parts = fold(posix.resolve(cwd, word)).split('/')
         const component = (part: string) => part.split(/(\*+|\?|\[[^\]]*\])/).map((piece, at) => at % 2
-            ? piece.startsWith('*') ? '[^/]*' : '[^/]' : piece.replace(/[.+^${}()|\\]/g, '\\$&')).join('')
+            ? piece.startsWith('*') ? '[^/]*' : '[^/]' : piece.replace(/[.+^${}()|[\]\\]/g, '\\$&')).join('')
         return [...secretPaths, fold(secretRoot), ...resolved.instances.map((item) => fold(item.path))]
             .some(path => parts.some((_, at) => at > 0 && new RegExp(`^${parts.slice(0, at + 1).map(component).join('/')}$`).test(path)))
     }

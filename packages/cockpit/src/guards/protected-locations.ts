@@ -13,7 +13,7 @@ import { ENVIRONMENT_CODES, snapshotExecutionStep, type ExecutionStep, RefusalEr
 import { GIT_CHILD_CONFIG, type ResolvedExecutable } from '../environment/executable.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { instructionRisk } from './instruction-frontmatter.js'
-import { agentInstructionFile, foldGuardSpelling, GUARD_ARCHIVE_ENTRIES, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity, isSensitiveGuardName, plantedAgentControl, runsFromCheckout, type GitTreeTarget } from './evaluator.js'
+import { agentInstructionFile, foldGuardSpelling, GUARD_ARCHIVE_ENTRIES, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity, isSensitiveGuardName, plantedAgentControl, runsFromCheckout, globSource, type GitTreeTarget } from './evaluator.js'
 
 function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
 
@@ -636,8 +636,7 @@ function workspacePackages(root: string, globs: readonly string[]): readonly str
         if (segment === undefined) { found.add(directory); return found.size <= WORKSPACE_PACKAGES }
         if (segment === '**') return expand(directory, rest, depth) && (depth >= 4 || children(directory).every(child => expand(child, segments, depth + 1)))
         if (!/[*?[]/.test(segment)) return expand(join(directory, segment), rest, depth)
-        const pattern = new RegExp(`^${segment.split(/(\*+|\?|\[[^\]]*\])/).map((part, at) => at % 2
-            ? part.startsWith('*') ? '.*' : part === '?' ? '.' : part : part.replace(/[.+^${}()|\\]/g, '\\$&')).join('')}$`)
+        const pattern = new RegExp(`^${globSource(segment)}$`)
         return children(directory).filter(child => pattern.test(basename(child))).every(child => expand(child, rest, depth))
     }
     for (const glob of globs) {
