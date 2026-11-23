@@ -31,7 +31,10 @@ point screen or tmux at a configuration file the call wrote, ask. It also reads 
 over numbers and operators. A plain `"$NAME"` as a redirect or an operand, or `"$NAME/file"` with a literal rest as an operand, in a
 call's second command is read as the path its first command, a plain `NAME=path`, assigns; any other variable in a redirect is shell it does not read. Shell it does not read, such as `case`, `[[ … ]]`, `eval`, `watch`,
 `xargs -I`, arithmetic over a name, a `cd` after `!` or an expanding heredoc, is left to the agent tool's own
-permissions: the guard gives no answer, so Claude Code and Codex decide as they would without it. Shell
+permissions: the guard gives no answer, so Claude Code and Codex decide as they would without it. First,
+each run of its words that can be a command, such as the text `eval` or `bash -c` runs, is judged as a
+command, a path it names as a read and `dir/{}` as a recursive read of `dir`; where one would be refused,
+the call asks. Shell
 text a session, job or terminal runs (`tmux` other than its listing, attaching and capturing commands,
 and those too with a format's `#(…)` or `detach -E`, `screen` other than `-ls`, `-r`, `-x` and a detached
 command, `at` other

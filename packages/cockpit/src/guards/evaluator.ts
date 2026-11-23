@@ -1,6 +1,6 @@
 import { posix } from 'node:path'
 import { DOTENV_DOCUMENTATION, errorCause, snapshotJson, type JsonSnapshot, type JsonSnapshotObject } from '../environment/contract.js'
-import { foldGuardProgram, foldGuardSpelling, GUARD_INPUT_LIMITS, isParsedGuardInput, shownGuardWord, XARGS_INPUT, type ParsedInvocation } from './invocation-parser.js'
+import { foldGuardProgram, foldGuardSpelling, GUARD_INPUT_LIMITS, isParsedGuardInput, shownGuardWord, unreadInner, XARGS_INPUT, type ParsedInvocation } from './invocation-parser.js'
 import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from './host.js'
 import { GuardCommandArgv, McpAllowedTools } from '../schema.js'
 import { renderGuardProjectCommand } from '../environment/install-policy.js'
@@ -2378,6 +2378,16 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const refusal = textDenial(input.unreadable.text, input.cwd)
         // Running cockpit beside a form the guard cannot read is refused for the form; name it, so the fix is plain.
         if (refusal === unreadInstalledCodeDenial) return deny(`${refusal.reason} Here it is a form the guard does not read: ${input.unreadable.reason}`)
+        // A command the text runs is judged as written: a secret or the root read or archived through eval, a shell's -c,
+        // script or xargs names nothing the text check finds. The run is only possibly a command, so it asks, not refuses.
+        // Only a refusal counts, since a run may be prose, such as a heredoc's body, and a path outside the roots is read every day.
+        if (!refusal && !declared) {
+            const inner = unreadInner(input)
+            let held: GuardDecision | undefined
+            for (const call of inner.commands) if (!held) { const judged = judgeGuard(call, policy, inspect); if (judged.decision === 'deny' || judged.decision === 'unavailable') held = judged }
+            for (const call of inner.reads) if (!held) { const judged = judgeGuard(call, policy, inspect); if (judged.decision === 'deny') held = judged }
+            if (held) return ask(`The guard does not read this shell form (${input.unreadable.reason}) and a command inside it is one it would not run unasked: ${held.reason}`)
+        }
         return refusal ?? (declared ? deny(`${declared.reason}${declared.fix ? ` Fix: ${declared.fix}` : ''}`)
             : input.unreadable.outlives || /(?:^|[\s;&|(`{])(?:env|printenv|set|(?:export|declare|typeset)\s+-p)\s*(?:$|[;&|)>`}])|[$<]\(\s*(?:curl|wget)\b/m.test(input.unreadable.text) ? ask(`The guard does not read this shell form (${input.unreadable.reason}) Write it as plain commands joined with &&, use \`[ … ] &&\` or \`if\`, or put it in a script file.`)
             : { decision: 'allow', reason: unreadDeferred })

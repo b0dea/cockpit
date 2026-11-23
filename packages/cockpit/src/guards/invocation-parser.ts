@@ -70,6 +70,12 @@ export type GuardParseResult = {
 } | { readonly status: 'unavailable'; readonly reason: string }
 
 const parsedInputs = new WeakSet<object>()
+// The commands that may run inside a call's unread shell, each parsed as a call of its own, and the words it may read.
+const innerOfInputs = new WeakMap<object, Readonly<{ commands: readonly GuardParseResult[]; reads: readonly GuardParseResult[] }>>()
+/** What shell text the parser does not read may run and read, for the evaluator to judge as calls of their own. */
+export function unreadInner(input: object): Readonly<{ commands: readonly GuardParseResult[]; reads: readonly GuardParseResult[] }> {
+    return innerOfInputs.get(input) ?? { commands: [], reads: [] }
+}
 export function isParsedGuardInput(value: unknown): value is Extract<GuardParseResult, { status: 'parsed' }> {
     return typeof value === 'object' && value !== null && parsedInputs.has(value)
 }
@@ -546,6 +552,29 @@ function textOutlives(text: string): boolean {
     const words = text.split(/[\s;&|()<>`"'{}]+/).filter(Boolean).map((word) => posix.basename(word))
     return words.some((word, at) => ['tmux', 'screen', 'crontab', 'systemd-run', 'nohup', 'setsid', 'disown', 'osascript'].includes(word) || TERMINALS.has(word)
         || ['at', 'batch'].includes(word) && /^(?:-|now$|noon$|midnight$|tomorrow$|\d)/.test(words[at + 1] ?? ''))
+}
+// Enough runs to cover an eval or a shell's -c beside a few other commands; a call past it is judged by its first ones.
+const INNER_COMMAND_LIMIT = 48
+/**
+ * The runs of words in shell text the parser does not read that may themselves be commands: each part between
+ * separators, quoting removed, from every word that can start a command on. eval, a shell's -c, script, an unknown
+ * wrapper or xargs runs one of them, which no name in the text gives away, so each is judged as a command of its own.
+ */
+function innerCommands(text: string): { commands: string[]; reads: string[] } {
+    const commands = new Set<string>()
+    const reads = new Set<string>()
+    for (const part of text.replace(/[$<>]\(|[`"'()]/g, ' ').split(/[;&|\n]+/)) {
+        const words = part.trim().split(/\s+/).filter(Boolean)
+        for (let at = 0; at < words.length && commands.size < INNER_COMMAND_LIMIT; at++) {
+            if (/^[\w./~]/.test(words[at]!) && !words[at]!.includes('=')) commands.add(words.slice(at).join(' '))
+            // A path the text names may be one a command reads, as `xargs -a` does its argument file.
+            if (words[at]!.includes('/') && /^[\w./~*?[-]+$/.test(words[at]!) && reads.size < INNER_COMMAND_LIMIT) reads.add(`cat -- ${words[at]}`)
+            // xargs -I or find -exec puts each name where `{}` stands, so `dir/{}` may be every file below dir.
+            const below = /^([\w./~-]+)\/\{\}$/.exec(words[at]!)
+            if (below && reads.size < INNER_COMMAND_LIMIT) reads.add(`grep -r -- x ${below[1]}`)
+        }
+    }
+    return { commands: [...commands], reads: [...reads] }
 }
 // tmux commands that open a session, window or pane running a shell command. Without -c, spawn.c starts one in
 // server_client_get_cwd of the command client, which has no session, so in the invoking shell's directory; respawn-pane
@@ -1473,6 +1502,31 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
         let content: GuardFileContent | undefined
         const seen: Seen = { background: false, loop: false }
         let unreadable: { text: string; reason: string; outlives?: true } | undefined
+        let innerRuns: { commands: GuardParseResult[]; reads: GuardParseResult[] } | undefined
+        const frozen = (items: ParsedInvocation[]) => {
+            for (const item of items) {
+                Object.freeze(item.argv)
+                item.words.forEach(Object.freeze)
+                Object.freeze(item.words)
+                item.redirects.forEach(Object.freeze)
+                Object.freeze(item.redirects)
+                Object.freeze(item)
+            }
+            return items
+        }
+        // Each inner run the parser reads becomes a call of its own for the evaluator; one it does not read adds nothing.
+        const asCalls = (texts: readonly string[]): GuardParseResult[] => texts.flatMap((text) => {
+            try {
+                const parsed = frozen(parseShell(text, cwd, { options, definitions: new Set(), depth: 0, seen: { background: false, loop: false } }))
+                if (parsed.length === 0) return []
+                const result: GuardParseResult = { status: 'parsed', tool: 'Bash', cwd, paths: [], removed: [], invocations: parsed }
+                parsedInputs.add(result)
+                return [result]
+            } catch (error) {
+                if (error instanceof RefusalError) return []
+                throw error
+            }
+        })
         const shell = (command: string): ParsedInvocation[] => {
             try {
                 const parsed = parseShell(command, cwd, { options, definitions: new Set(), depth: 0, seen })
@@ -1481,7 +1535,10 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
             }
             catch (error) {
                 if (!(error instanceof RefusalError) || error instanceof ForbiddenConstruct) throw error
-                unreadable = { text: command, reason: error.message, ...error instanceof OutlivingShell || seen.background || textOutlives(command) ? { outlives: true as const } : {} }
+                const runs = innerCommands(command)
+                innerRuns = { commands: asCalls(runs.commands), reads: asCalls(runs.reads) }
+                unreadable = { text: command, reason: error.message,
+                    ...error instanceof OutlivingShell || seen.background || textOutlives(command) ? { outlives: true as const } : {} }
                 return []
             }
         }
@@ -1541,6 +1598,7 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
         const result: GuardParseResult = { status: 'parsed', tool, cwd, paths, removed, invocations,
             ...content ? { content } : {}, ...seen.cdByName && typeof fields.command === 'string' ? { cdByName: fields.command } : {}, ...seen.background ? { background: true as const } : {}, ...seen.loop ? { loop: true as const } : {}, ...unreadable ? { unreadable } : {} }
         parsedInputs.add(result)
+        if (innerRuns) innerOfInputs.set(result, innerRuns)
         return result
     } catch (error) {
         return { status: 'unavailable', reason: error instanceof RefusalError ? error.message : 'Guard input capture failed.' }
