@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { EXIT_CODES } from './invocation.js'
 import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
 import { adaptGuardDecision, normalizeOpenCodeInput } from './guards/harness-adapter.js'
@@ -53,22 +54,33 @@ export async function runGuardCommand(
             if (mcp && (native.tool_input === null || typeof native.tool_input !== 'object' || Array.isArray(native.tool_input))) {
                 throw new RefusalError('Malformed MCP tool input.')
             }
-            const payload = harness === 'opencode' && native?.tool !== undefined
-                ? normalizeOpenCodeInput(native)
-                : { hook_event_name: native?.hook_event_name, tool_name: native?.tool_name,
-                    // Only the bounded metadata reaches the own-data parser and authenticated evaluator.
-                    tool_input: mcp ? {} : native?.tool_input, cwd: native?.cwd ?? process.cwd() }
             const identityBytes = env.COCKPIT_GUARD_IDENTITY
             if (!identityBytes || Buffer.byteLength(identityBytes) > GUARD_INPUT_LIMITS.inputBytes) throw new RefusalError('Installed guard identity is missing or oversized.')
             const guardRoot = env.COCKPIT_GUARD_ROOT
             if (!guardRoot) throw new RefusalError('Installed guard root is missing.')
+            // A shell left in a directory that was removed, such as a worktree, reaches nothing by a relative path, and
+            // the only way out is a cd; judged from there, every call failed, that cd included. It is judged from the root.
+            let cwd: string
+            let removed = false
+            try { cwd = process.cwd() }
+            catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+                process.chdir(guardRoot)
+                cwd = process.cwd()
+                removed = typeof native?.cwd !== 'string' || !existsSync(native.cwd)
+            }
+            const payload = harness === 'opencode' && native?.tool !== undefined
+                ? normalizeOpenCodeInput(removed ? { ...native, cwd } : native)
+                : { hook_event_name: native?.hook_event_name, tool_name: native?.tool_name,
+                    // Only the bounded metadata reaches the own-data parser and authenticated evaluator.
+                    tool_input: mcp ? {} : native?.tool_input, cwd: removed ? cwd : native?.cwd ?? cwd }
             const guardEnvironment = env
             // Claude Code and Codex name the session's transcript and id, and Claude Code its scratchpad and the subagent making the call; they locate the agent's own files.
             const reported = (key: string) => typeof native?.[key] === 'string' ? native[key] as string : undefined
             const agentSession = Object.fromEntries(([['transcriptPath', 'transcript_path'], ['sessionId', 'session_id'], ['scratchpadDir', 'scratchpad_dir'], ['agentType', 'agent_type']] as const)
                 .flatMap(([name, key]) => reported(key) === undefined ? [] : [[name, reported(key)]]))
             const agentEnvironment = Object.fromEntries(GUARD_AGENT_VARIABLES.flatMap(name => guardEnvironment[name] ? [[name, guardEnvironment[name]]] : []))
-            return await runGuardEvaluationApplication({ identity: JSON.parse(identityBytes), guardRoot, payload, harness, cwd: process.cwd(),
+            return await runGuardEvaluationApplication({ identity: JSON.parse(identityBytes), guardRoot, payload, harness, cwd,
                 askIsDeny: guardEnvironment.COCKPIT_ASK_IS_DENY === '1',
                 unsyncedWorktree: guardEnvironment.COCKPIT_GUARD_CHECK_PROTOCOL === GUARD_CHECK_UNSYNCED_PROTOCOL,
                 ripgrepConfigActive: Object.hasOwn(guardEnvironment, 'RIPGREP_CONFIG_PATH') || guardEnvironment.COCKPIT_RIPGREP_CONFIG_ACTIVE === '1',
