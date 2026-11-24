@@ -142,6 +142,17 @@ person reviews what changed the script and runs sync; a linked `.cockpit`, `.coc
 `.cockpit/local` holds it too, naming the link. `GUARD_WORKTREE_UNGUARDED`
 names a worktree kept below the root that holds no guard script, or one sync did not record there.
 
+A refusal saying a directory `is in a linked worktree where nobody has installed dependencies and
+synced cockpit` comes from the worktree's main checkout, which judges calls there until the
+worktree's own guard is bound. The message prints the one command that binds it: `cockpit sync
+--bind-worktree`, run alone from the worktree root through the main checkout's Node and cockpit by
+absolute path. The agent runs it, then installs the worktree's dependencies under the worktree's own
+guard. A worktree's own guard held because its binding went stale, after a rebase or an install that
+changed cockpit, prints and admits the same command. `GUARD_WORKTREE_BIND_REFUSED` means the bind found something the main checkout's sync did not
+grant: another configuration, siblings that resolve elsewhere, a tracked input or generated file with
+other bytes than the main checkout's (the message names the first), or another running cockpit or
+Node. A person reviews the worktree and syncs it in a terminal.
+
 `GUARD_HANDLER_SUPERSEDED` means the cockpit installed under the root resolves to another path than
 the one sync bound the guard to. A package manager that keeps each version at its own path, as pnpm
 does, leaves the earlier version in place after an upgrade. The guard keeps judging calls with it until
@@ -374,6 +385,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GUARD_RECORD_MISMATCH` | review what changed the guard script, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal; [see above](#codex-hooks-in-linked-worktrees) |
 | `GUARD_REFUSED` | [see above](#common-refusal-guidance) |
 | `GUARD_SEARCH_PATH_RELATIVE` | check PATH in the shell or launcher that starts the agent harness; if it contains relative or empty entries, remove them there and restart the harness |
+| `GUARD_WORKTREE_BIND_REFUSED` | [see above](#codex-hooks-in-linked-worktrees) |
 | `GUARD_WORKTREE_UNGUARDED` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml in each worktree, or remove the worktree; [see above](#codex-hooks-in-linked-worktrees) |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | [see above](#common-refusal-guidance) |
 | `INIT_SCAFFOLD_COMPOSE_EXISTS` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs init <cockpit root> --target <tool>, which proposes the existing Compose file for environment.compose_files |

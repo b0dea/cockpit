@@ -13,7 +13,7 @@ import { createHash } from 'node:crypto'
 import { lstat, readdir, readFile, readlink, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { readBoundedFile } from '../bounded-read.js'
-import { cockpitCommand } from '../fix-catalogue.js'
+import { cockpitCommand, oneCommandLine } from '../fix-catalogue.js'
 import { sha256Hex } from '../sha256.js'
 import { GUARD_LOCAL_PATHS, writeCockpitLocalFiles } from '../guards/local-identity.js'
 import type { CockpitConfig, Sibling } from '../schema.js'
@@ -194,7 +194,7 @@ export async function staleStackDiagnostics(cockpitRoot: string, served: Readonl
             message: `the stack came up at ${record.recordedAt} with sibling ${sibling.slug} from ${sibling.served}; since then ${changes.join(', ')}, `
                 + 'so its services may still run the old dependencies, schema or code',
             target: `sibling:${sibling.slug}`,
-            fix: `run ${cockpitCommand('down')} and then ${cockpitCommand('up')} so every service starts on the current files; `
+            fix: `run ${oneCommandLine([cockpitCommand('down'), cockpitCommand('up')])} so every service starts on the current files; `
                 + 'a service whose image installs the dependencies needs that image rebuilt before up',
         }
     }))

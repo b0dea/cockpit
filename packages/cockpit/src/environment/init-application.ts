@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { Diagnostic } from '../diagnostics.js'
 import { readinessReport, type ReadinessReport } from '../readiness.js'
-import { cockpitCommand, initCommand, formatShellCommand } from '../fix-catalogue.js'
+import { cockpitCommand, initCommand, formatShellCommand, oneCommandLine } from '../fix-catalogue.js'
 import {
     asksInstallPolicies,
     isAnswerProvenance,
@@ -968,7 +968,7 @@ async function initStagesFrom(
         const observed = current.value.stage !== 'draft-prepared'
         const fix = `restore the product files changed since init drafted cockpit.toml, then rerun ${initCommand({ root: input.root, target: input.tools.join(','),
             args: '--answers <your answers file>' })}${observed
-            ? `; to keep the change instead, finish without init: run ${cockpitCommand('sync', { config: destination })}, then ${cockpitCommand('check', { config: destination })}` : ''}`
+            ? `; to keep the change instead, finish without init: run ${oneCommandLine([cockpitCommand('sync', { config: destination }), cockpitCommand('check', { config: destination })])}` : ''}`
         return ownerRefusal({ ...currentDocument, diagnostics: currentDocument.diagnostics.map(row =>
             row.code === 'DOCUMENT_ESTATE_OBSERVATION_CHANGED' ? { ...row, fix,
                 message: 'the product files init observed (package manifests, Dockerfile, Compose files) changed after it drafted cockpit.toml, so the recorded answers no longer describe this repository and init will not verify the draft against it' }

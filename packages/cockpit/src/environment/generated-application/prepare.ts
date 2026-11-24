@@ -55,11 +55,13 @@ export function syncCommandInput(input: unknown): GeneratedEnvironmentSyncInput 
         if (input === null || typeof input !== 'object' || Array.isArray(input) || isProxy(input)) return undefined
         const descriptors = Object.getOwnPropertyDescriptors(input)
         const keys = Reflect.ownKeys(descriptors)
-        if (keys.some((key) => typeof key !== 'string' || key !== 'configPath' && key !== 'dryRun' && key !== 'bootstrapState' && key !== 'guardWidening' && key !== 'approveDeclaredMcp')
+        if (keys.some((key) => typeof key !== 'string' || key !== 'configPath' && key !== 'dryRun' && key !== 'bindWorktree' && key !== 'bootstrapState' && key !== 'guardWidening' && key !== 'approveDeclaredMcp')
             || !Object.hasOwn(descriptors, 'configPath') || !('value' in descriptors.configPath!)) return undefined
         const configPath = descriptors.configPath.value
         const dryRun = Object.hasOwn(descriptors, 'dryRun') && 'value' in descriptors.dryRun! ? descriptors.dryRun.value : false
         if (typeof configPath !== 'string' || configPath.length === 0 || configPath.includes('\0') || typeof dryRun !== 'boolean') return undefined
+        const bindWorktree = Object.hasOwn(descriptors, 'bindWorktree') && 'value' in descriptors.bindWorktree! ? descriptors.bindWorktree.value : false
+        if (typeof bindWorktree !== 'boolean' || bindWorktree && dryRun) return undefined
         const approveDeclaredMcp = Object.hasOwn(descriptors, 'approveDeclaredMcp') && 'value' in descriptors.approveDeclaredMcp!
             ? descriptors.approveDeclaredMcp.value : false
         // Previewing every server as approved is for a person's review; a sync that writes uses only the recorded approvals.
@@ -74,7 +76,7 @@ export function syncCommandInput(input: unknown): GeneratedEnvironmentSyncInput 
             ? ownRecord(descriptors.guardWidening.value) : undefined
         if (Object.hasOwn(descriptors, 'guardWidening') && !(guardWidening
             && exactKeys(guardWidening, ['configSha256']) && typeof guardWidening.configSha256 === 'string')) return undefined
-        return { configPath, dryRun, ...(approveDeclaredMcp ? { approveDeclaredMcp } : {}), ...(bootstrapState === undefined ? {} : { bootstrapState }),
+        return { configPath, dryRun, ...(bindWorktree ? { bindWorktree } : {}), ...(approveDeclaredMcp ? { approveDeclaredMcp } : {}), ...(bootstrapState === undefined ? {} : { bootstrapState }),
             ...(guardWidening === undefined ? {} : { guardWidening: guardWidening as GuardWideningApproval }) }
     } catch {
         // a guard over caller-supplied values; a throwing accessor or proxy trap is malformed input the caller refuses.

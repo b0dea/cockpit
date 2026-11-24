@@ -460,7 +460,11 @@ do), or the npm page when there is no changelog, and the next steps, one `next:`
 start a branch first when the tree was dirty, HEAD is detached, or it is the default branch or one
 in `[guards] protected_branches` (`git switch -c cockpit-<version> origin/<default>`, best before the upgrade; a new branch with no
 upstream yet is fine); commit exactly the
-files the upgrade changed, named by path; then run `check` and `doctor`.
+files the upgrade changed, named by path; then run `check` and `doctor`, as one line joined with `&&`.
+An agent's upgrade, which a person approves, names one line for that person instead: `cd` to the cockpit
+root, the branch to start when one is needed, and `npx --no cockpit approve`, joined with `&&`. Every
+recovery that hands a person several commands prints them as one line like this, since a pasted block
+of lines trips terminal paste guards and keeps running after a line fails.
 
 `--commit` stages exactly those files by path and commits them as `chore: upgrade cockpit to
 <version>`, with the repository's own hooks. It refuses before installing while anything else is

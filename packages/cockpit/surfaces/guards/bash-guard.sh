@@ -13,7 +13,7 @@ esac
 # The hook's check passes the root it verified, which a linked directory cannot move.
 if [ -n "${COCKPIT_GUARD_CHECKED_ROOT:-}" ]; then
     # One check serves every cockpit on the machine; one from another release may hand this script other values.
-    # 2 marks a linked worktree nobody has synced, judged by the checkout above it; the handler then admits only cd and pwd.
+    # 2 marks a linked worktree nobody has synced, judged by its main checkout; the handler then admits only cd, pwd and the sync that binds its own guard.
     if [ "${COCKPIT_GUARD_CHECK_PROTOCOL:-}" != 1 ] && [ "${COCKPIT_GUARD_CHECK_PROTOCOL:-}" != 2 ]; then
         printf 'cockpit guard: the check below ~/.cockpit/guards is from another cockpit release than this guard script, so shell commands, file edits and writes, and restricted MCP tools under Claude Code are refused. A person runs cockpit sync in this cockpit in a terminal.\n' >&2
         exit 2

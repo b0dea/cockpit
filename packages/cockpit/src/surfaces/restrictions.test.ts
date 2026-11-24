@@ -421,6 +421,55 @@ describe('restriction expansion', () => {
         }
     })
 
+    it('admits, in an unsynced worktree beside its main checkout, only the bind through the main checkout\'s own cockpit', async () => {
+        const directory = await isolatedProjectRoot('cockpit-hook-sibling-')
+        const result = complete(expandRestrictions(await input({ canonicalProjectRoot: directory })))
+        const { CLAUDE_PROJECT_DIR: _unset, ...ambient } = process.env
+        const runs = (name: 'claudecode' | 'codexcli', cwd: string, command: string) => {
+            const registration = JSON.parse(target(result, name).files[0]!.bytes) as { hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> } }
+            return spawnSync('/bin/sh', ['-c', registration.hooks.PreToolUse[0]!.hooks[0]!.command], {
+                cwd, env: { ...ambient, ...name === 'claudecode' ? { CLAUDE_PROJECT_DIR: sibling } : {} }, input: JSON.stringify({ ...bash(command), cwd }), encoding: 'utf8',
+            })
+        }
+        // A worktree beside the main checkout has no checkout above it: the main checkout Git's own files name judges it.
+        expect(spawnSync('git', ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', 'commit', '--quiet', '--allow-empty', '-m', 'Synthetic'], { cwd: directory }).status).toBe(0)
+        const sibling = join(dirname(directory), 'product-feature')
+        expect(spawnSync('git', ['worktree', 'add', '--quiet', '--detach', '--relative-paths', sibling], { cwd: directory, encoding: 'utf8' })).toMatchObject({ status: 0 })
+        await mkdir(join(sibling, '.cockpit/guards'), { recursive: true })
+        await writeFile(join(sibling, '.cockpit/guards/bash-guard.sh'), await readFile(join(directory, '.cockpit/guards/bash-guard.sh')))
+        await writeFile(join(sibling, 'cockpit.toml'), await readFile(join(directory, 'cockpit.toml')))
+        await writeFile(join(sibling, 'package-lock.json'), '{}\n')
+        const allowed = { status: 0, stdout: expect.stringContaining('permissionDecision":"allow') }
+        const refused = { status: 0, stdout: expect.stringContaining('linked worktree where nobody has installed dependencies') }
+        expect(runs('claudecode', sibling, 'pwd')).toMatchObject(allowed)
+        expect(runs('codexcli', sibling, 'pwd')).toMatchObject({ status: 0, stdout: '' })
+        // The one command admitted runs the Node and cockpit package the main checkout's guard runs, by absolute path.
+        const launcher = join(dirname(fileURLToPath(new URL('package.json', root))), 'bin/cockpit.mjs')
+        const bind = `${realpathSync(process.execPath)} ${launcher} sync --config ${join(sibling, 'cockpit.toml')} --bind-worktree`
+        const listed = runs('claudecode', sibling, 'npm ci')
+        expect(listed).toMatchObject(refused)
+        expect(JSON.parse(listed.stdout).hookSpecificOutput.permissionDecisionReason).toContain(`\`${bind}\``)
+        expect(runs('claudecode', sibling, bind)).toMatchObject(allowed)
+        expect(runs('codexcli', sibling, bind)).toMatchObject({ status: 0, stdout: '' })
+        // Nothing the worktree holds runs first: not its install, nor a cockpit in its node_modules, which can be any
+        // launcher beside a link to the approved package's handler.
+        const planted = join(sibling, 'node_modules/@b00dea/cockpit')
+        await mkdir(join(planted, 'bin'), { recursive: true })
+        await writeFile(join(planted, 'bin/cockpit.mjs'), '#!/usr/bin/env node\nconsole.log("planted")\n')
+        await symlink(join(dirname(launcher), '../dist'), join(planted, 'dist'))
+        await mkdir(join(sibling, 'sub'))
+        for (const [command, cwd] of [['npm ci', sibling], ['pnpm install --frozen-lockfile', sibling],
+            ['./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --bind-worktree', sibling],
+            [`${realpathSync(process.execPath)} ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml --bind-worktree`, sibling],
+            ['npx --no cockpit sync --config cockpit.toml --bind-worktree', sibling],
+            [`node ${launcher} sync --config ${join(sibling, 'cockpit.toml')} --bind-worktree`, sibling],
+            [`${realpathSync(process.execPath)} ${launcher} sync --config cockpit.toml --bind-worktree`, sibling],
+            [`${realpathSync(process.execPath)} ${launcher} sync --config ${join(sibling, 'cockpit.toml')}`, sibling],
+            [`${bind} > bind.log`, sibling], [`${bind} && npm ci`, sibling], [bind, join(sibling, 'sub')], ['cat README.md', sibling]] as const) {
+            expect(runs('claudecode', cwd, command), command).toMatchObject(refused)
+        }
+    })
+
     it('routes OpenCode native read, grep and glob through the guard read checks', async () => {
         // OpenCode 1.19.4 returned a secrets file through its native read tool because the plugin
         // mapped only shell, edit, write and patch tools.

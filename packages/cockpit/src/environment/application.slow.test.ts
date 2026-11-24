@@ -1056,7 +1056,7 @@ describe('guard policy construction', () => {
             const older = (await runGuardEvaluationApplication(request, adapters)).decision
             expect(older).toMatchObject({ decision: 'unavailable', reason: expect.stringContaining('the installed cockpit is older than the one that generated the guards') })
             expect(older.reason).toContain('999.0.0 generated them')
-            expect(older.reason).toContain('`npm ci`')
+            expect(older.reason).toContain(`\`cd ${root} && npm ci\``)
             expect(older.reason).toContain('sync is not the fix')
             // The handler bytes are compared first; the version that generated the guards still names the direction.
             const handler = { ...request, identity: { ...request.identity as object, moduleSha256: '0'.repeat(64) } }
@@ -1252,7 +1252,7 @@ describe('guard policy construction', () => {
         const widened = parse(readFileSync(configPath, 'utf8')) as { guards: { allow: unknown[] } }
         widened.guards.allow.push({ argv: ['cat', join(outside, 'notes.md')], cwd: '.', reason: 'Read the selected input.' })
         writeFileSync(configPath, stringify(widened))
-        const notice = ` ${canonicalConfig} has an unapproved edit that widens what agents may do (guards.allow); calls are judged under the configuration last synced until a person runs \`npx --no cockpit approve\` in ${root}, in a terminal outside the agent, and confirms it.`
+        const notice = ` ${canonicalConfig} has an unapproved edit that widens what agents may do (guards.allow); calls are judged under the configuration last synced until a person runs \`cd ${root} && npx --no cockpit approve\` in a terminal outside the agent, and confirms it.`
         expect(await runGuardEvaluationApplication(request, adapters)).toMatchObject({ decision: { decision: 'allow' }, diagnostics: [] })
         const release = await runGuardEvaluationApplication({ ...request, searchPath: '/usr/bin:/bin', payload: shellPayload(`cat ${join(outside, 'notes.md')}`, root) }, adapters)
         expect(release.decision.decision).not.toBe('allow')

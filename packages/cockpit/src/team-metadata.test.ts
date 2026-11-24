@@ -393,7 +393,7 @@ purpose = "Synthetic local repository"
 
         await writeFile(join(root, 'pnpm-lock.yaml'), lock('file:/synthetic/archives/another.tgz'))
         expect(await validateTeamMetadata(configPath)).toMatchObject({ kind: 'refusal', code: 'COCKPIT_VERSION_MISMATCH',
-            message: expect.stringMatching(/pnpm-lock\.yaml and node_modules do not resolve .*run pnpm install/) })
+            message: expect.stringMatching(/pnpm-lock\.yaml and node_modules do not resolve .*run `cd \S+ && pnpm install && \.\/node_modules\/@b00dea\/cockpit\/bin\/cockpit\.mjs check /) })
         // npm's lockfile describes no link: a linked copy beside it is `npm link`, not this pin.
         await rm(join(root, 'pnpm-lock.yaml'))
         await writeFile(join(root, 'package-lock.json'), `${JSON.stringify({ lockfileVersion: 3, packages: {

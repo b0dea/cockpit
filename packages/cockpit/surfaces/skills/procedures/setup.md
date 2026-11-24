@@ -535,6 +535,14 @@ gives one to the person.
    terminal outside the agent. Another cockpit's orphans are pruned from that cockpit. A stack whose worktree Git still registers, or marks
    locked, is kept until `git worktree prune` (after `git worktree unlock` for a locked one) runs in
    its main checkout. Done when `stacks` lists no orphaned stack, or the person has the command.
+5. **A new worktree of the cockpit** has no guard of its own until it is bound; until then the guard
+   admits only `cd`, `pwd` and the bind command its refusal prints, a `sync --bind-worktree` through
+   the main checkout's own Node and cockpit by absolute path. Run that command exactly, alone, from the
+   worktree root, before installing anything there, then install the worktree's dependencies as usual.
+   A worktree whose guard holds every call after a rebase or install changed cockpit prints the same
+   kind of command; run it the same way.
+   When the bind refuses (`GUARD_WORKTREE_BIND_REFUSED`), hand the person the sync it names for a
+   terminal outside the agent. Done when a call in the worktree is judged by its own guard.
 
 ## Diagnose
 

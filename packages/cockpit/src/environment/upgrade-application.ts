@@ -19,7 +19,7 @@ import { Guards } from '../schema.js'
 import type { ExecuteProbeOutcome, ForegroundProcessInput, ForegroundProcessOutcome } from '../environment-exec/execute.js'
 import { authenticatedExecutionOutcome } from '../environment-exec/execute.js'
 import { readLatestRelease, type ReleaseMetadataTransport } from '../freshness.js'
-import { cockpitCommand, formatShellCommand } from '../fix-catalogue.js'
+import { cockpitCommand, formatShellCommand, oneCommandLine } from '../fix-catalogue.js'
 import { EXACT_DEV_INSTALL } from '../init/derive.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { EXIT_CODES } from '../invocation.js'
@@ -337,8 +337,11 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
 
     // The install and its age exemption are a person's: an agent's run leaves them for approve.
     const approveCommand = await personApproveCommand(input.env, root)
-    const approve = `run \`${approveCommand}\` in ${root}, in a terminal outside the agent`
-    if (input.agent) return { status: 2, result: { ...result, approve: approveCommand, next: [branch, approve].filter(Boolean).join('\n') },
+    const branchCommand = branch && `git switch -c cockpit-${target} ${typeof before !== 'string' && before.defaultRef || 'origin/<default branch>'}`
+    const approve = branchCommand
+        ? `in a terminal outside the agent, run \`${oneCommandLine([branchCommand, approveCommand], root)}\` to start a branch first and approve the upgrade`
+        : `run \`${approveCommand}\` in ${root}, in a terminal outside the agent`
+    if (input.agent) return { status: 2, result: { ...result, approve: approveCommand, next: approve },
         diagnostics: [{ severity: 'error' as const, code: 'UPGRADE_PERSON_REQUIRED' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_PERSON_REQUIRED,
             message: `upgrading cockpit from ${installed} to ${target} installs a new package version, which a person approves; nothing was installed${branch ? `; ${branch}` : ''}`,
             fix: 'run `npx --no cockpit approve` in <the cockpit root>, in a terminal outside the agent' }] }
@@ -397,7 +400,7 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
     const held = changed?.filter(path => typeof before !== 'string' && before.files.has(path)) ?? []
     // The commit names its paths, so whatever else is staged stays out of it.
     const commitCommand = changed && `${formatShellCommand(['git', 'add', '--', ...changed])} && ${formatShellCommand(['git', 'commit', '-m', message, '--', ...changed])}`
-    const checks = `run ${cockpitCommand('check', { config: configPath })}, then ${cockpitCommand('doctor', { config: configPath })}`
+    const checks = `run \`${oneCommandLine([cockpitCommand('check', { config: configPath }), cockpitCommand('doctor', { config: configPath })])}\``
     // Safe Chain's wrapper prints its own summary once approve exits, which reads like a failure of the install.
     const safeChainNote = input.confirm && (await locateExecutable('safe-chain', input.env, root)).state === 'present'
         ? 'Safe Chain may print "Some package versions were suppressed" after this: that is its notice about other versions its age check hid; this install finished' : undefined

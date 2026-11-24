@@ -1131,10 +1131,12 @@ async function decodeRequest(
     }
 
     if (handler === 'sync') {
-        const values = parsed.values as { config?: string; 'dry-run'?: boolean }
+        const values = parsed.values as { config?: string; 'dry-run'?: boolean; 'bind-worktree'?: boolean }
         if (parsed.positionals.length > 0) return usageOutcome('CLI_USAGE_INVALID', 'sync accepts named inputs only')
         if (!values.config) return missingConfig()
-        return { handler, input: { configPath: values.config, ...(values['dry-run'] === true ? { dryRun: true } : {}) } }
+        if (values['bind-worktree'] === true && values['dry-run'] === true) return usageOutcome('CLI_USAGE_INVALID', 'sync --bind-worktree writes no tracked file, so it has no dry run')
+        return { handler, input: { configPath: values.config, ...(values['dry-run'] === true ? { dryRun: true } : {}),
+            ...(values['bind-worktree'] === true ? { bindWorktree: true } : {}) } }
     }
 
     if (handler === 'approve') {

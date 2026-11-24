@@ -511,7 +511,7 @@ export async function preparePublication(
     const priorEntries = ownership.kind === 'complete' ? ownership.manifest.entries : []
     const priorSurfaces = [...priorEntries.filter((row): row is SurfacePriorOwnedEntry => 'harnesses' in row), ...(adoptedBootstrap ?? [])]
         .sort((left, right) => compareCodeUnits(left.path, right.path))
-    const prepared = await prepareSurfaces(base, priorSurfaces, adapters, request.approveDeclaredMcp === true)
+    const prepared = await prepareSurfaces(base, priorSurfaces, adapters, request.approveDeclaredMcp === true, request.bindWorktree === true)
     if ('status' in prepared) return prepared
     const ownedInput = await ownedInputOverlap(prepared, priorEntries)
     if (ownedInput.kind === 'invalid') return refuse(

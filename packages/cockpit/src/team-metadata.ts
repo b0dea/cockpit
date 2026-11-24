@@ -8,7 +8,7 @@ import { loadCockpitConfig, readBoundedInput } from './config/load.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, isMissing, parseJsonText, RefusalError, tryParseJson, type EnvironmentDiagnostic } from './environment/contract.js'
 import type { CockpitConfig } from './schema.js'
 import { installedPackageMetadata } from './package-metadata.js'
-import { cockpitCommand } from './fix-catalogue.js'
+import { cockpitCommand, oneCommandLine } from './fix-catalogue.js'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from './guards/local-identity.js'
 import { EXACT_DEV_INSTALL, NODE_EXEC, nodeLockfile } from './init/derive.js'
 
@@ -184,7 +184,7 @@ function packageDependencySlots(manifest: Record<string, unknown>): PackageDepen
 }
 
 function misplacedDependencyMessage(sections: readonly string[]): string {
-    return `package.json declares ${PACKAGE} in ${sections.join(', ')} outside cockpit-owned devDependencies; cockpit requires one exact development dependency so the team has one version authority. Run npm uninstall ${PACKAGE} && npm install --save-dev --save-exact ${PACKAGE}@${VERSION}, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> again`
+    return `package.json declares ${PACKAGE} in ${sections.join(', ')} outside cockpit-owned devDependencies; cockpit requires one exact development dependency so the team has one version authority. Run \`${oneCommandLine([`npm uninstall ${PACKAGE}`, `npm install --save-dev --save-exact ${PACKAGE}@${VERSION}`, './node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>'])}\``
 }
 
 // Each refusal names the entry and what to run: one message for every conflict ("resolve the
@@ -471,7 +471,7 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
             if (pinned !== await verifiedLocalPin(authority, current?.bytes)) {
                 const { manager, lockfile } = await rootPackageManager(root)
                 return refuse('COCKPIT_VERSION_MISMATCH',
-                    `package.json pins ${PACKAGE} to ${pinned}, but ${lockfile} and node_modules do not resolve that archive to the running ${VERSION}; run ${manager} install, then ${cockpitCommand('check')}`, packagePath)
+                    `package.json pins ${PACKAGE} to ${pinned}, but ${lockfile} and node_modules do not resolve that archive to the running ${VERSION}; run \`${oneCommandLine([`${manager} install`, cockpitCommand('check')], root)}\``, packagePath)
             }
         } else if (pinned !== VERSION) {
             const install = EXACT_DEV_INSTALL[(await rootPackageManager(root)).lockfile] ?? EXACT_DEV_INSTALL['package-lock.json']!
@@ -543,7 +543,7 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
                 : `another copy of cockpit is running: this command runs ${running}, while ${installed} links to ${linkedCopy}, so nothing here proves the installed copy, and the guard hook runs whichever copy last ran sync`,
             target: 'node_modules',
             fix: linkedCopy === undefined
-                ? `in a terminal in ${root}, run ${manager} install (package.json pins the version), then run ${installedCopy} sync --config <your cockpit.toml> so the guard hook runs the installed copy`
+                ? `in a terminal, run \`${oneCommandLine([`${manager} install`, `${installedCopy} sync --config <your cockpit.toml>`], root)}\`, which installs the version package.json pins and binds the guard hook to it`
                 : `in a terminal in ${root}, run the installed copy instead: ${installedCopy} sync --config <your cockpit.toml>, which binds the guard hook to it; if that copy is out of date, run ${manager} install first`,
         })
     } else {

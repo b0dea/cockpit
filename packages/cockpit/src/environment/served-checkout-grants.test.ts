@@ -230,6 +230,18 @@ describe('Claude Code local guard registration', () => {
             expect(inspectAgentSettingsHazards(root, [], home)).toEqual([expect.objectContaining({ severity: 'error', code: 'GUARD_HANDLER_SUPERSEDED',
                 target: '.cockpit/local/guard-identity', fix: expect.stringContaining('sync --config'),
                 message: expect.stringContaining(`sync bound the guard to @b00dea/cockpit 1.0.0 at ${bound}, and @b00dea/cockpit 1.0.1 at ${upgraded} is installed now`) })])
+            // A worktree bound to its main checkout's cockpit, outside it, that then installs the same handler bytes has not
+            // moved on; other bytes there have.
+            const main = join(home, 'main/node_modules/@b00dea/cockpit/dist')
+            mkdirSync(main, { recursive: true })
+            writeFileSync(join(main, 'cli.js'), '')
+            writeFileSync(join(root, '.cockpit/local/guard-identity'), encodeGuardLocalIdentity({ root, rootInode: '1', configPath: join(root, 'cockpit.toml'),
+                configSha256: digest, configInode: '2', node: '/usr/bin/node', nodeSha256: digest, nodeFingerprint: 'synthetic',
+                module: join(main, 'cli.js'), moduleSha256: digest }))
+            await writeGuardRecord(root, home)
+            expect(inspectAgentSettingsHazards(root, [], home)).toEqual([])
+            writeFileSync(join(upgraded, 'dist/cli.js'), '// another release\n')
+            expect(inspectAgentSettingsHazards(root, [], home)).toEqual([expect.objectContaining({ code: 'GUARD_HANDLER_SUPERSEDED' })])
         } finally {
             rmSync(root, { recursive: true, force: true })
             rmSync(home, { recursive: true, force: true })
