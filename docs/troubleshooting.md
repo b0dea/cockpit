@@ -385,7 +385,7 @@ Every diagnostic message names what failed and how to fix it. These codes always
 | `GUARD_RECORD_MISMATCH` | review what changed the guard script, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal; [see above](#codex-hooks-in-linked-worktrees) |
 | `GUARD_REFUSED` | [see above](#common-refusal-guidance) |
 | `GUARD_SEARCH_PATH_RELATIVE` | check PATH in the shell or launcher that starts the agent harness; if it contains relative or empty entries, remove them there and restart the harness |
-| `GUARD_WORKTREE_BIND_REFUSED` | a person reviews the worktree and runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> there, in a terminal outside the agent; [see above](#codex-hooks-in-linked-worktrees) |
+| `GUARD_WORKTREE_BIND_REFUSED` | [see above](#codex-hooks-in-linked-worktrees) |
 | `GUARD_WORKTREE_UNGUARDED` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml in each worktree, or remove the worktree; [see above](#codex-hooks-in-linked-worktrees) |
 | `INIT_CANONICAL_OWNERSHIP_MISSING` | [see above](#common-refusal-guidance) |
 | `INIT_SCAFFOLD_COMPOSE_EXISTS` | run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs init <cockpit root> --target <tool>, which proposes the existing Compose file for environment.compose_files |
