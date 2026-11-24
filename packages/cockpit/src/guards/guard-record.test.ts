@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
@@ -5,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { GUARD_CHECK_PATH, GUARD_CHECK_PROTOCOL, writeGuardRecord } from './guard-record.js'
+import { GUARD_CHECK_UNSYNCED_PROTOCOL } from './guard-record.js'
 
 const scratch: string[] = []
 afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }) })
@@ -71,5 +73,105 @@ describe('guard record', () => {
         expect(await writeGuardRecord(root, home)).toEqual({ kind: 'complete' })
         expect(readFileSync(join(base, 'previous'), 'utf8')).toBe('previous check\n')
         expect(readFileSync(join(home, GUARD_CHECK_PATH), 'utf8')).toContain('cockpit sync')
+    })
+
+    it('records a guard script only with the bytes the caller checked', async () => {
+        const base = realpathSync(mkdtempSync(join(tmpdir(), 'guard-record-')))
+        scratch.push(base)
+        const root = join(base, 'cockpit')
+        mkdirSync(join(root, '.cockpit/guards'), { recursive: true })
+        mkdirSync(join(root, '.cockpit/local'), { recursive: true })
+        writeFileSync(join(root, '.cockpit/guards/bash-guard.sh'), 'printf checked\n')
+        writeFileSync(join(root, '.cockpit/local/guard-identity'), 'identity\n')
+        const checked = createHash('sha256').update('printf checked\n').digest('hex')
+        writeFileSync(join(root, '.cockpit/guards/bash-guard.sh'), 'printf swapped\n')
+        expect(await writeGuardRecord(root, join(base, 'home'), checked)).toMatchObject({ kind: 'refusal', message: expect.stringContaining('changed after sync checked it') })
+        writeFileSync(join(root, '.cockpit/guards/bash-guard.sh'), 'printf checked\n')
+        expect(await writeGuardRecord(root, join(base, 'home'), checked)).toEqual({ kind: 'complete' })
+    })
+
+    it('judges a synced linked worktree whose recorded Node or handler is gone by its main checkout, and nothing else', async () => {
+        const base = realpathSync(mkdtempSync(join(tmpdir(), 'guard-record-')))
+        scratch.push(base)
+        const home = join(base, 'home')
+        const root = join(base, 'app')
+        const worktree = join(base, 'app-feature')
+        for (const [checkout, script] of [[root, 'printf "%s %s" "$COCKPIT_GUARD_CHECK_PROTOCOL" "$COCKPIT_GUARD_CHECKED_ROOT"\n'], [worktree, 'printf "own %s" "$COCKPIT_GUARD_CHECK_PROTOCOL"\n']]) {
+            mkdirSync(join(checkout, '.cockpit/guards'), { recursive: true })
+            mkdirSync(join(checkout, '.cockpit/local'), { recursive: true })
+            writeFileSync(join(checkout, '.cockpit/guards/bash-guard.sh'), script)
+        }
+        writeFileSync(join(root, '.cockpit/local/guard-identity'), 'identity\n')
+        mkdirSync(join(root, '.git/worktrees/feature'), { recursive: true })
+        writeFileSync(join(root, '.git/worktrees/feature/commondir'), '../..\n')
+        writeFileSync(join(root, '.git/worktrees/feature/gitdir'), `${join(worktree, '.git')}\n`)
+        writeFileSync(join(worktree, '.git'), `gitdir: ${join(root, '.git/worktrees/feature')}\n`)
+        expect(await writeGuardRecord(root, home)).toEqual({ kind: 'complete' })
+        const check = () => {
+            const [sh, dash] = ['/bin/sh', '/bin/dash'].map(shell => spawnSync(shell, [join(home, GUARD_CHECK_PATH), worktree], { encoding: 'utf8', env: { HOME: home, PATH: '/usr/bin:/bin' }, timeout: 10_000 }))
+            expect({ status: dash!.status, stdout: dash!.stdout, stderr: dash!.stderr }).toEqual({ status: sh!.status, stdout: sh!.stdout, stderr: sh!.stderr })
+            return sh!
+        }
+        const bound = async (node: string, handler: string, format = 'cockpit-guard-local/v1') => {
+            writeFileSync(join(worktree, '.cockpit/local/guard-identity'), `${format}\n${node}\n${handler}\n{}\n`)
+            expect(await writeGuardRecord(worktree, home)).toEqual({ kind: 'complete' })
+        }
+        // A runtime that is still there runs the worktree's own guard.
+        await bound('/bin/sh', join(root, '.cockpit/local/guard-identity'))
+        expect(check()).toMatchObject({ status: 0, stdout: `own ${GUARD_CHECK_PROTOCOL}` })
+        for (const [node, handler] of [[join(base, 'gone/node'), join(root, '.cockpit/local/guard-identity')], ['/bin/sh', join(base, 'gone/cli.js')]]) {
+            await bound(node, handler)
+            expect(check(), `${node} ${handler}`).toMatchObject({ status: 0, stdout: `${GUARD_CHECK_UNSYNCED_PROTOCOL} ${root}` })
+        }
+        // A malformed identity is the worktree guard's own to refuse, and one changed since sync recorded it refuses here.
+        await bound(join(base, 'gone/node'), join(base, 'gone/cli.js'), 'another-format')
+        expect(check()).toMatchObject({ status: 0, stdout: `own ${GUARD_CHECK_PROTOCOL}` })
+        await bound(join(base, 'gone/node'), join(base, 'gone/cli.js'))
+        writeFileSync(join(worktree, '.cockpit/local/guard-identity'), `cockpit-guard-local/v1\n${join(base, 'gone/node')}\n${join(base, 'other/cli.js')}\n{}\n`)
+        expect(check()).toMatchObject({ status: 2, stdout: '', stderr: expect.stringContaining('unrecorded') })
+    })
+
+    it('judges a linked worktree beside its main checkout, synced nowhere, by the main checkout its Git files name', async () => {
+        const base = realpathSync(mkdtempSync(join(tmpdir(), 'guard-record-')))
+        scratch.push(base)
+        const home = join(base, 'home')
+        const root = join(base, 'app')
+        mkdirSync(join(root, '.cockpit/guards'), { recursive: true })
+        mkdirSync(join(root, '.cockpit/local'), { recursive: true })
+        mkdirSync(join(root, '.git/worktrees/feature'), { recursive: true })
+        writeFileSync(join(root, '.cockpit/guards/bash-guard.sh'), 'printf "%s %s" "$COCKPIT_GUARD_CHECK_PROTOCOL" "$COCKPIT_GUARD_CHECKED_ROOT"\n')
+        writeFileSync(join(root, '.cockpit/local/guard-identity'), 'identity\n')
+        writeFileSync(join(root, '.git/worktrees/feature/commondir'), '../..\n')
+        expect(await writeGuardRecord(root, home)).toEqual({ kind: 'complete' })
+        // The worktree carries the committed guard script but no identity, as a new one does.
+        const worktree = join(base, 'app-feature')
+        writeFileSync(join(root, '.git/worktrees/feature/gitdir'), `${join(worktree, '.git')}\n`)
+        mkdirSync(join(worktree, '.cockpit/guards'), { recursive: true })
+        writeFileSync(join(worktree, '.cockpit/guards/bash-guard.sh'), 'printf worktree-guard\n')
+        const check = () => {
+            const [sh, dash] = ['/bin/sh', '/bin/dash'].map(shell => spawnSync(shell, [join(home, GUARD_CHECK_PATH), worktree], { encoding: 'utf8', env: { HOME: home, PATH: '/usr/bin:/bin' }, timeout: 10_000 }))
+            expect({ status: dash!.status, stdout: dash!.stdout, stderr: dash!.stderr }).toEqual({ status: sh!.status, stdout: sh!.stdout, stderr: sh!.stderr })
+            return sh!
+        }
+        // Git writes the pointer absolute, or relative to the worktree with worktree.useRelativePaths.
+        for (const pointer of [join(root, '.git/worktrees/feature'), '../app/.git/worktrees/feature']) {
+            writeFileSync(join(worktree, '.git'), `gitdir: ${pointer}\n`)
+            expect(check(), pointer).toMatchObject({ status: 0, stdout: `${GUARD_CHECK_UNSYNCED_PROTOCOL} ${root}` })
+        }
+        // A pointer Git did not write, or one borrowing a record that names another worktree, finds nothing to judge by,
+        // as does a main checkout without a synced guard.
+        const planted = join(base, 'planted')
+        mkdirSync(join(planted, '.cockpit/guards'), { recursive: true })
+        writeFileSync(join(planted, '.cockpit/guards/bash-guard.sh'), 'printf planted-guard\n')
+        writeFileSync(join(planted, '.git'), `gitdir: ${join(root, '.git/worktrees/feature')}\n`)
+        expect(spawnSync('/bin/sh', [join(home, GUARD_CHECK_PATH), planted], { encoding: 'utf8', env: { HOME: home, PATH: '/usr/bin:/bin' } }))
+            .toMatchObject({ status: 2, stdout: '', stderr: expect.stringContaining('unrecorded') })
+        for (const pointer of ['planted', `gitdir: ${join(base, 'missing')}`]) {
+            writeFileSync(join(worktree, '.git'), `${pointer}\n`)
+            expect(check(), pointer).toMatchObject({ status: 2, stdout: '', stderr: expect.stringContaining('unrecorded') })
+        }
+        writeFileSync(join(worktree, '.git'), `gitdir: ${join(root, '.git/worktrees/feature')}\n`)
+        rmSync(join(root, '.cockpit/local/guard-identity'))
+        expect(check()).toMatchObject({ status: 2, stdout: '', stderr: expect.stringContaining('unrecorded') })
     })
 })

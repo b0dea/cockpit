@@ -228,8 +228,7 @@ describe('cockpit upgrade for an agent and a person', () => {
             message: expect.stringContaining(`from ${installedPackageMetadata.version} to 9.9.9`) })])
         expect(envelope.guidance[0].text).toBe(`run \`npx --no cockpit approve\` in ${f.project}, in a terminal outside the agent`)
         // On the default branch the branch to commit on comes first, before the person's step.
-        expect(envelope.result.next.split('\n')).toEqual(['start a branch first: git switch -c cockpit-9.9.9 origin/main',
-            `run \`npx --no cockpit approve\` in ${f.project}, in a terminal outside the agent`])
+        expect(envelope.result.next).toBe(`in a terminal outside the agent, run \`cd ${f.project} && git switch -c cockpit-9.9.9 origin/main && npx --no cockpit approve\` to start a branch first and approve the upgrade`)
         expect(f.calls()).toEqual(['npm view @b00dea/cockpit version --json exempt='])
         // The record names the release the agent resolved, so a later publish is not what the person approves.
         expect(f.pending()).toEqual([expect.objectContaining({ argv: ['upgrade', '9.9.9', '--commit', '--config', f.config] })])
@@ -266,7 +265,7 @@ describe('cockpit upgrade for an agent and a person', () => {
         expect(run.json().result.next.split('\n')).toEqual([
             'start a branch first: git switch -c cockpit-9.9.9 origin/main (best run before the upgrade)',
             "review git diff, then commit exactly the files the upgrade changed: git add -- AGENTS.md package-lock.json package.json && git commit -m 'chore: upgrade cockpit to 9.9.9' -- AGENTS.md package-lock.json package.json",
-            `run ${check}, then ${doctor}`,
+            `run \`${check} && ${doctor}\``,
         ])
         // A clean work branch with an upstream needs no new branch; a person reads each step on its own line.
         // The root is named through a link, and the files are still named from it.
@@ -278,7 +277,7 @@ describe('cockpit upgrade for an agent and a person', () => {
         const human = await clean.cli(['upgrade', '9.9.9', '--config', config])
         expect(human.status).toBe(0)
         expect(human.stdout).toContain("\nnext: review git diff, then commit exactly the files the upgrade changed: git add -- AGENTS.md package-lock.json package.json && git commit -m 'chore: upgrade cockpit to 9.9.9' -- AGENTS.md package-lock.json package.json\n"
-            + `next: run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config ${config}, then ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config ${config}\n`)
+            + `next: run \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config ${config} && ./node_modules/@b00dea/cockpit/bin/cockpit.mjs doctor --config ${config}\`\n`)
         expect(human.stdout).not.toContain('git switch')
     })
 
@@ -317,7 +316,7 @@ describe('cockpit upgrade for an agent and a person', () => {
         writeFileSync(f.config, '[guards]\nprotected_branches = ["release-line"]\n')
         f.git('commit', '--quiet', '-am', 'Protect the release line')
         const agent = (await f.cli(['upgrade', '--config', f.config, '--json'], { ...f.env, CLAUDECODE: '1' })).json()
-        expect(agent.result.next.split('\n')[0]).toBe('start a branch first: git switch -c cockpit-9.9.9 origin/<default branch>')
+        expect(agent.result.next).toContain('git switch -c cockpit-9.9.9 origin/<default branch> && npx --no cockpit approve')
         // The schema's own default protects main when the configuration names none.
         const plain = repository()
         plain.git('remote', 'set-head', 'origin', '--delete')

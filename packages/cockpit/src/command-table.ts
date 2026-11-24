@@ -94,6 +94,7 @@ export interface CommandDefinition {
 const FLAG_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
     'accept-reset': 'Accept the displayed answer reset with its exact SHA-256 digest',
     abandon: 'Close the order as abandoned; --note says why',
+    'bind-worktree': 'Bind an unsynced linked worktree\'s guard to the cockpit and configuration its main checkout synced, writing no tracked file',
     clear: 'Serve the sibling from its declared checkout again',
     answers: 'Path to the init answers file',
     cases: 'JSON array of guard cases, each {"id", "command", "cwd"?, "expect"?}, cwd relative to the cockpit root; guard prove uses it instead of [guards] cases',
@@ -313,7 +314,7 @@ const sources = [
         visibility: 'public',
         // A real sync applies an edit that widens what agents may do only once a person approves it, so an
         // agent's sync applies everything else and leaves the widening for approve.
-        flags: { config: configFlag, 'dry-run': bool(), json: jsonFlag },
+        flags: { config: configFlag, 'dry-run': bool(), 'bind-worktree': bool(), json: jsonFlag },
     },
     {
         name: 'approve',

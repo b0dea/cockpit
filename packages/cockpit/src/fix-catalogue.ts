@@ -36,6 +36,14 @@ export function formatShellCommand(argv: readonly string[]): string {
 }
 
 /**
+ * Commands a person runs in order, as one line, after `cd` to `root` when one is given. A pasted block of lines trips
+ * terminal paste guards, which flag a multiline paste as hidden commands, and runs each line even when one fails.
+ */
+export function oneCommandLine(commands: readonly string[], root?: string): string {
+    return [...root === undefined ? [] : [`cd ${formatShellCommand([root])}`], ...commands].join(' && ')
+}
+
+/**
  * The runnable spelling of a cockpit command. `operand` (a sibling slug) precedes --config as in
  * the command's usage line; `args` follows it as written, so it may hold `<placeholders>`.
  */

@@ -94,6 +94,9 @@ export async function prepareSurfaces(
     priorOwned: readonly SurfacePriorOwnedEntry[],
     adapters: GeneratedEnvironmentCommandAdapters,
     approveDeclaredMcp = false,
+    // A worktree's bind runs its main checkout's cockpit, whose identity it checks itself, so a cockpit installed in
+    // the worktree is not the one it must run from.
+    bindWorktree = false,
 ): Promise<PreparedEnvironment | RefusalOutcome> {
     const config = prepared.registry.config
     // Only the listed tools are rendered and drift-checked; an unlisted tool's files become stale.
@@ -401,7 +404,7 @@ export async function prepareSurfaces(
     } catch (error) {
         if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return refuse('GENERATED_EXECUTABLE_UNAVAILABLE', `the guard identity could not be read: ${errorCause(error)}`, 'guard')
     }
-    if (installed !== undefined ? installed !== modulePath : boundModule !== undefined && boundModule !== modulePath) {
+    if (!bindWorktree && (installed !== undefined ? installed !== modulePath : boundModule !== undefined && boundModule !== modulePath)) {
         return refuse('GENERATED_EXECUTABLE_UNAVAILABLE', `this cockpit runs from ${modulePath}, not the ${installed !== undefined ? `installed cockpit at ${installed}` : `module the guard is bound to, ${boundModule}`}, `
             + 'and the guard would run whichever copy sync binds', 'guard', 'run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` in a terminal, from the installed package')
     }

@@ -195,9 +195,28 @@ Limits, stated plainly:
   worktree of the checkout (`AGENT_NESTED_REPOSITORY`). `git worktree add` stays allowed, since a
   worktree carries its own committed guard, but a session started in a subdirectory of a worktree kept
   below the root is guarded only once `sync` has run in that worktree; `doctor` there reports
-  `CLAUDE_LOCAL_HOOK_MISSING` until it has. Until then the checkout above the worktree judges calls made
-  in it and admits only `cd` and `pwd`: an agent that changes into it can still leave, and its policy does
-  not cover the worktree's own settings, wrappers, instances or secret paths, so nothing else runs there.
+  `CLAUDE_LOCAL_HOOK_MISSING` until it has. Until then its main checkout judges calls made in it, the
+  one its `.git` file and Git's `commondir` name, whose own record must name the worktree back, so a
+  worktree kept beside the main checkout is judged too; otherwise the checkout above the worktree
+  judges. It admits `cd` and `pwd`, so an agent that changes into it can still leave, and one more
+  command, run alone from the worktree root: `cockpit sync --bind-worktree` through the Node and the
+  cockpit package the main checkout's guard runs, each by absolute path, which the refusal prints. No
+  install comes first, since an install runs the worktree's own package scripts and settings. The bind
+  writes no tracked file. It checks for itself that the worktree is a linked worktree of the checkout
+  whose cockpit is running, that the configuration it read has the bytes that checkout synced, that
+  each sibling resolves to the same directory or to the same place inside each checkout, such as the
+  root sibling `dir = "."`, and that every tracked input sync reads, adopted settings copies included,
+  and every file it generates hold the main checkout's bytes; otherwise it refuses (`GUARD_WORKTREE_BIND_REFUSED`) and a person syncs the worktree. It
+  then binds the worktree's guard to that same Node and cockpit, so the worktree's own guard judges
+  from then on, its dependency installs included. The same bind repairs a worktree whose binding went
+  stale, as after a rebase onto a main checkout that upgraded cockpit or an install that replaced the
+  cockpit it ran: the worktree's own guard, held for a different cockpit installation, a changed
+  handler, or generated files from another version or configuration, names the bind and admits it
+  alone. A worktree whose recorded Node or handler is gone is judged by its main checkout, as an
+  unsynced one is, once its guard script and identity still match what sync recorded. Any other hold,
+  and every hold in the main checkout itself, stays a person's sync. The main checkout's policy does not cover the
+  worktree's own settings, wrappers, instances or secret paths, so nothing else runs there before the
+  bind.
 - Claude Code refuses a call whose guard hook times out, through `onFailure: "block"` (measured
   2026-11-15); what Codex does then is not measured. The guard keeps its own 25-second
   deadline and refuses at it ([Native adapter behavior](#native-adapter-behavior)).
@@ -1241,7 +1260,7 @@ generated Claude Code and Codex commands are one line that runs the committed gu
 holds the recovery text. Each takes the outermost directory at or above the session's that holds the
 guard script, starting for Claude Code from `CLAUDE_PROJECT_DIR`, else the working directory, and
 stopping at the nearest directory with a `.git` entry, so a linked worktree kept below its main checkout
-runs its own guard once synced there, and the main checkout's, admitting only `cd` and `pwd`, until then; it blocks the call when more than one directory within that bound holds one, since
+runs its own guard once synced there, and until then the main checkout's, found from the worktree's Git files for a worktree kept beside it, admitting only `cd`, `pwd` and the sync that binds the worktree's guard; it blocks the call when more than one directory within that bound holds one, since
 it cannot tell which is the cockpit's; a script that is missing or exits with any status but 0 or 2 blocks
 the call with `cockpit guard failed (<status>); a person runs cockpit sync in a terminal`. The generated Claude Code and Codex registrations give the guard hook a
 `timeout` of 30 seconds; a guard call spawns several Node and Git processes and was seen to exceed

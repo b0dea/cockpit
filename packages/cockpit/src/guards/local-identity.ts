@@ -5,10 +5,10 @@
 // in a directory that ignores itself. It decides nothing: the guard application authenticates the
 // file against the running process and the published surfaces before any policy is resolved.
 import { exactKeys } from '../exact-keys.js'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative } from 'node:path'
 
 import { readBoundedFile } from '../bounded-read.js'
 import { readBoundedInput } from '../config/load.js'
@@ -46,7 +46,8 @@ export const GUARD_LOCAL_PATHS = Object.freeze({
 
 // The guard script reads this file with `read` one line at a time, so the layout is lines rather
 // than JSON: a format line, the two executables it launches, then the identity the application checks.
-const FORMAT = 'cockpit-guard-local/v1'
+export const GUARD_LOCAL_FORMAT = 'cockpit-guard-local/v1'
+const FORMAT = GUARD_LOCAL_FORMAT
 const LOCAL_FILE_MAX_BYTES = 65_536
 const KEYS = ['root', 'rootInode', 'configPath', 'configSha256', 'configInode',
     'node', 'nodeSha256', 'nodeFingerprint', 'module', 'moduleSha256'] as const satisfies readonly (keyof GuardHandlerIdentity)[]
@@ -84,6 +85,15 @@ function describeHandler(handler: string): string {
 export function guardHandlerSuperseded(root: string, bound: string): string | undefined {
     const installed = installedGuardHandler(root)
     if (installed === undefined || installed === bound) return undefined
+    // A worktree bound to its main checkout's cockpit, outside the worktree, that later installs the same handler bytes
+    // itself has not moved on: its guard still runs the cockpit it was bound to.
+    const digest = (path: string) => {
+        const read = readBoundedFile(path, 16_777_216)
+        return read.kind === 'complete' ? createHash('sha256').update(read.bytes).digest('hex') : undefined
+    }
+    const outside = relative(root, bound).startsWith('..') || isAbsolute(relative(root, bound))
+    try { if (outside && digest(installed) === digest(bound)) return undefined }
+    catch (error) { if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'ELOOP', 'EISDIR')) throw error }
     return `the installed cockpit changed since the guards were generated: sync bound the guard to ${describeHandler(bound)}, and ${describeHandler(installed)} is installed now`
 }
 

@@ -50,6 +50,7 @@ import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../../gene
 import { parseOwnershipManifest } from '../../surfaces/ownership.js'
 import { installedPackageMetadata } from '../../package-metadata.js'
 import { GUARD_LOCAL_PATHS, guardHandlerSuperseded, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
+import { linkedWorktreeMainCheckout } from '../../guards/linked-worktree.js'
 import { inspectGuardRecord } from '../../guards/guard-record.js'
 import {
     guardInstalledDirectories,
@@ -70,7 +71,7 @@ import {
 import { classifyReadOnlyInvocation } from '../../guards/read-only.js'
 import { fileFingerprint, recordVerifiedDigest } from '../../environment-exec/verified-digest.js'
 import { GUARD_HELD_CALLS, GUARD_UNHELD_CALLS, isGuardSurfaceTarget, type GuardSurfaceTarget } from '../../surfaces/harness-registry.js'
-import { formatShellCommand, type FixContext } from '../../fix-catalogue.js'
+import { formatShellCommand, oneCommandLine, type FixContext } from '../../fix-catalogue.js'
 import { guardRecovery, installedSyncCommand } from '../../surfaces/guard-recovery.js'
 import { redactSensitiveMessage } from '../sensitive.js'
 import { observeInstallPolicyLockfiles, withInstallPolicyProjection } from '../install-policy-observation.js'
@@ -186,10 +187,78 @@ function versionDrift(identity: GuardHandlerIdentity, generated: string | undefi
             : guardHeld(identity, what, why, `${guardRecovery(identity.root, identity.configPath, recoveryState(identity))} Or check out the branch that upgraded cockpit, whose generated files the installed version made.`)
     }
     const lockfile = LOCKFILE_INSTALLS.find(([file]) => recoveryFile(join(identity.root, file), constants.R_OK))
-    const install = lockfile ? `\`${lockfile[1]}\`` : 'the repository\'s documented dependency install'
+    const install = lockfile ? `with \`${oneCommandLine([lockfile[1]], identity.root)}\`` : `with the repository's documented dependency install in ${formatShellCommand([identity.root])}`
     return guardHeld(identity,
         `the installed cockpit is older than the one that generated the guards: ${installedPackageMetadata.name} ${installed} is installed, and ${generated} generated them, as after switching to a branch or checkout whose dependencies were installed earlier`,
-        why, `Fix: install the dependencies the lockfile pins, with ${install} in ${formatShellCommand([identity.root])}, outside the agent; sync is not the fix, since it would regenerate the guards with the older version. If the older version is intended, a human runs \`${installedSyncCommand(identity.root, identity.configPath)}\` in a terminal instead.`)
+        why, `Fix: install the dependencies the lockfile pins, ${install}, outside the agent; sync is not the fix, since it would regenerate the guards with the older version. If the older version is intended, a human runs \`${installedSyncCommand(identity.root, identity.configPath)}\` in a terminal instead.`)
+}
+
+// A new linked worktree carries the committed cockpit files but not the machine-local identity sync binds, so every
+// worktree waited for a person to sync there, though that sync wrote nothing but the identity. Its bind runs with this
+// checkout's own Node and cockpit, named by absolute path, and checks for itself that it grants nothing this checkout's
+// sync did not, so the agent runs it. Nothing from the worktree runs before its guard is bound: an install there runs
+// the worktree's own package scripts and settings, and its node_modules can hold any launcher.
+type WorktreeBootstrap = Readonly<{
+    root: string
+    /** The one command that binds the worktree's guard, as argv. */
+    bind: readonly string[]
+    /** Why the bind is not admitted, when it is not. */
+    refused?: string
+}>
+
+/**
+ * What an agent may run to bind the guard of the linked worktree holding `cwd`, when its main checkout is `identity`'s.
+ * The check hands this checkout a worktree whose own guard cannot run: no identity, or one naming a runtime that is gone.
+ */
+function worktreeBootstrap(cwd: string, identity: GuardHandlerIdentity): WorktreeBootstrap | undefined {
+    let root: string | undefined
+    for (let directory = cwd; root === undefined; directory = dirname(directory)) {
+        const entry = lstatIfPresentSync(join(directory, '.git'))
+        if (entry) { if (!entry.isFile()) return undefined; root = directory }
+        else if (directory === dirname(directory)) return undefined
+    }
+    return linkedWorktreeMainCheckout(root) === identity.root ? worktreeBind(root, identity) : undefined
+}
+
+/**
+ * The bind of a worktree's own guard when its binding went stale: a rebase onto a main checkout that upgraded cockpit,
+ * or an install that replaced the cockpit it ran. Only a linked worktree whose main checkout has its own identity has
+ * one; the main checkout's upgrade is a person's sync, since binding new cockpit code is that approval.
+ */
+function worktreeRebind(identity: GuardHandlerIdentity): WorktreeBootstrap | undefined {
+    const main = linkedWorktreeMainCheckout(identity.root)
+    if (main === undefined || main === identity.root) return undefined
+    let read
+    try { read = readBoundedFile(join(main, GUARD_LOCAL_PATHS.identity), 65_536) }
+    catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'ELOOP', 'EISDIR')) return undefined; throw error }
+    const mainIdentity = read.kind === 'complete' ? parseGuardLocalIdentity(read.bytes.toString('utf8')) : undefined
+    return mainIdentity?.root === main ? worktreeBind(identity.root, mainIdentity) : undefined
+}
+
+/** The bind of the worktree at `root` through the Node and cockpit package the main checkout's `identity` names. */
+function worktreeBind(root: string, identity: GuardHandlerIdentity): WorktreeBootstrap {
+    // The launcher of the package the guard's own handler belongs to; the handler path is canonical already.
+    const packageRoot = dirname(dirname(identity.module))
+    const launcher = join(packageRoot, 'bin/cockpit.mjs')
+    const bind = [identity.node, launcher, 'sync', '--config', join(root, relative(identity.root, identity.configPath)), '--bind-worktree']
+    let refused: string | undefined
+    try {
+        if (!confinedPath(packageRoot, realpathSync(launcher))) refused = `${launcher} leads out of the cockpit package at ${packageRoot}`
+    } catch (error) {
+        if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'ELOOP', 'EACCES')) throw error
+        refused = `${launcher} could not be resolved (${forwardedReason(errorCause(error))})`
+    }
+    return { root, bind, ...refused === undefined ? {} : { refused } }
+}
+
+/** Whether the call is exactly the bind, alone and from the worktree root. */
+function bootstrapAdmits(parsed: Extract<ReturnType<typeof parseGuardInput>, { status: 'parsed' }>, bootstrap: WorktreeBootstrap): boolean {
+    const call = parsed.invocations[0]
+    if (bootstrap.refused !== undefined || parsed.tool !== 'Bash' || parsed.background || parsed.unreadable || parsed.loop || parsed.cdByName !== undefined
+        || parsed.invocations.length !== 1 || !call || call.cwd !== bootstrap.root || call.executable === null || call.wrapped || call.dynamic || call.piped
+        || call.background || call.expandsStatus || call.redirects.length || call.words.length !== call.argv.length + 1 || call.words.some(word => word.dynamic)) return false
+    const spelled = [call.executable, ...call.argv]
+    return spelled.length === bootstrap.bind.length && spelled.every((word, index) => word === bootstrap.bind[index])
 }
 
 // A guard message reaches the agent and the harness's log: text it forwards from a failure stays one
@@ -239,9 +308,21 @@ export async function runGuardEvaluationApplication(
             // A local identity copied from another checkout would evaluate this one under that one's policy.
             || data.guardRoot !== identity.root
             ) return unavailable('Installed guard location does not match this application.')
+        // A hold over a stale binding in a linked worktree admits exactly the bind through its main checkout's cockpit, and
+        // names it; every other hold stays a person's.
+        const rebind = worktreeRebind(identity)
+        const early = rebind && parseGuardInput(data.payload, { home: homedir() })
+        const stale = (held: GuardEvaluationApplicationResult): GuardEvaluationApplicationResult => {
+            if (!rebind) return held
+            if (early?.status === 'parsed' && early.cwd === data.cwd && bootstrapAdmits(early, rebind)) {
+                return { decision: { decision: 'allow', reason: `Binds the guard of the linked worktree ${rebind.root} to the cockpit and configuration its main checkout synced.` }, diagnostics: [] }
+            }
+            return rebind.refused ? held : unavailable(`${held.decision.reason} Or, since this is a linked worktree, run alone from ${rebind.root} the command that binds its guard `
+                + `to its main checkout's cockpit and configuration: \`${formatShellCommand(rebind.bind)}\`.`)
+        }
         const changed = (what: string) => unavailable(guardHeld(identity, `${what} since the guards were generated`,
             'the guard trusts only the cockpit and configuration it was generated for'))
-        if (realpathSync(fileURLToPath(new URL('../../../dist/cli.js', import.meta.url))) !== identity.module) return changed('a different cockpit installation is running')
+        if (realpathSync(fileURLToPath(new URL('../../../dist/cli.js', import.meta.url))) !== identity.module) return stale(changed('a different cockpit installation is running'))
         const roots = new Map<string, Stats>()
         const rootStatus = lstatSync(identity.root)
         if (!rootStatus.isDirectory() || String(rootStatus.ino) !== identity.rootInode || realpathSync(identity.root) !== identity.root) {
@@ -290,7 +371,7 @@ export async function runGuardEvaluationApplication(
             const settled = await publicationPending
             const manifest = 'value' in settled ? tryParseJson(settled.value.get(manifestPath)!.bytes.toString('utf8')) : undefined
             const producer = manifest && typeof manifest === 'object' ? (manifest as { producer?: { version?: unknown } }).producer?.version : undefined
-            return unavailable(versionDrift(identity, typeof producer === 'string' ? producer : undefined))
+            return stale(unavailable(versionDrift(identity, typeof producer === 'string' ? producer : undefined)))
         }
         // What an admitted call rests on besides the configuration: the bytes sync published, for this
         // machine and this cockpit.
@@ -317,18 +398,20 @@ export async function runGuardEvaluationApplication(
                 const manifest = tryParseJson(manifestRead.bytes.toString('utf8'))
                 const producer = manifest && typeof manifest === 'object' ? (manifest as { producer?: { package?: unknown; version?: unknown } }).producer : undefined
                 if (producer?.package === installedPackageMetadata.name && typeof producer.version === 'string' && producer.version !== installedPackageMetadata.version) {
-                    return { held: unavailable(versionDrift(identity, producer.version)) }
+                    return { held: stale(unavailable(versionDrift(identity, producer.version))) }
                 }
-                return { held: unavailable(`Installed guard publication is stale or unauthenticated: ${ownership.kind !== 'complete'
+                const generatedElsewhere = ownership.kind === 'complete'
+                const held = unavailable(`Installed guard publication is stale or unauthenticated: ${!generatedElsewhere
                     ? 'its ownership manifest does not parse or does not authenticate'
-                    : 'it was generated from a different cockpit.toml than the one the guard identity records'}.`) }
+                    : 'it was generated from a different cockpit.toml than the one the guard identity records'}.`)
+                return { held: generatedElsewhere ? stale(held) : held }
             }
             const producer = ownership.manifest.producer
             if (producer.package !== installedPackageMetadata.name
                 || producer.version !== installedPackageMetadata.version
                 || producer.sourceRevision !== installedPackageMetadata.cockpitSourceRevision) {
-                if (producer.package === installedPackageMetadata.name && producer.version !== installedPackageMetadata.version) return { held: unavailable(versionDrift(identity, producer.version)) }
-                return { held: changed(`the installed cockpit version changed (the guards were generated by ${producer.package} ${producer.version}, ${installedPackageMetadata.name} ${installedPackageMetadata.version} is installed)`) }
+                if (producer.package === installedPackageMetadata.name && producer.version !== installedPackageMetadata.version) return { held: stale(unavailable(versionDrift(identity, producer.version))) }
+                return { held: stale(changed(`the installed cockpit version changed (the guards were generated by ${producer.package} ${producer.version}, ${installedPackageMetadata.name} ${installedPackageMetadata.version} is installed)`)) }
             }
             const published = new Map<string, string>()
             for (const path of ['.cockpit/guards/bash-guard.sh', registration]) {
@@ -350,7 +433,7 @@ export async function runGuardEvaluationApplication(
             return recorded.kind === 'complete' && recorded.result.source.path === recordPath && recorded.result.source.sha256 === identity.configSha256
                 ? recorded.result : undefined
         }
-        const personSyncs = `a person runs \`npx --no cockpit approve\` in ${identity.root}, in a terminal outside the agent, and confirms it`
+        const personSyncs = `a person runs \`${oneCommandLine(['npx --no cockpit approve'], identity.root)}\` in a terminal outside the agent, and confirms it`
         // Plain sync refuses a configuration it cannot compare with the last one, so the fix names the sync
         // that asks a person; one with no cockpit.toml to read keeps the recovery for a missing file.
         const unrecorded = (why: string) => unavailable(guardHeld(identity, `${why}, and the configuration last synced is missing from ${GUARD_LOCAL_PATHS.generatedConfig} or does not load there`,
@@ -414,6 +497,18 @@ export async function runGuardEvaluationApplication(
             return unavailable(checkout.state === 'available'
                 ? `Guard policy authority could not be authenticated: ${prepared.diagnostics[0]?.message ?? 'no reason given'}`
                 : prepared.diagnostics[0]?.message ?? 'Guard checkout observation failed without a reason.')
+        }
+        // A call that only changes or prints the working directory: enough to leave a worktree nobody has synced.
+        const leaves = parsed.tool === 'Bash' && !parsed.background && !parsed.unreadable
+            && parsed.invocations.every(({ executable, argv, words, redirects }) => redirects.length === 0
+                && (executable === null ? words.length === 1 && words[0]!.role === 'directory' : executable === 'pwd' && argv.length === 0))
+        // Judged before this checkout's policy, which does not reach a worktree kept beside it, and before its own
+        // pending widening or the ask for another cockpit's configuration: the bind applies only what this checkout's
+        // sync applied, and refuses anything else itself.
+        const bootstrap = data.unsyncedWorktree === true ? worktreeBootstrap(parsed.cwd, identity) : undefined
+        if (bootstrap && leaves) return refused({ decision: 'allow', reason: 'Changes or prints the working directory only.' })
+        if (bootstrap && bootstrapAdmits(parsed, bootstrap)) {
+            return refused({ decision: 'allow', reason: `Binds the guard of the linked worktree ${bootstrap.root} to the cockpit and configuration ${identity.root} synced.` })
         }
         // The inspector answers synchronously, so what only Git can say is asked first: which protected
         // paths a default ripgrep search reads, and which a repository's index holds for a Git command
@@ -769,11 +864,15 @@ export async function runGuardEvaluationApplication(
         const judged = instruction ?? asked
         // This checkout's policy is anchored at its own root, so it does not cover an unsynced worktree's hook
         // registrations, MCP wrappers, instances or secret paths, and even a read there can print what the worktree's
-        // own guard would hold. An allow stands only for `cd` and `pwd`: enough to leave.
-        if (data.unsyncedWorktree === true && judged.decision === 'allow' && !(parsed.tool === 'Bash' && !parsed.background && !parsed.unreadable
-            && parsed.invocations.every(({ executable, argv, words, redirects }) => redirects.length === 0
-                && (executable === null ? words.length === 1 && words[0]!.role === 'directory' : executable === 'pwd' && argv.length === 0)))) {
-            return refused({ decision: 'deny', reason: `${parsed.cwd} is in a linked worktree where nobody has installed dependencies and synced cockpit, so it has no guard of its own. Until it does, the checkout above it judges calls made there and admits only \`cd\` and \`pwd\`. Change to the main checkout and work on the worktree from there with \`git -C <worktree>\`, or a person installs dependencies and syncs cockpit in the worktree.` })
+        // own guard would hold. An allow stands only for `cd` and `pwd`: enough to leave. Any other call there is
+        // refused, whatever this checkout's verdict, naming the commands that bind the worktree's own guard.
+        if (data.unsyncedWorktree === true && !leaves && (judged.decision === 'allow' || bootstrap)) {
+            const binds = !bootstrap ? '' : `, and, alone in a call from the worktree root ${bootstrap.root}, the command that binds the worktree's own guard to this `
+                + `checkout's cockpit and configuration: \`${formatShellCommand(bootstrap.bind)}\`. Install the worktree's dependencies after that, under its own guard`
+                + (bootstrap.refused ? `. The bind is not admitted: ${bootstrap.refused}` : '')
+            return refused({ decision: 'deny', reason: `${parsed.cwd} is in a linked worktree where nobody has installed dependencies and synced cockpit, so it has no guard of its own. `
+                + `Until it does, the checkout at ${identity.root} judges calls made there and admits only \`cd\` and \`pwd\`${binds}. `
+                + 'Otherwise change to the main checkout and work on the worktree from there with `git -C <worktree>`, or a person installs dependencies and syncs cockpit in the worktree.' })
         }
         return refused(judged)
     } catch (error) {

@@ -68,6 +68,8 @@ export type GuardWideningApproval = Readonly<{ configSha256: string }>
 
 export interface GeneratedEnvironmentSyncInput extends GeneratedEnvironmentCommandInput {
     readonly dryRun?: boolean
+    /** Bind a linked worktree's guard to its main checkout's cockpit and configuration, publishing nothing tracked. */
+    readonly bindWorktree?: boolean
     readonly guardWidening?: GuardWideningApproval
     /** With dryRun: preview every declared MCP server as approved, and report the ones cockpit.toml does not approve yet. */
     readonly approveDeclaredMcp?: boolean

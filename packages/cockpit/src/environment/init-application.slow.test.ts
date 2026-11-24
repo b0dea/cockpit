@@ -260,7 +260,7 @@ it.each([
     // refuses again, so the remedy names both ways out.
     await writeFile(join(f.root, 'compose.yml'), composeBytes.replace('web:1', 'web:2'))
     for (let rerun = 0; rerun < 2; rerun += 1) expect(await runInitApplication(accepted, adapters)).toMatchObject({ kind: 'refusal',
-        diagnostics: [{ code: 'DOCUMENT_ESTATE_OBSERVATION_CHANGED', fix: `restore the product files changed since init drafted cockpit.toml, then rerun ${initCommand({ root: f.root, target: f.input.target, args: '--answers <your answers file>' })}; to keep the change instead, finish without init: run ${cockpitCommand('sync', { config: f.destination })}, then ${cockpitCommand('check', { config: f.destination })}` }] })
+        diagnostics: [{ code: 'DOCUMENT_ESTATE_OBSERVATION_CHANGED', fix: `restore the product files changed since init drafted cockpit.toml, then rerun ${initCommand({ root: f.root, target: f.input.target, args: '--answers <your answers file>' })}; to keep the change instead, finish without init: run ${cockpitCommand('sync', { config: f.destination })} && ${cockpitCommand('check', { config: f.destination })}` }] })
     await writeFile(join(f.root, 'compose.yml'), composeBytes)
 
     preflight = f.adapters.preflight

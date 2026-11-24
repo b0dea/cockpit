@@ -20,10 +20,12 @@ import {
 import { observeGeneratedApplicationSurfaces } from '../environment/generated-application/surface-observation.js'
 import { staleMcpOutputsOnly } from '../environment/generated-application/surface-outputs.js'
 import { checkGeneratedEnvironment, syncGeneratedEnvironment } from './command.js'
+import { syncTeamGeneratedEnvironment } from './command.js'
 import { createGeneratedCommandFixture } from '../../test-support/generated-fixtures.js'
 import { writeSiblingCheckouts } from '../environment/sibling-checkouts.js'
 import { stubComposeTopology } from '../../test-support/compose-topology-docker.js'
 import { claudeProjectKey } from '../guards/agent-homes.js'
+import { parseGuardLocalIdentity } from '../guards/local-identity.js'
 
 const { roots, cleanup, surfaceConsumer, digest, runGeneratedGuard, bytes } = createGeneratedCommandFixture()
 afterEach(cleanup)
@@ -328,6 +330,129 @@ describe('public surface publication transaction', () => {
             for (const cwd of [elsewhere, repository, nested.root]) {
                 expect(run(gated, cwd, 'claudecode', { command: 'git push --force origin main' }, 'Bash'), cwd).toMatchObject({ status: 0, stdout: '' })
             }
+        })
+
+        it('binds an unsynced worktree beside its main checkout through that checkout\'s cockpit, and only to what it synced', async () => {
+            const git = (cwd: string, ...args: string[]) => expect(spawnSync('git', ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args],
+                { cwd, encoding: 'utf8' }).status).toBe(0)
+            const hookOf = async (settings: string) => (JSON.parse(await readFile(settings, 'utf8')) as {
+                hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> } }).hooks.PreToolUse.at(-1)!.hooks[0]!.command
+            // Siblings beside the cockpit, as a team keeps them, so a worktree beside it resolves the same ones.
+            const estate = await realpath(await mkdtemp(join(tmpdir(), 'bind-worktree-')))
+            roots.push(estate)
+            const fixture = await surfaceConsumer('bind', { parentDirectory: estate })
+            await writeFile(fixture.configPath, (await readFile(fixture.configPath, 'utf8')).replace('siblings_root = "."', 'siblings_root = ".."'))
+            for (const app of [join(estate, 'app'), join(fixture.root, 'worktrees/app')]) {
+                await mkdir(app, { recursive: true })
+                await writeFile(join(app, 'AGENTS.md'), 'Synthetic sibling guide.\n')
+                await writeFile(join(app, 'package-lock.json'), '{}')
+            }
+            git(fixture.root, 'init', '--quiet')
+            // The sync a person runs, which also writes the team metadata the worktree then carries.
+            expect(await syncTeamGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+            git(fixture.root, 'add', '-A')
+            git(fixture.root, 'commit', '--quiet', '-m', 'Synthetic cockpit')
+            const beside = `${fixture.root}-feature`
+            git(fixture.root, 'worktree', 'add', '--quiet', '--detach', beside)
+            const hook = await hookOf(join(fixture.root, '.claude/settings.json'))
+            const call = (tool_input: object, tool_name = 'Write') => {
+                const run = spawnSync('/bin/sh', ['-c', hook], { cwd: beside, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_PROJECT_DIR: beside },
+                    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name, cwd: beside, tool_input }) })
+                expect(run.status, run.stderr).toBe(0)
+                return JSON.parse(run.stdout).hookSpecificOutput.permissionDecision as string
+            }
+            const identity = parseGuardLocalIdentity(await readFile(join(fixture.root, '.cockpit/local/guard-identity'), 'utf8'))!
+            const packageRoot = dirname(dirname(identity.module))
+            const bind = (worktree: string) => [identity.node, join(packageRoot, 'bin/cockpit.mjs'), 'sync', '--config', join(worktree, 'cockpit.toml'), '--bind-worktree']
+            const binds = (worktree: string) => {
+                const [node, ...argv] = bind(worktree)
+                const run = spawnSync(node!, argv, { cwd: worktree, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME } })
+                return { status: run.status, output: `${run.stdout}${run.stderr}` }
+            }
+            expect(call({ command: 'pwd' }, 'Bash')).toBe('allow')
+            expect(call({ file_path: join(beside, 'notes.md'), content: 'synthetic' })).toBe('deny')
+            expect(call({ command: bind(beside).join(' ') }, 'Bash')).toBe('allow')
+            // The bind checks for itself what it would grant, and refuses anything the main checkout's sync did not.
+            await writeFile(join(beside, 'cockpit.toml'), `${await readFile(fixture.configPath, 'utf8')}\n# edited\n`)
+            expect(binds(beside)).toMatchObject({ status: 2, output: expect.stringMatching(/GUARD_WORKTREE_BIND_REFUSED[\s\S]*differs from the configuration synced in/) })
+            git(beside, 'checkout', '--quiet', '--', 'cockpit.toml')
+            await rm(join(beside, '.codex/hooks.json'))
+            expect(binds(beside)).toMatchObject({ status: 2, output: expect.stringMatching(/GUARD_WORKTREE_BIND_REFUSED[\s\S]*\.codex\/hooks\.json differs from the copy in/) })
+            git(beside, 'checkout', '--quiet', '--', '.codex/hooks.json')
+            // A worktree kept inside the checkout resolves `..` to other siblings, which an agent could have made.
+            const nested = join(fixture.root, 'worktrees/nested')
+            git(fixture.root, 'worktree', 'add', '--quiet', '--detach', nested)
+            expect(binds(nested)).toMatchObject({ status: 2, output: expect.stringMatching(/GUARD_WORKTREE_BIND_REFUSED[\s\S]*resolves its siblings to other directories/) })
+            // A branch carrying another adopted settings copy with the files regenerated from it matches its own
+            // configuration, and is still not what the main checkout synced.
+            const variant = `${fixture.root}-variant`
+            git(fixture.root, 'worktree', 'add', '--quiet', '--detach', variant)
+            await mkdir(join(variant, 'cockpit/adopted/.claude'), { recursive: true })
+            await writeFile(join(variant, 'cockpit/adopted/.claude/settings.json'), `${JSON.stringify({ env: { SYNTHETIC_SETTING: '1' } })}\n`)
+            expect(await syncTeamGeneratedEnvironment({ configPath: join(variant, 'cockpit.toml') })).toMatchObject({ kind: 'complete' })
+            expect(binds(variant)).toMatchObject({ status: 2, output: expect.stringMatching(/GUARD_WORKTREE_BIND_REFUSED[\s\S]*cockpit\/adopted\/\.claude\/settings\.json differs from the copy in/) })
+            // The state the bind copies must be what the main checkout's last sync recorded: an adopted copy and the settings
+            // regenerated from it, edited there without a sync and matched by a worktree synced from them, are refused.
+            const syncedSettings = await readFile(join(fixture.root, '.claude/settings.json'))
+            const syncedManifest = await readFile(join(beside, '.cockpit/generated-environment-ownership.json'))
+            for (const checkout of [fixture.root, beside]) {
+                for (const path of ['cockpit/adopted/.claude/settings.json', '.claude/settings.json']) {
+                    await mkdir(dirname(join(checkout, path)), { recursive: true })
+                    await writeFile(join(checkout, path), await readFile(join(variant, path)))
+                }
+            }
+            await writeFile(join(beside, '.cockpit/generated-environment-ownership.json'), await readFile(join(variant, '.cockpit/generated-environment-ownership.json')))
+            expect(binds(beside)).toMatchObject({ status: 2,
+                output: expect.stringMatching(/GUARD_WORKTREE_BIND_REFUSED[\s\S]*has changes its last sync did not record, starting at \.claude\/settings\.json/) })
+            for (const checkout of [fixture.root, beside]) {
+                await rm(join(checkout, 'cockpit/adopted/.claude/settings.json'))
+                await writeFile(join(checkout, '.claude/settings.json'), syncedSettings)
+            }
+            await writeFile(join(beside, '.cockpit/generated-environment-ownership.json'), syncedManifest)
+            expect(binds(beside)).toMatchObject({ status: 0 })
+            // Bound, the worktree's own guard judges it, running the main checkout's cockpit, whose package it protects.
+            expect(call({ file_path: join(beside, 'notes.md'), content: 'synthetic' })).toBe('allow')
+            expect(call({ file_path: join(beside, '.cockpit/guards/bash-guard.sh'), content: 'exit 0' })).toBe('deny')
+            expect(call({ file_path: join(packageRoot, 'dist/cli.js'), content: 'planted' })).toBe('deny')
+            expect(parseGuardLocalIdentity(await readFile(join(beside, '.cockpit/local/guard-identity'), 'utf8')))
+                .toMatchObject({ root: beside, node: identity.node, module: identity.module, configSha256: identity.configSha256 })
+            // The main checkout itself is never bound this way: its upgrade is a person's sync.
+            expect(binds(fixture.root)).toMatchObject({ status: 2, output: expect.stringMatching(/GUARD_WORKTREE_BIND_REFUSED[\s\S]*is not a linked worktree/) })
+            // Moved onto a main checkout that has since synced another configuration, the worktree's binding is stale. Its
+            // own guard holds, names the bind and admits it alone, and the bind repairs it.
+            await writeFile(fixture.configPath, `${await readFile(fixture.configPath, 'utf8')}\n# revised\n`)
+            expect(await syncTeamGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+            git(fixture.root, 'add', '-A')
+            git(fixture.root, 'commit', '--quiet', '-m', 'Revise the synthetic cockpit')
+            git(beside, 'checkout', '--quiet', '--detach', spawnSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.root, encoding: 'utf8' }).stdout.trim())
+            const held = spawnSync('/bin/sh', ['-c', hook], { cwd: beside, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_PROJECT_DIR: beside },
+                input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: beside, tool_input: { file_path: join(beside, 'notes.md'), content: 'synthetic' } }) })
+            expect(JSON.parse(held.stdout).hookSpecificOutput).toMatchObject({ permissionDecision: 'deny',
+                permissionDecisionReason: expect.stringContaining(`\`${bind(beside).join(' ')}\``) })
+            expect(call({ command: 'npm ci' }, 'Bash')).toBe('deny')
+            expect(call({ command: bind(beside).join(' ') }, 'Bash')).toBe('allow')
+            expect(binds(beside)).toMatchObject({ status: 0 })
+            expect(call({ file_path: join(beside, 'notes.md'), content: 'synthetic' })).toBe('allow')
+        // Each hook call and bind starts Node and Git several times, and this walks every way a bind is refused.
+        }, 180_000)
+
+        it('binds a worktree kept inside its checkout whose siblings lie inside each checkout, the root sibling\'s layout', async () => {
+            const git = (cwd: string, ...args: string[]) => expect(spawnSync('git', ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args],
+                { cwd, encoding: 'utf8' }).status).toBe(0)
+            const fixture = await surfaceConsumer('bind-inside')
+            await writeFile(join(fixture.siblingDirectory, 'package-lock.json'), '{}')
+            git(fixture.root, 'init', '--quiet')
+            expect(await syncTeamGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+            git(fixture.root, 'add', '-A')
+            git(fixture.root, 'commit', '--quiet', '-m', 'Synthetic cockpit')
+            // A worktree nested inside the main checkout: each checkout's sibling is its own `app`, never the other's.
+            const inner = join(fixture.root, '.worktrees/inner')
+            git(fixture.root, 'worktree', 'add', '--quiet', '--detach', inner)
+            const identity = parseGuardLocalIdentity(await readFile(join(fixture.root, '.cockpit/local/guard-identity'), 'utf8'))!
+            const run = spawnSync(identity.node, [join(dirname(dirname(identity.module)), 'bin/cockpit.mjs'), 'sync', '--config', join(inner, 'cockpit.toml'), '--bind-worktree'],
+                { cwd: inner, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME } })
+            expect(run.status, `${run.stdout}${run.stderr}`).toBe(0)
+            expect(parseGuardLocalIdentity(await readFile(join(inner, '.cockpit/local/guard-identity'), 'utf8'))).toMatchObject({ root: inner, module: identity.module })
         })
 
         it('applies a tool restriction, removing only the unchanged MCP file of a tool still listed', async () => {

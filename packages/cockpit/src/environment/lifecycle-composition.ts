@@ -3,7 +3,7 @@ import { createConnection } from 'node:net'
 import { basename, dirname, resolve } from 'node:path'
 import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import type { ConsumedLoadedConfig } from '../config/load.js'
-import { cockpitCommand } from '../fix-catalogue.js'
+import { cockpitCommand, oneCommandLine } from '../fix-catalogue.js'
 import { redirectedBindSources } from './compose-topology.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { mounted, type CockpitConfig } from '../schema.js'
@@ -96,7 +96,7 @@ function mountMismatchDiagnostics(
     if (switched) return [{
         severity: 'error' as const, code: ENVIRONMENT_CODES.MOUNT_POSTURE_UNAVAILABLE, target: `sibling:${switched.slug}`,
         message: `sibling ${switched.slug} is served from ${servedPath(served, switched.slug)}, but the running stack mounts ${mismatch.unexpected.join(', ')} instead`,
-        fix: `if the stack started before use changed the checkout, run ${cockpitCommand('down')} and then ${cockpitCommand('up')}; `
+        fix: `if the stack started before use changed the checkout, run ${oneCommandLine([cockpitCommand('down'), cockpitCommand('up')])}; `
             + `otherwise bind-mount \${${switched.var}} in a Compose service and run ${cockpitCommand('check')}`,
     }]
     return [

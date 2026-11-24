@@ -176,6 +176,7 @@ Reads `cockpit.toml` from `--config`.
 | --- | --- | --- |
 | `--config` | string | unset |
 | `--dry-run` | boolean | `false` |
+| `--bind-worktree` | boolean | `false` |
 | `--json` | boolean | `false` |
 
 | Exit | Meaning |
