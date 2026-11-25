@@ -13,6 +13,25 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.44
+
+### Patch Changes
+
+- 62f8421: The bundled Rulesync generator, which renders the harness surfaces, is updated from 43.4.2 to 43.8.3.
+- 62f8421: When a session in one checkout names a path in another checkout of the same repository, the refusal now gives advice that works. Under Claude Code it says to move the session there with the EnterWorktree tool, since a Bash `cd` outside the session's directories does not persist; under Codex and OpenCode it says to start the session in that checkout. It no longer says to `cd` there first.
+- 62f8421: Agents can now create a worktree beside the checkout: `git worktree add [-b <branch> | -B <branch> | --detach] <path> [<commit-ish>]` on its own in a call, without `--force`, where `<path>` does not exist yet, sits in the directory that holds the checkout and is named after it, such as `../<checkout>-feature-x`. It no longer needs a write path, since what it writes is the repository's own committed content. Any other name, such as `node_modules`, an existing or linked path, and any other command in the same call are refused, and `git worktree add -B` of a protected branch is now refused.
+  
+  `git stash pop` and `git stash apply` are now judged by every path the stash entry changes, and with `--index` also as staged, so an entry holding an environment file or a staged guard script is refused instead of restored.
+  
+  `git rm` of a glob or directory is now judged by every path the index holds there, so removing a declared instance or a secrets file through a glob is refused as naming it is. A `git add` or `git commit` glob that Git listed is judged only by the paths it lists, so `git add '*.json'` no longer fails because the pattern could match a guard file's name. `git checkout -- .` and `git restore .` no longer ask when no guard file there would change. `git restore --staged` and `git reset` of a directory, a glob or the whole tree are judged by every path whose index entry they set back, so `git restore --staged .` and `git reset` run unless a guard file, instance or secret is among them.
+  
+  A checkout, merge, reset or stash that would write an environment file or an `.npmrc` from another revision, such as `git checkout <rev> -- .`, is now refused, as writing one directly is.
+- 62f8421: A session whose shell was left in a removed linked worktree outside the checkout's roots is no longer locked out. The `cd` back to the checkout, file tools given full paths and, from a worktree of this repository, any call that names no `..` are judged from the checkout. Other calls from a directory the guard does not run in are refused with the `cd <directory> && ` prefix that runs them.
+  
+  The worktree bind now also checks cockpit's regions of shared files in the main checkout, such as `AGENTS.md`, against what its last sync recorded, as it already did for whole files.
+  
+  Fix texts that told an agent to do what it cannot now say who acts and give one runnable line: the worktree bind's refusals name the real sync line, upgrade's approve, the stale-claim `down` and `up`, an unresolved MCP command and a missing local guard registration print `cd <root> && …`, and writes to `.claude/settings.local.json` are named as a person's. Every hand-off to a person's approve now reads `cd <root> && npx --no cockpit approve` in a terminal outside the agent.
+
 ## 0.1.43
 
 ### Patch Changes
