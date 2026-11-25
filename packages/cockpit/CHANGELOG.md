@@ -13,6 +13,17 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.40
+
+### Patch Changes
+
+- f914dc3: Shell the guard does not read is no longer refused for names in the body of a quoted heredoc fed to a plain `cat` or `tee`, since that body is data, as a write tool's content is. With native external reads, a read outside the roots through a link, such as a package in another checkout's pnpm store, is judged where the link leads instead of refused: a secret there is still refused, and a link into the roots is judged there.
+  
+  A command word holding a slash, such as `local/` or `./set`, is read as the file the shell runs, not as a builtin that prints variables, so it no longer asks as an environment dump.
+- f914dc3: A session that starts in the main checkout and works in a linked worktree beside it is no longer refused there as working outside the cockpit. Each call made in the worktree is judged by the worktree's own guard, as if the session had started there; a worktree nobody has synced still admits only `cd`, `pwd` and the command that binds its guard. A checkout of another repository stays refused.
+  
+  A Write, Edit or NotebookEdit larger than 64 KiB is no longer refused for its size. The guard judges such a call by its path, up to the 1 MiB it reads, and asks before a skill, command or agent file it could not read. Shell commands keep their 64 KiB limit.
+
 ## 0.1.39
 
 ### Patch Changes
