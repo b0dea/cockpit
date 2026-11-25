@@ -646,7 +646,11 @@ or a URL; `gh api` is left out, because its `GET` returns any file the repositor
   exists there, the call sets no `CDPATH`, and no run of its names reaches a credential store from the
   home directory, where a `CDPATH` entry could send it; otherwise it asks, or is refused when it names a
   credential store, a file that runs programs, such as a launch agent, or the home directory itself. A
-  name that starts with a dot is refused: write `cd ./name`, or `git -C name`. After such a `cd` the rest of the call's text is read whole,
+  name that starts with a dot is refused: write `cd ./name`, or `git -C name`. Under Claude Code the shell has the
+  `CDPATH` the hook sees, since its shell snapshot sets none (measured 2026-11-25); while that is empty, any relative
+  name, a dot-leading one included, resolves from the working directory alone, so it is judged as the directory below
+  and still asks when nothing exists there. When `.zshenv`, the file `BASH_ENV` names or the file `CLAUDE_ENV_FILE`
+  names mentions `cdpath`, or cannot be read, `CDPATH` counts as unknown; a file sourced from those is not seen. So it does for a whole call holding any command other than an external program or a builtin that evaluates no text and sets no variable by name (`cd`, `pwd`, `echo`, `test`, `true`, `false`, `:`, `exit`, `return`, `printf` without `-v`), and inside a nested shell or tmux command. After a `cd` by a bare name that a `CDPATH` entry could send elsewhere, the rest of the call's text is read whole,
   here-strings, heredocs, loop lists and inline code included, with and without its quotes and backslashes: a `$`
   expansion asks, so `cd workorders/x && echo "$HOME"` asks where `cd ./workorders/x && echo "$HOME"` runs; a value
   assigned anywhere in the call that holds `..` asks; a pattern that can expand to `..`, such as `.[.]` or `.?`,

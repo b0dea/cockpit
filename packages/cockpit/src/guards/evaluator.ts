@@ -5,6 +5,7 @@ import { GUARD_HOST_LIMITS, isGuardHost, normalizeGuardHost } from './host.js'
 import { GuardCommandArgv, McpAllowedTools } from '../schema.js'
 import { renderGuardProjectCommand } from '../environment/install-policy.js'
 import { GUARD_LOCAL_PATHS } from './local-identity.js'
+import { installedSyncLine } from '../fix-catalogue.js'
 import { classifyReadOnlyInvocation, cockpitLauncherPrefix, findPrintsOnlyMetadata, ghWords, gitContentOperands, gitGrepReadsIgnored, type ReadOnlyAccess } from './read-only.js'
 import { SURFACE_EXECUTION_CONTROL_PATHS } from '../surfaces/harness-registry.js'
 import { AGENT_HOME_TOOLS, classifyAgentHomeEntry, type AgentHomeTool } from './agent-homes.js'
@@ -3143,12 +3144,12 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const directory = inspectPath({ path: invocation.cwd, cwd: invocation.cwd, operation: 'cwd' })
         // A `cd` by a name without `./` may land in a CDPATH entry instead, such as the home directory or one above it,
         // so no trailing run of the names below the root may reach a credential store or a file that runs programs from
-        // home, nor be the home directory itself. Where nothing exists below the root by that name, only a CDPATH entry
-        // can hold it.
+        // home, nor be the home directory itself. Where nothing exists below the root by that name, only a CDPATH entry,
+        // or a `cd` the person's shell redefines, can hold it, so that holds even under a CDPATH known to be empty.
         const spelled = bareDirectory(invocation)
         const below = spelled === undefined ? undefined : resolved.allowedRoots.find(root => within(invocation.cwd, root))
         if (spelled !== undefined && below !== undefined && directory !== undefined) {
-            const hazard = homeHazard(posix.relative(below, invocation.cwd))
+            const hazard = input.cdByName === undefined ? undefined : homeHazard(posix.relative(below, invocation.cwd))
             if (hazard) hold(deny(`Refusing cd ${shownGuardWord(spelled)}: a shell with CDPATH set can resolve the name from the home directory, where it reaches ${hazard}. Write \`cd ./<dir>\` for the directory in the cockpit.`))
             else if (directory.identity === null) {
                 holdBoundary(invocation, ask(`cd ${shownGuardWord(spelled)} names nothing below the directory it runs from, so a shell with CDPATH set may find it elsewhere, which the guard cannot see. Write \`cd ./<dir>\` once it exists.`))
@@ -3371,7 +3372,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         const copied = nodeScript !== undefined && inRoots(posix.resolve(invocation.cwd, nodeScript)) && !cockpitCommand(invocation)
             && manifestFacts(nodeScript, invocation.cwd)?.name === '@b00dea/cockpit'
         if (copied && /^(?:sync|upgrade)$/.test(invocation.argv[invocation.argv.indexOf(nodeScript!) + 1] ?? '')) {
-            hold(deny(`Refusing ${named(invocation)}: it runs sync or upgrade from a copy of cockpit, which would make the guard run that copy. A person runs \`./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>\` in a terminal.`))
+            hold(deny(`Refusing ${named(invocation)}: it runs sync or upgrade from a copy of cockpit, which would make the guard run that copy. Run the installed package instead: \`${installedSyncLine(resolved.configPath)}\`.`))
         }
         // `gh api` writes repository state outside any push the guard sees: a ref, a file committed to a
         // branch, a merge, or branch protection.

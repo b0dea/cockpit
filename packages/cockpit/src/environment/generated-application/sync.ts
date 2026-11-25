@@ -40,6 +40,7 @@ import { openCodeGrantFile, staleMcpOutputsOnly } from './surface-outputs.js'
 import { readSiblingCheckouts } from '../sibling-checkouts.js'
 import { openCodeGrantDirectory, openCodePatternUnsafe, writeClaudeLocalGuard } from '../served-checkout-grants.js'
 import { GUARD_SCRIPT_PATH, writeGuardRecord } from '../../guards/guard-record.js'
+import { installedSyncLine } from '../../fix-catalogue.js'
 
 async function prepareGeneratedEnvironmentSync(
     input: GeneratedEnvironmentSyncInput,
@@ -279,26 +280,26 @@ export async function applyGeneratedEnvironmentRepair(
         const configRead = await readBoundedInput(prepared.configPath)
         if (configRead.kind !== 'complete' || sha256(configRead.bytes) !== prepared.guardHandler.configSha256) return refuse('GENERATED_SOURCE_CHANGED',
             `the configuration changed after generated files were published, so the guard identity was not recorded; the guard refuses ${GUARD_HELD_CALLS} until it is`,
-            prepared.configSource.path, 'run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` again')
+            prepared.configSource.path, `run \`${installedSyncLine(prepared.configPath)}\` again`)
         const local = await writeGuardLocalIdentity(prepared.root, prepared.guardHandler, configRead.bytes.toString('utf8'))
         if (local.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
             `the committed guard files were published, but ${local.message}; the guard refuses ${GUARD_HELD_CALLS} until it exists`,
-            GUARD_LOCAL_PATHS.identity, 'fix the path, then run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` again in a terminal')
+            GUARD_LOCAL_PATHS.identity, `fix the path, then run \`${installedSyncLine(prepared.configPath)}\` again in a terminal`)
         // The hook runs the guard script only when it matches the digest recorded here, which must be the script sync
         // rendered, in the checkout it checked.
         if (String((await lstat(prepared.root)).ino) !== prepared.guardHandler.rootInode) return refuse('GENERATED_SOURCE_CHANGED',
             `the cockpit checkout ${prepared.root} was replaced while sync ran, so the guard was not recorded; the guard refuses ${GUARD_HELD_CALLS} until it is`,
-            prepared.root, 'run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` again in a terminal')
+            prepared.root, `run \`${installedSyncLine(prepared.configPath)}\` again in a terminal`)
         const rendered = [...prepared.owned, ...prepared.surfaces].find(row => row.path === GUARD_SCRIPT_PATH && 'sha256' in row)
         const record = await writeGuardRecord(prepared.root, undefined, rendered && 'sha256' in rendered ? rendered.sha256 : undefined)
         if (record.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
             `the committed guard files were published, but ${record.message}; the guard refuses ${GUARD_HELD_CALLS} until it is recorded`,
-            GUARD_LOCAL_PATHS.identity, 'run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` again in a terminal')
+            GUARD_LOCAL_PATHS.identity, `run \`${installedSyncLine(prepared.configPath)}\` again in a terminal`)
         // A Claude Code session started below the cockpit root reads only the local settings at the root.
         const claude = await writeClaudeLocalGuard(prepared.root)
         if (claude.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
             `the committed guard files were published, but ${claude.message}; a Claude Code session started below the cockpit root runs without the guard until it is written`,
-            '.claude/settings.local.json', 'make .claude/settings.local.json a JSON object or remove it, then run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` again in a terminal')
+            '.claude/settings.local.json', `make .claude/settings.local.json a JSON object or remove it, then run \`${installedSyncLine(prepared.configPath)}\` again`)
     }
     if (prepared.openCodeGrantRoots.length > 0 && settings.dryRun !== true) {
         // A checkout `use` serves from outside the declared one is what OpenCode is granted, as `use` wrote it.
@@ -314,7 +315,7 @@ export async function applyGeneratedEnvironmentRepair(
         const local = await writeCockpitLocalFiles(prepared.root, grants)
         if (local.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
             `the committed OpenCode settings were published, but ${local.message}; OpenCode refuses to start until it exists`,
-            GUARD_LOCAL_PATHS.directory, 'fix the path, then run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` again in a terminal')
+            GUARD_LOCAL_PATHS.directory, `fix the path, then run \`${installedSyncLine(prepared.configPath)}\` again`)
     }
     const needsApproval = outcome.staleRemoval && !staleMcpOutputsOnly(outcome.staleRemoval.entries.map(entry => entry.path), prepared.configuredHarnesses)
     return complete('sync', prepared, settings.dryRun === true, outcome.changes, settings.dryRun && needsApproval ? outcome.staleRemoval : undefined)

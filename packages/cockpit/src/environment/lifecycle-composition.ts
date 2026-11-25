@@ -1,11 +1,12 @@
 import { createHash, randomBytes } from 'node:crypto'
+import { lstat } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { basename, dirname, resolve } from 'node:path'
 import { loadCockpitConfig, projectMachineFloorConfig } from '../config/load.js'
 import type { ConsumedLoadedConfig } from '../config/load.js'
 import { cockpitCommand, oneCommandLine } from '../fix-catalogue.js'
 import { redirectedBindSources } from './compose-topology.js'
-import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
+import { authenticatedExecutionOutcome, failedStepStderr, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { mounted, type CockpitConfig } from '../schema.js'
 import { COMPOSE_OWNERSHIP_FILE, renderComposeOwnership } from './compose-ownership.js'
 import {
@@ -19,6 +20,7 @@ import {
 import { isProcessStart, observeProcessStart, processHost, releaseDeadSessionHolders, waitForStackTeardown, type HolderProcess } from './claims.js'
 import {
     errorCause,
+    hasErrorCode,
     RefusalError,
     ENVIRONMENT_CODES,
     snapshotExecutionPlan,
@@ -65,12 +67,16 @@ import {
     consumeSetupCheckoutProjection,
     observeSetupCheckout,
     withSetupCheckoutProjection,
+    type SetupCheckoutProjection,
 } from './setup-observation.js'
 import { selectStateRoot } from './state.js'
 import { loadServedSiblings, missingServedCheckout, servedPath, servedSiblingVariables, type ServedSibling } from './sibling-checkouts.js'
 import { recordStackInputs } from './stack-inputs.js'
 
 const OWNER = 'lifecycle-adapter-composition'
+
+const CHECKOUT_ATTEMPTS = 3
+const CHECKOUT_MOVED = 'the checkout or its Git records changed while cockpit read them, most likely because a Git command was running in this repository or one of its worktrees, such as an editor refreshing its status or an agent at work; retry once it has finished'
 
 const LISTENER_CONCURRENCY = 16
 
@@ -138,6 +144,28 @@ function redirectedMountDiagnostics(
     })
 }
 
+// Docker creates a missing bind source as an empty directory, so a service that expects a file there
+// fails on a directory, and its refusal named neither the file nor what should have made it. Nothing
+// in cockpit.toml creates a bind source, so the fix points at whatever prepares it outside cockpit.
+async function missingBindSources(
+    services: readonly Readonly<{ id: string; bindMountSources: readonly string[] }>[],
+): Promise<readonly EnvironmentDiagnostic[]> {
+    const observed = await Promise.all(services.flatMap(({ id, bindMountSources }) => bindMountSources.map(async (source) => {
+        try {
+            await lstat(source)
+            return undefined
+        } catch (error) {
+            // Only absence is reported; a path that cannot be read is Docker's to refuse.
+            return hasErrorCode(error, 'ENOENT') ? { service: id, source } : undefined
+        }
+    })))
+    return observed.filter((entry) => entry !== undefined).map(({ service, source }) => ({
+        severity: 'error' as const, code: ENVIRONMENT_CODES.BIND_SOURCE_MISSING, target: service,
+        message: `service ${service} bind-mounts ${source}, which did not exist when up started it; Docker creates a missing bind source as an empty directory, so a service that expects a file there fails`,
+        fix: `cockpit.toml declares no step that creates a bind source: create ${source} before up, as the project's own preparation script would, remove any empty directory Docker left in its place, then run ${cockpitCommand('up')}`,
+    }))
+}
+
 // A profile no Compose service declares enables nothing, and Compose accepts it silently, so the
 // stack would start without the services the person asked for.
 function undefinedProfileDiagnostics(
@@ -193,6 +221,7 @@ interface LifecycleRuntimeReadiness {
     readonly runtimeObservations: readonly import('./contract.js').EnvironmentObservation[]
     readonly inputs: Readonly<Record<string, string>>
     readonly activeProfiles: readonly string[]
+    readonly missingBindSources?: readonly EnvironmentDiagnostic[]
 }
 
 // The runtime input naming the profile set, so `up` refuses to change the set under a running stack
@@ -364,26 +393,38 @@ export function createLifecycleCommandAdapters(
             .filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
         const git = await resolveGitExecutable(input.env)
         if (git.state !== 'available') return refusal(loaded.result.source.path, git.reason)
-        const observedAt = new Date().toISOString()
-        const checkoutObservation = await observeSetupCheckout({
-            source: loaded.result.source,
-            cockpitName: loaded.result.config.cockpit.name,
-            observedAt,
-            env: setupEnvironment,
-            gitExecutable: git.value,
-        })
+        // The evidence must be unchanged when it is used, and a Git command anywhere in the repository
+        // (an editor refreshing its status, an agent in another worktree) moves the Git records it
+        // binds. Refusing on that sent down and sleep back with "authenticated checkout evidence is
+        // unavailable", so a moved checkout is read again, and named when it keeps moving.
+        const withCurrentCheckout = async <T>(use: (projection: SetupCheckoutProjection) => T) => {
+            for (let attempt = 0; attempt < CHECKOUT_ATTEMPTS; attempt += 1) {
+                const observedAt = new Date().toISOString()
+                const observation = await observeSetupCheckout({
+                    source: loaded.result.source,
+                    cockpitName: loaded.result.config.cockpit.name,
+                    observedAt,
+                    env: setupEnvironment,
+                    gitExecutable: git.value,
+                })
+                if (observation.state === 'failed') return { reason: observation.reason }
+                const projected = await withSetupCheckoutProjection(observation, {
+                    source: loaded.result.source,
+                    cockpitName: loaded.result.config.cockpit.name,
+                    evaluatedAt: Date.parse(observedAt),
+                }, (projection) => ({ value: use(projection) }))
+                if (projected) return projected
+            }
+            return { reason: CHECKOUT_MOVED }
+        }
         const machineConfiguration = projectMachineFloorConfig(loaded.result)
-        const projected = await withSetupCheckoutProjection(checkoutObservation, {
-            source: loaded.result.source,
-            cockpitName: loaded.result.config.cockpit.name,
-            evaluatedAt: Date.parse(observedAt),
-        }, (projection) => machineConfiguration
+        const projected = await withCurrentCheckout((projection) => machineConfiguration
             ? issueMachineFloorAuthority({ configuration: machineConfiguration, checkout: projection })
             : consumeSetupCheckoutProjection(projection))
-        const checkout = projected && 'authority' in projected ? projected.checkout : projected
+        if ('reason' in projected) return refusal(loaded.result.source.path, projected.reason)
+        const checkout = projected.value && 'authority' in projected.value ? projected.value.checkout : projected.value
         if (!checkout || process.platform !== 'darwin' && process.platform !== 'linux') {
-            return refusal(loaded.result.source.path, checkoutObservation.state === 'failed'
-                ? checkoutObservation.reason : 'authenticated checkout evidence is unavailable')
+            return refusal(loaded.result.source.path, 'authenticated checkout evidence is unavailable')
         }
         const namespace = await selectStateRoot({
             platform: process.platform,
@@ -406,19 +447,7 @@ export function createLifecycleCommandAdapters(
             checkoutId: checkout.checkoutId,
             sessionId: input.sessionId,
         })
-        const confirmedAt = new Date().toISOString()
-        const confirmed = await observeSetupCheckout({
-            source: loaded.result.source,
-            cockpitName: loaded.result.config.cockpit.name,
-            observedAt: confirmedAt,
-            env: setupEnvironment,
-            gitExecutable: git.value,
-        })
-        const issued = await withSetupCheckoutProjection(confirmed, {
-            source: loaded.result.source,
-            cockpitName: loaded.result.config.cockpit.name,
-            evaluatedAt: Date.parse(confirmedAt),
-        }, (projection) => issueLifecycleRunContext({
+        const confirmed = await withCurrentCheckout((projection) => issueLifecycleRunContext({
             configPath: input.configPath,
             checkout: projection,
             configuration: loaded.result,
@@ -427,13 +456,15 @@ export function createLifecycleCommandAdapters(
             holderId: currentHolderId,
             sessionId: input.sessionId,
         }))
+        if ('reason' in confirmed) return refusal(loaded.result.source.path, confirmed.reason)
+        const issued = confirmed.value
         if (!issued || issued.kind !== 'complete') return issued ?? refusal(loaded.result.source.path)
         bindings.set(issued.result, {
             config: loaded.result.config,
             checkoutRoot: dirname(loaded.result.source.path),
             siblingsRoot: resolve(dirname(loaded.result.source.path), loaded.result.config.cockpit.siblings_root),
             served: served.siblings,
-            ...(projected && 'authority' in projected ? { machineFloorAuthority: projected.authority } : {}),
+            ...(projected.value && 'authority' in projected.value ? { machineFloorAuthority: projected.value.authority } : {}),
         })
         return { ...issued, diagnostics: loaded.diagnostics }
     }
@@ -500,7 +531,11 @@ export function createLifecycleCommandAdapters(
             const status = !ran ? 'did not run' : ran.execution.signal ? `was stopped by ${ran.execution.signal}`
                 : ran.kind === 'refusal' && ran.code !== ENVIRONMENT_CODES.EXECUTION_STEP_FAILED ? `did not complete (${ran.code})`
                     : `exited with status ${ran.execution.exitCode}`
-            return seedFailed(context, `the seed command ${status}; its data may be partly applied, and it runs again on the next up`)
+            // The seed's own last words are usually the only statement of why it failed, such as a
+            // database that never answered; without them the refusal said only that it failed.
+            const stderr = ran ? failedStepStderr(ran.stderr) : undefined
+            return seedFailed(context, `the seed command ${status}; its data may be partly applied, and it runs again on the next up`
+                + (stderr === undefined ? '' : `. Its stderr ended: ${stderr}`))
         }
         const recorded = await recordSeeded({ namespace: context.namespace, stackId: context.stackId,
             holderId: context.holderId, seededAt: new Date().toISOString() })
@@ -667,6 +702,7 @@ export function createLifecycleCommandAdapters(
             runtimeObservations: [...topology.observations],
             inputs,
             activeProfiles,
+            ...purpose === 'teardown' ? {} : { missingBindSources: await missingBindSources(topology.topology.services) },
         }
         return use(readiness)
     }

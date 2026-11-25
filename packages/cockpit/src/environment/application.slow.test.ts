@@ -12,6 +12,7 @@ import { executeProbe } from '../environment-exec/execute.js'
 import { fileFingerprint } from '../environment-exec/verified-digest.js'
 import { evaluateGuard, GUARD_ROOT_PROTECTIONS, guardIdentity } from '../guards/evaluator.js'
 import { parseGuardInput } from '../guards/invocation-parser.js'
+import { GUARD_DEFERRED_REASONS } from '../guards/evaluator.js'
 import { encodeGuardLocalIdentity, GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../guards/local-identity.js'
 import { shellPayload } from '../guards/fixtures/invocation-corpus.js'
 import { parseOwnershipManifest } from '../surfaces/ownership.js'
@@ -590,6 +591,9 @@ describe('guard policy construction', () => {
         writeFileSync(join(root, 'node_modules/@b00dea/cockpit/dist/cli.js'), '')
         expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'refusal',
             diagnostics: [expect.objectContaining({ code: 'GENERATED_EXECUTABLE_UNAVAILABLE', message: expect.stringContaining('not the installed cockpit') })] })
+        // The fix is one line that runs as printed from any directory: the installed cockpit, from the checkout it is installed in.
+        expect((await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).diagnostics[0]?.fix)
+            .toContain(`\`cd ${root} && ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${basename(configPath)}\``)
         expect(existsSync(join(root, GUARD_LOCAL_PATHS.identity))).toBe(false)
         rmSync(join(root, 'node_modules/@b00dea/cockpit'), { recursive: true })
         symlinkSync(fileURLToPath(new URL('../../', import.meta.url)), join(root, 'node_modules/@b00dea/cockpit'))
@@ -692,6 +696,57 @@ describe('guard policy construction', () => {
             rmSync(join(root, 'outside-docs'), { force: true })
             rmSync(alias)
             rmSync(store, { recursive: true })
+        }
+    }, 120_000)
+
+    it('reads a cd by a dot name only under Claude Code with an empty CDPATH, and still judges a bare name from home otherwise', async () => {
+        const { root, request, adapters } = await installedGuardRequest()
+        const worktree = join(root, '.worktrees/x')
+        mkdirSync(worktree, { recursive: true })
+        const decide = async (command: string, harness: GuardEvaluationApplicationInput['harness'], cdpath?: string) => (await runGuardEvaluationApplication({ ...request,
+            harness, searchPath: '/usr/bin:/bin', payload: shellPayload(command, root), ...cdpath === undefined ? {} : { cdpath } }, adapters)).decision
+        try {
+            const read = await decide('cd .worktrees/x && pwd', 'claudecode', '')
+            expect(read.decision).toBe('allow')
+            expect(GUARD_DEFERRED_REASONS).not.toContain(read.reason)
+            // A name that exists nowhere below may still go anywhere through a `cd` the person's shell redefines, and a nested
+            // shell reads start-up files that can set its own CDPATH.
+            expect(await decide('cd .claude/missing && pwd', 'claudecode', '')).toMatchObject({ decision: 'ask', reason: expect.stringContaining('names nothing below') })
+            expect((await decide("bash -c 'cd .worktrees/x && pwd'", 'claudecode', '')).reason).toBeOneOf([...GUARD_DEFERRED_REASONS])
+            // A file the call sources may set CDPATH in this shell, so the cd after it is judged as before CDPATH was known.
+            for (const directory of ['.aws', '.config/gh', 'Library/LaunchAgents']) mkdirSync(join(root, directory), { recursive: true })
+            for (const command of ['. ./x.sh && cd .aws && cat credentials', 'source ./x.sh; cd .config/gh; cat hosts.yml', '. ./x.sh && cd Library/LaunchAgents && ls']) {
+                const sourced = await decide(command, 'claudecode', '')
+                expect(sourced, command).toEqual(await decide(command, 'claudecode'))
+                expect(sourced.decision === 'allow' && !GUARD_DEFERRED_REASONS.includes(sourced.reason), command).toBe(false)
+            }
+            // So may any builtin that evaluates text in this shell, however it is spelled.
+            for (const command of ["emulate sh -c '. ./x.sh'; cd .aws && cat credentials", "mapfile -C '. ./x.sh' -c 1 a < README.md; cd .aws && cat credentials",
+                'enable -f ./x.so cd; cd .aws && cat credentials']) {
+                const evaluated = await decide(command, 'claudecode', '')
+                expect(evaluated, command).toEqual(await decide(command, 'claudecode'))
+                expect(evaluated.decision === 'allow' && !GUARD_DEFERRED_REASONS.includes(evaluated.reason), command).toBe(false)
+            }
+            // External programs and inert builtins leave it alone, so a dot name is judged as the directory below.
+            mkdirSync(join(root, '.x'), { recursive: true })
+            for (const [dotted, explicit] of [['cd .worktrees/x && pwd && git status', 'cd ./.worktrees/x && pwd && git status'],
+                ['cd .x && ls', 'cd ./.x && ls'], ['cd .x && rg foo', 'cd ./.x && rg foo'], ['cd .x && npm test', 'cd ./.x && npm test']]) {
+                const admitted = await decide(dotted!, 'claudecode', '')
+                expect(admitted, dotted).toEqual(await decide(explicit!, 'claudecode', ''))
+                expect(GUARD_DEFERRED_REASONS, dotted).not.toContain(admitted.reason)
+            }
+            // A CDPATH the guard cannot follow, or a harness whose shell may set one, leaves the call unread.
+            for (const [harness, cdpath] of [['claudecode', '/somewhere'], ['codexcli', ''], ['opencode', '']] as const) {
+                expect((await decide('cd .worktrees/x && pwd', harness, cdpath)).reason, `${harness} ${cdpath}`).toBeOneOf([...GUARD_DEFERRED_REASONS])
+            }
+            // Where a CDPATH entry could send a bare name, it is still judged from home.
+            mkdirSync(join(root, 'Library/LaunchAgents'), { recursive: true })
+            expect(await decide('cd Library/LaunchAgents && pwd', 'claudecode', '/somewhere')).toMatchObject({ decision: 'deny', reason: expect.stringContaining('CDPATH') })
+        } finally {
+            rmSync(join(root, '.worktrees'), { recursive: true })
+            rmSync(join(root, 'Library'), { recursive: true, force: true })
+            for (const directory of ['.aws', '.config']) rmSync(join(root, directory), { recursive: true, force: true })
+            rmSync(join(root, '.x'), { recursive: true, force: true })
         }
     }, 120_000)
 

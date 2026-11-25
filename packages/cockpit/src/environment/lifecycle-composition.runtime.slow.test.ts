@@ -992,6 +992,27 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(decodeCoordinationRecord(stored.value, first.context.stackId)?.holders.map(({ holderId }) => holderId)).toEqual([coTenant])
     })
 
+    // Docker creates a missing bind source as an empty directory, so a service that expected a file
+    // there failed, and nothing named the file or what should have created it.
+    it('names a failed service\'s missing bind source and that cockpit.toml declares nothing creating it', async () => {
+        const candidate = await stackFixture()
+        const configPath = candidate.configPath
+        const env = { PATH: `${candidate.root}:/usr/bin:/bin`, HOME: candidate.home }
+        const adapters = createLifecycleCommandAdapters({ configPath, env, sessionId: 'bind-source', timeoutMs: 5_000 }, executeProbe)
+        const loaded = await adapters.load({ configPath })
+        if (loaded.kind !== 'complete') throw new Error(JSON.stringify(loaded))
+        await configureStackDocker(candidate, loaded.result, ['app/run/state.json'])
+        listenerProbeControl.enabled = true
+        await writeFile(join(candidate.root, 'docker-failure-needle'), 'up --detach\n')
+
+        const result = await runUp({ configPath }, adapters)
+
+        expect(result, JSON.stringify(result)).toMatchObject({ kind: 'refusal' })
+        expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'BIND_SOURCE_MISSING', target: 'app',
+            message: expect.stringContaining(join(candidate.checkout, 'app/run/state.json')),
+            fix: expect.stringContaining('cockpit.toml declares no step that creates a bind source') }))
+    })
+
     // A session ended on its up's refusal without the closing sleep, so an up that had started a
     // service left the session's hold, and the service, behind.
     it('releases a session whose up refused after starting a service', async () => {

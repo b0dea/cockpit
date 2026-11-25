@@ -206,6 +206,24 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(await readFile(log, 'utf8')).toBe(`${port}\n${port}\n`)
     }, 120_000)
 
+    // A seed that failed once on a fresh stack reported only that it failed; its own error was lost.
+    it('reports a failed seed\'s exit status and the end of its stderr, redacted', async () => {
+        const scenario = await runStackScenario({ seed: ['/bin/sh', '-c', [
+            'echo early-line-past-the-bound >&2',
+            'i=0; while [ $i -lt 100 ]; do echo "filler line $i of the seed log" >&2; i=$((i+1)); done',
+            'echo "postgres did not become ready" >&2',
+            'echo "connecting with token=synthetic-secret-value" >&2',
+            'exit 4',
+        ].join('; ')] })
+        expect(scenario.result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DATA_SEED_FAILED', target: 'environment.seed' }] })
+        const message = scenario.result.diagnostics.find(({ code }) => code === 'DATA_SEED_FAILED')?.message
+        expect(message).toContain('exited with status 4')
+        expect(message).toContain('filler line 99 of the seed log postgres did not become ready')
+        expect(message).toContain('token=[redacted]')
+        expect(message).not.toContain('synthetic-secret-value')
+        expect(message).not.toContain('early-line-past-the-bound')
+    }, 120_000)
+
     it('refuses an up whose seed fails and runs the seed again on the next up', async () => {
         const scenario = await runStackScenario({ seed: ['/bin/sh', '-c', 'printf x >> attempts.log; exit 3'] })
         expect(scenario.result).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'DATA_SEED_FAILED', target: 'environment.seed',

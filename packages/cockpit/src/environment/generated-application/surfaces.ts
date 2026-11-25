@@ -33,7 +33,9 @@ import { renderSurfaceSet, type SurfaceInputEvidence } from '../../surfaces/rend
 import { stripDevelopmentMarkers } from '../../surfaces/development-markers.js'
 import { renderConsumerInstructions } from '../../surfaces/consumer-instructions.js'
 import { expandRestrictions } from '../../surfaces/restrictions.js'
-import { GUARD_LOCAL_PATHS, installedGuardHandler, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
+import { GUARD_LOCAL_PATHS, guardHandlerSuperseded, installedGuardHandler, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
+import { mainCheckoutGuardIdentity, worktreeBindArgv } from '../../guards/linked-worktree.js'
+import { formatShellCommand, installedSyncLine, oneCommandLine } from '../../fix-catalogue.js'
 import { fileFingerprint, verifiedDigest } from '../../environment-exec/verified-digest.js'
 import { SHIPPED_SETUP_SKILL, extendInspectedSkillStandingCosts, inspectRenderedSkillSet } from '../../surfaces/skill-contract.js'
 import { readAnchoredFile, readAnchoredEntry, readAnchoredBatches } from '../../generated-environment/transaction.js'
@@ -404,9 +406,23 @@ export async function prepareSurfaces(
     } catch (error) {
         if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return refuse('GENERATED_EXECUTABLE_UNAVAILABLE', `the guard identity could not be read: ${errorCause(error)}`, 'guard')
     }
+    // The sync that binds the cockpit the guard should run, as one line that runs as printed from any directory. The guard
+    // admits an agent's sync from the installed package on its own configuration while the guard it is bound to still
+    // runs; with no binding, or one the install has since replaced, it holds every shell command, and a cockpit outside
+    // the installed package, as in cockpit's own development checkout, is a person's to run.
+    const syncLine = () => {
+        const outside = installed === undefined ? boundModule ?? modulePath : undefined
+        if (outside !== undefined) return `\`${oneCommandLine([formatShellCommand([join(dirname(dirname(outside)), 'bin/cockpit.mjs'), 'sync', '--config', basename(prepared.configPath)])], prepared.root)}\` in a terminal`
+        const guardRuns = boundModule !== undefined && guardHandlerSuperseded(prepared.root, boundModule) === undefined
+        return `\`${installedSyncLine(prepared.configPath)}\`${guardRuns ? '' : ' in a terminal'}`
+    }
     if (!bindWorktree && (installed !== undefined ? installed !== modulePath : boundModule !== undefined && boundModule !== modulePath)) {
+        // A linked worktree whose main checkout synced can instead bind its guard to that checkout's cockpit.
+        const main = mainCheckoutGuardIdentity(prepared.root)
+        const bind = main && `; or, alone in a call from the worktree root ${prepared.root}, bind its guard to the cockpit and configuration its main checkout `
+            + `synced: \`${formatShellCommand(worktreeBindArgv(prepared.root, main))}\``
         return refuse('GENERATED_EXECUTABLE_UNAVAILABLE', `this cockpit runs from ${modulePath}, not the ${installed !== undefined ? `installed cockpit at ${installed}` : `module the guard is bound to, ${boundModule}`}, `
-            + 'and the guard would run whichever copy sync binds', 'guard', 'run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` in a terminal, from the installed package')
+            + 'and the guard would run whichever copy sync binds', 'guard', `run ${syncLine()}${bind ?? ''}`)
     }
     const moduleRead = await readAnchoredFile(dirname(modulePath), basename(modulePath), MAX_GENERATED_BYTES, prepared.node, adapters)
     if (moduleRead.kind !== 'complete') return refuse('GENERATED_EXECUTABLE_UNAVAILABLE', 'the installed guard handler is unavailable', 'guard')
@@ -415,7 +431,7 @@ export async function prepareSurfaces(
     // Only a fingerprint this process hashed to the authenticated digest may stand in for a re-hash.
     const nodeFingerprint = fileFingerprint(prepared.node.canonicalPath, await lstat(prepared.node.canonicalPath))
     if (verifiedDigest(nodeFingerprint) !== prepared.node.sha256) return refuse('GENERATED_EXECUTABLE_UNAVAILABLE',
-        'the Node executable changed while sync was running', 'guard', 'run `./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>` again in a terminal')
+        'the Node executable changed while sync was running', 'guard', `run ${syncLine()} again`)
     // The hook runs this Node by the path the search path names it, so a package manager's link that an
     // upgrade re-points keeps the guard working; a Node the search path does not name first runs by its own path.
     let node = prepared.node.canonicalPath

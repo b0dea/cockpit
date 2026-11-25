@@ -99,6 +99,10 @@ Mounts must match the declaration in both directions:
 - A container gets only what `cockpit.toml` declares. A bind outside those, or one that leaves its
   sibling through a symbolic link, fails `check` with `COMPOSE_BIND_UNDECLARED`, and `up` refuses
   it.
+- Docker creates a missing bind source as an empty directory, so a service that expects a file
+  there fails. When a service fails to start, `up` adds `BIND_SOURCE_MISSING` for each of its bind
+  sources that did not exist beforehand. `cockpit.toml` has no step that creates one: create it with
+  the project's own preparation before `up`.
 
 ### Scaffold a Compose file
 
@@ -348,8 +352,9 @@ does not refuse it. Its `up` starts every service that does not depend on that o
 runs with a `SESSION_SERVICES_UNHEALTHY` warning naming each service it runs without; a command
 that needs one of them fails on its own. Only a stack with no healthy service at all is refused, as
 `up` refuses it. Joining a stack another session holds works the same way,
-and restarts nothing there. Such a start does not mark the stack as having come up, though the seed
-still runs when it is due. A plain `up` still refuses until every service is healthy.
+and restarts nothing there. Such a start does not mark the stack as having come up, and a seed that
+is due waits, with a `DATA_SEED_DEFERRED` warning, for the next `up` that brings every service up. A
+plain `up` still refuses until every service is healthy.
 
 The command gets the stack's addresses in its environment:
 
@@ -843,6 +848,8 @@ address added to the caller's environment. `up --json` reports `seed` as `ran` o
 
 A seed that exits nonzero, or outlives `timeout_seconds`, refuses with `DATA_SEED_FAILED`: the stack
 stays up, its data may be partly applied, and the next `up` runs it again, so write it to be rerun.
+The refusal names the exit status and ends with the last of the seed's stderr, bounded and with
+secret-looking assignments redacted.
 When Docker cannot say when the volumes were created, `up` refuses with `DATA_SEED_UNAVAILABLE`
 rather than guess. `seed` requires `resettable_volumes`, because those volumes tell cockpit the data
 is gone. To seed from inside the stack, see
