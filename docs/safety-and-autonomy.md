@@ -535,7 +535,7 @@ catches up after a merge, so switching to it writes nothing new. The remote must
 configured: `git remote add`, `set-url`, `rename` and `set-branches` ask, and so does a fetch that
 takes refspecs from `--refmap` or `--stdin`.
 
-Staging without explicit paths asks. A removal outside the configured roots is refused, as a write
+`git add` without a pathspec asks, except `-A` and `-u` as below. A removal outside the configured roots is refused, as a write
 there is, even when a declared allow matches.
 
 A glob or directory pathspec of `git add` or `git commit` is judged by what Git lists for it before
@@ -544,14 +544,18 @@ applied, each judged as if named on its own, so a guard script among them is ref
 bracket is a glob: `src/[slug]/page.tsx` also matches `src/s/page.tsx`, and a backslash escape is one
 too. `--literal-pathspecs` and `GIT_LITERAL_PATHSPECS=1` on the command, unless a wrapper such as
 `env -u` drops it, make each pathspec name one path, as `:(literal)<path>` does for one. `git commit --pathspec-from-file` asks. `-A` and `-u` stage only
-below the pathspecs they are given, and the whole tree without one.
+below the pathspecs they are given, and the whole tree without one: `git add -A` and `-u` without a
+pathspec, and `git commit -a`, are judged by what Git lists for the whole tree, from any directory, as
+`git add .` is at the top. `-u` and `git commit` stage tracked files only, so only changed and deleted
+tracked paths are listed for them.
 
 Where Git cannot list them (with `-f`, after an earlier command in the call that writes, past the
 listing's bound, or outside a repository), `git add -A`, `git add .` or a directory operand covering
 a secrets directory at any depth or an environment instance is a hard denial: stage the changed
 files by name. The guard walks the operand to find nested secrets directories; a tree past the
-walk's bound stays at `ask`, and a walk that fails is `unavailable`. Unsupported staging options, a
-glob Git did not list, and other pathspec magic produce `unavailable`.
+walk's bound stays at `ask`, and a walk that fails is `unavailable`. `git add -A` and `-u` without a
+pathspec, and `git commit -a`, are judged the same way and also ask. Unsupported staging
+options, a glob Git did not list, and other pathspec magic produce `unavailable`.
 
 Any other command runs, except Git that prints files outside the configured roots and a cockpit
 command its own table does not admit, which ask.

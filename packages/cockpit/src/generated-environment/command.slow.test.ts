@@ -471,6 +471,11 @@ it('consumes vendor and exact build/test authority through installed hook regist
         'git commit -qm "Subject\n\nBody.\n\nTrailer: x"']) {
         expect(invoke(command), command).toMatchObject(permitted)
     }
+    // Without a pathspec, `-A`, `-u` and `commit -a` are judged by what Git lists for the whole tree, as `git add .` at the top.
+    expect(invoke('git add .', root)).toMatchObject(permitted)
+    for (const command of ['git add -A', 'git add -u', 'git commit -qam Synthetic']) {
+        for (const cwd of [root, join(root, 'app')]) expect(invoke(command, cwd), `${command} in ${cwd}`).toMatchObject(permitted)
+    }
     const launcher = fileURLToPath(new URL('../../bin/cockpit.mjs', import.meta.url))
     expect(invoke(`${JSON.stringify(launcher)} check --config ${JSON.stringify(configPath)}`, root)).toMatchObject(permitted)
     // The reset preview deletes nothing; applying one waits for a person where no seed refills the data.

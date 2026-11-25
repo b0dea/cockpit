@@ -645,20 +645,26 @@ export async function runGuardEvaluationApplication(
                 if (tool.state === 'available') archives.set(key, await guardArchiveEntries(path, extracted.format, tool.value, adapters.execute ?? executeProbe))
             })
         }
-        // What a `git add` or `git commit` naming a glob or a directory stages: Git lists the changed and untracked paths it matches.
+        // What a `git add` or `git commit` naming a glob or a directory, or the whole tree with none, stages: Git lists
+        // the changed and untracked paths it matches, or only the changed ones where the command stages tracked files.
         const staged = new Map<string, readonly string[] | null | undefined>()
-        const stagedKey = (cwd: string, path: string, literal: boolean) => `${cwd}\0${literal}\0${path}`
+        const stagedKey = (cwd: string, path: string, literal: boolean, tracked: boolean) => `${cwd}\0${literal}\0${tracked}\0${path}`
         for (const invocation of parsed.invocations) {
             const command = gitInvocation(invocation)
             const staging = command && !command.uncertain && allowed(command.cwd) ? gitStagingPathspecs(command, invocation) : undefined
-            for (const pathspec of staging && !staging.force ? staging.pathspecs : []) {
+            if (!staging || staging.force) continue
+            const list = (path: string, literal: boolean) => {
+                const key = stagedKey(command!.cwd, path, literal, staging.tracked)
+                if (staged.has(key)) return
+                staged.set(key, undefined)
+                queries.push(async () => { staged.set(key, await guardStagedPaths(command!.cwd, path, literal, git.value, adapters.execute ?? executeProbe, staging.tracked)) })
+            }
+            if (staging.whole) list(':/', false)
+            for (const pathspec of staging.pathspecs) {
                 const path = pathspec.literal ?? pathspec.spelled
                 const literal = pathspec.literal !== undefined
                 const target = resolve(command!.cwd, path)
-                const key = stagedKey(command!.cwd, path, literal)
-                if (!allowed(target) || staged.has(key) || !(!literal && GIT_GLOB.test(path) || lstatIfPresentSync(target)?.isDirectory())) continue
-                staged.set(key, undefined)
-                queries.push(async () => { staged.set(key, await guardStagedPaths(command!.cwd, path, literal, git.value, adapters.execute ?? executeProbe)) })
+                if (allowed(target) && (!literal && GIT_GLOB.test(path) || lstatIfPresentSync(target)?.isDirectory())) list(path, literal)
             }
         }
         for (const invocation of parsed.invocations) {
@@ -782,7 +788,7 @@ export async function runGuardEvaluationApplication(
                 return { status: 'resolved', path, landsAt, ...target?.isFile() ? { links: target.nlink } : {} }
             }
             if (request.operation === 'pathspec') {
-                const matches = staged.get(stagedKey(request.cwd, request.path, request.literal === true))
+                const matches = staged.get(stagedKey(request.cwd, request.path, request.literal === true, request.tracked === true))
                 return matches ? { status: 'resolved', path, matches } : { status: 'unavailable', path, symlink: false }
             }
             if (request.operation === 'manifest') {
