@@ -71,6 +71,6 @@
   },
   "devDependencies": {
     "esbuild": "0.28.2",
-    "rulesync": "43.8.3"
+    "rulesync": "43.9.2"
   }
 }
