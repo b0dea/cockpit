@@ -52,7 +52,8 @@ protected branch is written with the editor's write tool. Rules that need a comm
 environment dumps and removals or writes outside the roots, apply only to shell the guard reads. Write
 it as plain commands joined with `&&`, use `[ … ] &&` or `if`, or put it in a script file. Codex and
 OpenCode refuse what asks. A heredoc body is checked as part of the call's text, not tied to the
-command that opened it. A program the guard does not know, a word it cannot expand, a variable, a
+command that opened it, except a body that is only data: its delimiter is quoted and it feeds `cat` or `tee`
+at the top level of the call, outside any group, loop or function, with no pipe or substitution and no redirect but `>` or `>>` to a file, as a write tool's content would. A program the guard does not know, a word it cannot expand, a variable, a
 glob that cannot match a secret name, and a read whose form it cannot prove all run. It does not stop a program that finds a secret by itself, or a value it
 builds at run time.
 
@@ -217,6 +218,17 @@ Limits, stated plainly:
   and every hold in the main checkout itself, stays a person's sync. The main checkout's policy does not cover the
   worktree's own settings, wrappers, instances or secret paths, so nothing else runs there before the
   bind.
+- A session can start in one checkout and work in another checkout of the same repository, such as a
+  worktree kept beside it. A call whose working directory lies outside the session's roots and inside
+  such a checkout is handed, with the same input, to the hook's check for that checkout, and its answer
+  stands as given. That checkout's guard judges the call as it would for a session started there: its
+  own guard once synced, else the main checkout's, admitting only `cd`, `pwd` and the bind. The checkout
+  must be one whose Git files name this repository back, the bound the check applies; a checkout of
+  another repository, or a `.git` file Git's record does not name, stays refused as outside the roots.
+  A handed-over call is never handed on, and it shares the guard's deadline. A call made from the
+  session's own checkout that names a path in the other one, such as `git -C <worktree>`, is still
+  judged by the session's guard; when it refuses the path as outside its roots, the refusal names
+  that checkout and says to run the command from there.
 - Claude Code refuses a call whose guard hook times out, through `onFailure: "block"` (measured
   2026-11-15); what Codex does then is not measured. The guard keeps its own 25-second
   deadline and refuses at it ([Native adapter behavior](#native-adapter-behavior)).
@@ -724,7 +736,9 @@ nothing, and `/` or the home directory itself is never granted. In every mode th
 refuses `.env*` and `.secrets` names and declared instances, writes outside the roots, an external
 working directory (except, with native external reads, a read-only Git command's `-C` directory, below), and a recursive search or comparison of an external directory: outside the
 roots it recognises only those names, not other credential files, so a read or search must name a
-regular file, and only a listing, which reports names, may name a directory. A link outside the roots stays refused. Copying an input in, as
+regular file, and only a listing, which reports names, may name a directory. A link outside the roots stays
+refused, except that with native external reads a named read or listing through one is judged where the link
+leads. Copying an input in, as
 `cp ~/Downloads/photo.jpg assets/`, is a write and is admitted as any write is, for example by a
 `[guards] allow` rule for `cp`.
 

@@ -436,6 +436,105 @@ describe('public surface publication transaction', () => {
         // Each hook call and bind starts Node and Git several times, and this walks every way a bind is refused.
         }, 180_000)
 
+        it('judges a call made in a linked worktree beside the session\'s checkout by that worktree\'s own check, and no other checkout', async () => {
+            const git = (cwd: string, ...args: string[]) => expect(spawnSync('git', ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args],
+                { cwd, encoding: 'utf8' }).status).toBe(0)
+            const hookOf = async (settings: string) => (JSON.parse(await readFile(settings, 'utf8')) as {
+                hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> } }).hooks.PreToolUse.at(-1)!.hooks[0]!.command
+            const estate = await realpath(await mkdtemp(join(tmpdir(), 'delegate-worktree-')))
+            roots.push(estate)
+            const fixture = await surfaceConsumer('delegate', { parentDirectory: estate })
+            await writeFile(fixture.configPath, (await readFile(fixture.configPath, 'utf8')).replace('siblings_root = "."', 'siblings_root = ".."'))
+            await mkdir(join(estate, 'app'), { recursive: true })
+            await writeFile(join(estate, 'app/AGENTS.md'), 'Synthetic sibling guide.\n')
+            await writeFile(join(estate, 'app/package-lock.json'), '{}')
+            git(fixture.root, 'init', '--quiet')
+            expect(await syncTeamGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+            git(fixture.root, 'add', '-A')
+            git(fixture.root, 'commit', '--quiet', '-m', 'Synthetic cockpit')
+            const main = await realpath(fixture.root)
+            const synced = `${main}-synced`
+            const unsynced = `${main}-unsynced`
+            git(main, 'worktree', 'add', '--quiet', '--detach', synced)
+            git(main, 'worktree', 'add', '--quiet', '--detach', unsynced)
+            expect(await syncTeamGeneratedEnvironment({ configPath: join(synced, 'cockpit.toml') })).toMatchObject({ kind: 'complete' })
+            // The session starts in `from`, whose hook runs for every call; the call itself is made in `cwd`.
+            const call = async (from: string, cwd: string, tool_input: object, tool_name = 'Bash') => {
+                const run = spawnSync('/bin/sh', ['-c', await hookOf(join(from, '.claude/settings.json'))], { cwd, encoding: 'utf8',
+                    env: { PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_PROJECT_DIR: from },
+                    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name, cwd, tool_input }) })
+                expect(run.status, run.stderr).toBe(0)
+                return JSON.parse(run.stdout).hookSpecificOutput as { permissionDecision: string; permissionDecisionReason?: string }
+            }
+            // A synced worktree is judged by its own guard, as if the session had started there.
+            await writeFile(join(synced, 'notes.md'), 'synthetic\n')
+            expect(await call(main, synced, { command: 'pwd' })).toMatchObject({ permissionDecision: 'allow' })
+            expect(await call(main, synced, { command: 'git add notes.md' })).toMatchObject({ permissionDecision: 'allow' })
+            expect(await call(main, synced, { file_path: join(synced, 'notes.md'), content: 'synthetic' }, 'Write')).toMatchObject({ permissionDecision: 'allow' })
+            expect(await call(main, synced, { file_path: join(synced, '.cockpit/guards/bash-guard.sh'), content: 'exit 0' }, 'Write')).toMatchObject({ permissionDecision: 'deny' })
+            // And the main checkout is judged by its own guard for a session started in the worktree.
+            expect(await call(synced, main, { command: 'pwd' })).toMatchObject({ permissionDecision: 'allow' })
+            // A worktree nobody has synced is judged by the main checkout for it: only leaving it, or binding its own guard.
+            expect(await call(main, unsynced, { command: 'pwd' })).toMatchObject({ permissionDecision: 'allow' })
+            expect(await call(main, unsynced, { command: `cd ${main}` })).toMatchObject({ permissionDecision: 'allow' })
+            expect(await call(main, unsynced, { command: 'git add cockpit.toml' })).toMatchObject({ permissionDecision: 'deny',
+                permissionDecisionReason: expect.stringContaining(`sync --config ${join(unsynced, 'cockpit.toml')} --bind-worktree`) })
+            expect((await call(main, unsynced, { command: 'git add cockpit.toml' })).permissionDecisionReason).toContain(`Otherwise change back to ${main} with \`cd\``)
+            // A call too large for one step's own input is handed over whole, up to the bound the guard reads.
+            const large = { text: 'x'.repeat(100_000) }
+            const raw = async (from: string) => {
+                const run = spawnSync('/bin/sh', ['-c', await hookOf(join(from, '.claude/settings.json'))], { cwd: synced, encoding: 'utf8',
+                    env: { PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_PROJECT_DIR: from },
+                    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'mcp__synthetic__probe', cwd: synced, tool_input: large }) })
+                return { status: run.status, stdout: run.stdout, stderr: run.stderr }
+            }
+            expect(await raw(main)).toEqual(await raw(synced))
+            // Made from the main checkout, a call naming the worktree stays refused there, and the refusal says where to run it.
+            const runThere = `${synced} is a linked worktree of this repository: run the command from there (cd ${synced} first), where its own guard judges it.`
+            for (const [tool_input, tool_name] of [[{ command: `git -C ${synced} add notes.md` }, 'Bash'], [{ file_path: join(synced, 'notes.md'), content: 'synthetic' }, 'Write']] as const) {
+                expect(await call(main, main, tool_input, tool_name), tool_name).toMatchObject({ permissionDecision: 'deny',
+                    permissionDecisionReason: expect.stringContaining(`escapes configured roots`) })
+                expect((await call(main, main, tool_input, tool_name)).permissionDecisionReason, tool_name).toContain(runThere)
+            }
+            // A checkout of another repository, and one whose .git file borrows this repository's worktree record without
+            // Git's record naming it back, are not delegated to: the main checkout refuses them as outside its roots.
+            const unrelated = join(estate, 'unrelated')
+            await mkdir(unrelated)
+            git(unrelated, 'init', '--quiet')
+            const forged = join(estate, 'forged')
+            await mkdir(forged)
+            const record = spawnSync('git', ['rev-parse', '--absolute-git-dir'], { cwd: synced, encoding: 'utf8' }).stdout.trim()
+            await writeFile(join(forged, '.git'), `gitdir: ${record}\n`)
+            for (const elsewhere of [unrelated, forged]) {
+                expect(await call(main, elsewhere, { command: 'pwd' }), elsewhere).toMatchObject({ permissionDecision: 'deny',
+                    permissionDecisionReason: expect.stringContaining('Guard path escapes configured roots') })
+            }
+        // Each delegated call starts the hook's Node twice.
+        }, 180_000)
+
+        it('judges a file tool call larger than the parser reads by its path, while a command that large stays refused', async () => {
+            const fixture = await surfaceConsumer('large-call')
+            await writeFile(join(fixture.siblingDirectory, 'package-lock.json'), '{}')
+            expect(spawnSync('git', ['init', '--quiet'], { cwd: fixture.root }).status).toBe(0)
+            expect(await syncGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+            const root = await realpath(fixture.root)
+            const hook = (JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8')) as {
+                hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> } }).hooks.PreToolUse.at(-1)!.hooks[0]!.command
+            const call = (tool_input: object, tool_name: string) => {
+                const run = spawnSync('/bin/sh', ['-c', hook], { cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_PROJECT_DIR: root },
+                    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name, cwd: root, tool_input }) })
+                expect(run.status, run.stderr).toBe(0)
+                return run.stdout ? JSON.parse(run.stdout).hookSpecificOutput : { permissionDecision: 'allow' }
+            }
+            const large = 'x'.repeat(200_000)
+            expect(call({ file_path: join(root, 'notes.md'), content: large }, 'Write')).toMatchObject({ permissionDecision: 'allow' })
+            expect(call({ notebook_path: join(root, 'notes.ipynb'), new_source: large }, 'NotebookEdit')).toMatchObject({ permissionDecision: 'allow' })
+            expect(call({ file_path: join(root, '.cockpit/guards/bash-guard.sh'), content: large }, 'Write')).toMatchObject({ permissionDecision: 'deny',
+                permissionDecisionReason: expect.stringContaining('Refusing mutation of the guard') })
+            expect(call({ command: `printf %s ${'x'.repeat(70_000)}` }, 'Bash')).toMatchObject({ permissionDecision: 'deny',
+                permissionDecisionReason: expect.stringContaining('exceeds its byte bound') })
+        })
+
         it('binds a worktree kept inside its checkout whose siblings lie inside each checkout, the root sibling\'s layout', async () => {
             const git = (cwd: string, ...args: string[]) => expect(spawnSync('git', ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args],
                 { cwd, encoding: 'utf8' }).status).toBe(0)
@@ -531,7 +630,7 @@ describe('public surface publication transaction', () => {
             }
             expect(refused(invoke('mcp__approved-server__read_record', { text: 'x'.repeat(1_048_576) }))).toContain('byte bound')
             for (const run of [invoke('Bash', { command: 'printf x', description: 'x'.repeat(65_536) }),
-                invoke('Write', { file_path: join(fixture.root, 'notes.txt'), content: 'x'.repeat(65_536) })]) {
+                invoke('Write', { file_path: join(fixture.root, 'notes.txt'), content: 'x'.repeat(1_048_576) })]) {
                 expect(refused(run)).toContain('byte bound')
             }
             expect(refused(invoke('mcp__approved-server__read_record', []))).toContain('Malformed MCP tool input')

@@ -358,8 +358,9 @@ function scopedSignal(signal: AbortSignal | undefined): AbortSignal | undefined 
     return scoped && signal ? AbortSignal.any([scoped, signal]) : scoped ?? signal
 }
 
-async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promise<InternalStepExecution> {
+async function executeStep(prepared: PreparedStep, signal?: AbortSignal, input?: string): Promise<InternalStepExecution> {
     const step = prepared.logical
+    const stdin = input ?? step.stdin
     const beforeSpawnFailure = (failure: ExecutionFailureCode): InternalStepExecution => ({
         ...failedStep(step, failure), stdoutObservedBytes: 0, stderrObservedBytes: 0,
         stdoutRetainedBytes: 0, stderrRetainedBytes: 0,
@@ -394,7 +395,7 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
                 argv0: step.argv0,
                 cwd: step.cwd,
                 env: step.env,
-                stdio: [step.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+                stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
                 detached: true,
             })
     } catch {
@@ -552,11 +553,11 @@ async function executeStep(prepared: PreparedStep, signal?: AbortSignal): Promis
             if (stderrBytes > step.stderrLimitBytes) stop(ENVIRONMENT_CODES.EXECUTION_STDERR_LIMIT)
         })
         runningProcess.on('error', () => stop(ENVIRONMENT_CODES.EXECUTION_SPAWN_FAILED))
-        if (step.stdin !== undefined) {
+        if (stdin !== undefined) {
             // A process that exits before reading its input closes the pipe (EPIPE); its exit status is
             // still its answer. Any other write failure means the input never arrived.
             runningProcess.stdin?.on('error', error => { if (!hasErrorCode(error, 'EPIPE')) stop(ENVIRONMENT_CODES.EXECUTION_STEP_FAILED) })
-            runningProcess.stdin?.end(step.stdin)
+            runningProcess.stdin?.end(stdin)
         }
         runningProcess.on('close', (code, closeSignal) => {
             closed = { code, signal: closeSignal }
@@ -808,15 +809,22 @@ export async function executeForegroundProcess(
     })
 }
 
+/**
+ * Runs one step. `stdin`, which the caller bounds, is input larger than a step's own `stdin` may hold, such as a whole
+ * agent tool call handed to a guard hook; a step that also declares its own is refused.
+ */
 export async function executeProbe(
     step: ExecutionStep,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; stdin?: string } = {},
 ): Promise<ExecuteProbeOutcome> {
     let signal: AbortSignal | undefined
+    let stdin: string | undefined
     let optionsReadable = true
     try {
         signal = options.signal
+        stdin = options.stdin
         if (signal !== undefined && Object.getPrototypeOf(signal) !== AbortSignal.prototype) optionsReadable = false
+        if (stdin !== undefined && (typeof stdin !== 'string' || step.stdin !== undefined)) optionsReadable = false
     } catch { /* A throwing accessor or proxy trap on the options means they are malformed, which is refused below. */ optionsReadable = false }
     const resolved = optionsReadable ? snapshotExecutionStep(step) : undefined
     const preparation = resolved === undefined ? undefined : await prepareExecutionPlan({ steps: [resolved] })
@@ -829,7 +837,7 @@ export async function executeProbe(
     else {
         const prepared = preparation.plan
         const execution = prepared.steps.get(resolved)
-        observation = execution === undefined ? invalidStepExecution() : await executeStep(execution, scopedSignal(signal))
+        observation = execution === undefined ? invalidStepExecution() : await executeStep(execution, scopedSignal(signal), stdin)
         if (observation.failure !== ENVIRONMENT_CODES.EXECUTION_TERMINATION_UNCONFIRMED
             && prepared.directory !== undefined && !await removePreparedDirectory(prepared.directory)) {
             observation.failure = ENVIRONMENT_CODES.EXECUTION_STAGING_CLEANUP_FAILED

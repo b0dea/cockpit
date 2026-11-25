@@ -1584,6 +1584,52 @@ git status -s | rg -v "^\?\?"`
     it.each(deferred)('leaves %s to the agent tool', (command) => {
         expect(run(command)).toEqual(unreadDeferred)
     })
+    // A quoted heredoc that cat or tee only writes out is data, as a file tool's content is: nothing in it expands or runs,
+    // so the names it spells are not judged. The command, its target and every line after the body still are.
+    it('leaves out of unread text the body of a quoted heredoc that cat or tee only writes', () => {
+        const body = 'import json\nroot=Path(sys.argv[1])\nx=json.loads((root/".claude/settings.json").read_text())\n'
+        const reported = `S=/scratch/c; cat > $S/ask.py <<'EOF'\n${body}EOF\nfor R in ${root} ${other}; do python3 $S/ask.py $R 'grep -rn sk_ local/'; done`
+        expect(run(reported)).toEqual(unreadDeferred)
+        for (const opener of [`cat > $S/a.py <<"EOF"`, `cat > $S/a.py <<\\EOF`, `cat >> $S/a.py <<-'EOF'`, `A=1 tee > $S/a.py <<'EOF'`, `cat <<'EOF' > $S/a.py`]) {
+            expect(run(`S=/scratch/c; ${opener}\n${body}EOF`), opener).toEqual(unreadDeferred)
+        }
+        // A backslash quotes the delimiter as quote marks do, so `$` in the body stays literal.
+        expect(run(`S=/scratch/c; cat > $S/a.sh <<\\EOF\necho "$HOME" .claude/settings.json\nEOF`)).toEqual(unreadDeferred)
+        const unread = 'S=/scratch/c; '
+        for (const command of [
+            // A shell, a pipe or a process substitution runs the body, so it is judged.
+            `${unread}bash > $S/out <<'EOF'\ncat .claude/settings.json\nEOF`, `${unread}cat <<'EOF' | bash > $S/out\ncat .claude/settings.json\nEOF`,
+            `${unread}cat > >(sh) <<'EOF'\ncat .claude/settings.json\nEOF`,
+            // An unquoted delimiter expands the body, and a body with no terminator line may be anything after it.
+            `${unread}cat > $S/out <<EOF\ncat .claude/settings.json\nEOF`, `${unread}cat > $S/out <<'EOF'\ncat .claude/settings.json`,
+            // The target is outside the body, so it is judged.
+            `D=.claude; cat > $D/settings.json <<'EOF'\n{}\nEOF`,
+            // A function of the same name runs instead of cat, as zsh's functions array, aliases and path can arrange.
+            `${unread}cat() { bash; }; cat > $S/out <<'EOF'\ncat .claude/settings.json\nEOF`,
+            `${unread}functions[cat]=bash; cat > $S/out <<'EOF'\ncat .claude/settings.json\nEOF`,
+            `${unread}cat x () { bash; }; cat > $S/out <<'EOF'\ncat .claude/settings.json\nEOF`,
+            `${unread}path+=/scratch; cat > $S/out <<'EOF'\ncat .claude/settings.json\nEOF`,
+            // A cat inside a case arm, loop, group or function body may feed the construct's output to a shell.
+            `case x in x)\ncat <<'EOF'\ncat .claude/settings.json\nEOF\n;; esac | bash`,
+            `for x in 1; do\ncat <<'EOF'\ncat .claude/settings.json\nEOF\ndone | sh`,
+            `{\ncat <<'EOF'\ncat .claude/settings.json\nEOF\n} | sh; case x in x) :;; esac`,
+            // A substitution that spans lines while a body is pending may hold the body's start.
+            `${unread}cat > $S/out <<'A'; true <(\nA\n)\ncat .claude/settings.json\nA`,
+            // The lines after the terminator are commands.
+            `${unread}cat > $S/out <<'EOF'\ndata\nEOF\ncat .claude/settings.json`,
+        ]) expect(run(command).decision, command).toBe('deny')
+    })
+    // A command word holding a slash is a file the shell runs, never a builtin: `local/` is a directory, not `local`.
+    it('reads a command word with a slash as a path, never as a builtin that prints variables', () => {
+        const unread = 'case x in a) :;; esac; '
+        for (const command of ['local/', './set', 'x/export -p', 'build/declare']) {
+            expect(run(command).decision, command).not.toBe('deny')
+            expect(run(`${unread}${command}`), command).toEqual(unreadDeferred)
+        }
+        for (const command of ['local', 'set', 'export -p', 'declare -x']) expect(run(command).decision, command).toBe('deny')
+        for (const command of ['env', '/usr/bin/env', 'printenv']) expect(run(command).decision, command).not.toBe('allow')
+        for (const command of ['set', 'env', 'local', 'export -p']) expect(run(`${unread}${command}`).decision, command).toBe('ask')
+    })
     // Its text is one list of words, so a protected branch any later command names reads as the push's destination.
     it('refuses unread shell whose words spell a push with a protected branch after it', () => {
         expect(run('case x in a) git push origin feat;; esac; echo main').decision).toBe('deny')

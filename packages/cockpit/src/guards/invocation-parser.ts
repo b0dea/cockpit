@@ -71,9 +71,11 @@ export type GuardParseResult = {
 
 const parsedInputs = new WeakSet<object>()
 // The commands that may run inside a call's unread shell, each parsed as a call of its own, and the words it may read.
-const innerOfInputs = new WeakMap<object, Readonly<{ commands: readonly GuardParseResult[]; reads: readonly GuardParseResult[] }>>()
+// `judged` is the unread text without the bodies of heredocs that are only data, when it leaves any out.
+type UnreadInner = Readonly<{ commands: readonly GuardParseResult[]; reads: readonly GuardParseResult[]; judged?: string }>
+const innerOfInputs = new WeakMap<object, UnreadInner>()
 /** What shell text the parser does not read may run and read, for the evaluator to judge as calls of their own. */
-export function unreadInner(input: object): Readonly<{ commands: readonly GuardParseResult[]; reads: readonly GuardParseResult[] }> {
+export function unreadInner(input: object): UnreadInner {
     return innerOfInputs.get(input) ?? { commands: [], reads: [] }
 }
 export function isParsedGuardInput(value: unknown): value is Extract<GuardParseResult, { status: 'parsed' }> {
@@ -120,6 +122,9 @@ interface Token {
     braced?: boolean
     /** An expansion that can itself run code: arithmetic on a subscript, a prompt or zsh flag expansion, a zsh glob from a value. */
     evaluates?: boolean
+    /** A heredoc body's offsets in the command, before its terminator line, and whether its delimiter was quoted. */
+    span?: readonly [number, number]
+    literal?: boolean
 }
 /** The file a process substitution `<(…)` hands its command: a pipe the shell opens, never a file in the tree. */
 export const PROCESS_SUBSTITUTION = '/dev/fd/63'
@@ -226,10 +231,13 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
             for (const document of documents) {
                 let body = ''
                 let closed = false
+                const from = index
+                let to = index
                 while (index <= command.length) {
                     const end = command.indexOf('\n', index)
                     const line = command.slice(index, end < 0 ? command.length : end)
                     const content = document.tabs ? line.replace(/^\t+/, '') : line
+                    to = index
                     index = end < 0 ? command.length + 1 : end + 1
                     if (content === document.delimiter) { closed = true; break }
                     body += content + (end < 0 ? '' : '\n')
@@ -239,7 +247,7 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
                     refuse("Dynamic heredoc expansion is unsupported: an unquoted delimiter expands $, ` and \\ in the body. Quote the delimiter (<<'EOF') so the body is literal; "
                         + "for a commit message, pass it on standard input with git commit -F - <<'EOF'.")
                 }
-                tokens.push({ kind: 'body', value: body })
+                tokens.push({ kind: 'body', value: body, span: [from, to], literal: document.quoted })
             }
             documents.length = 0
             tokens.push({ kind: 'op', value: '\n' })
@@ -462,7 +470,8 @@ function lex(command: string, options: GuardParseOptions, start = 0, depth = 0):
         }
         if (awaitingDocument !== undefined) {
             if (dynamic || status || !value || expansion || substitutions.length) refuse('Unsupported heredoc delimiter.')
-            documents.push({ delimiter: value, quoted, tabs: awaitingDocument })
+            // Any quoting in the delimiter, a backslash included, keeps the body literal.
+            documents.push({ delimiter: value, quoted: quoted || command.slice(wordStart, index).includes('\\'), tabs: awaitingDocument })
             awaitingDocument = undefined
         }
     }
@@ -575,6 +584,64 @@ function innerCommands(text: string): { commands: string[]; reads: string[] } {
         }
     }
     return { commands: [...commands], reads: [...reads] }
+}
+// What ends a simple command at the top level of shell text; a pipe, a group or a subshell does not, so it stays inside one.
+const LIST_SEPARATORS = new Set(['\n', ';', '&&', '||', '&'])
+/**
+ * Unread shell text without the body of each heredoc that is only data: its delimiter is quoted, so nothing in it expands,
+ * and the simple command it feeds is `cat` or `tee` after any assignments, with plain `>` or `>>` redirects to a word and no
+ * pipe, group, subshell or substitution. Such a body reaches only a file, as a file tool's content does. Text that does not
+ * lex, or that may make `cat` or `tee` another program, is kept whole, and so is everything outside the bodies.
+ */
+function dataHeredocsLeftOut(command: string, options: GuardParseOptions): string {
+    let tokens: Token[]
+    try { tokens = lex(command, options).tokens }
+    catch (error) {
+        if (error instanceof RefusalError) return command
+        throw error
+    }
+    // A function, alias, sourced file or search path may turn `cat` or `tee` into a program that runs its input, as may
+    // zsh's functions, aliases and commands arrays and its lower-case path. A substitution that spans lines while a body
+    // is pending may hold the start of that body, where the shell and this reading can disagree.
+    if (tokens.some((token) => token.kind === 'word' && (['alias', 'function', 'hash', 'enable', 'source', '.', 'eval', 'autoload', 'zmodload'].includes(token.value)
+        || /^(?:functions|aliases|galiases|saliases|commands|builtins|path|fpath|PATH|FPATH|BASH_ENV|ENV)(?:$|\[|\+?=)/.test(token.value)
+        || token.substitutions?.some((text) => text.includes('\n'))))) return command
+    // Before the heredoc, a group, subshell, function body or compound command may enclose it and pipe its output on,
+    // so only a command at the top level of the text counts.
+    const enclosing = (at: number) => tokens.slice(0, at).some((token) => token.kind === 'op' && ['(', ')', '{', '}'].includes(token.value)
+        || token.kind === 'word' && !token.quoted && (reserved.has(token.value) || ['elif', 'function', 'foreach', 'end'].includes(token.value)))
+    const data = (operator: number): boolean => {
+        if (enclosing(operator)) return false
+        let start = operator
+        while (start > 0 && !(tokens[start - 1]!.kind === 'op' && LIST_SEPARATORS.has(tokens[start - 1]!.value))) start--
+        let end = operator
+        while (end < tokens.length && !(tokens[end]!.kind === 'op' && LIST_SEPARATORS.has(tokens[end]!.value)) && tokens[end]!.kind !== 'body') end++
+        let at = start
+        while (tokens[at]?.kind === 'word' && ASSIGNMENT.test(tokens[at]!.value)) at++
+        const program = tokens[at]
+        if (program?.kind !== 'word' || !['cat', 'tee'].includes(program.value) || program.dynamic) return false
+        for (let i = start; i < end; i++) {
+            const token = tokens[i]!
+            if (token.kind === 'word' && (token.substitutions?.length || token.evaluates)) return false
+            if (token.kind === 'descriptor' || token.kind === 'comment') return false
+            if (token.kind === 'op') {
+                if (!(i === operator || token.value === '>' || token.value === '>>') || tokens[i + 1]?.kind !== 'word') return false
+                i++
+            }
+        }
+        return true
+    }
+    const spans: (readonly [number, number])[] = []
+    let pending: number[] = []
+    for (const [at, token] of tokens.entries()) {
+        if (token.kind === 'op' && (token.value === '<<' || token.value === '<<-')) pending.push(at)
+        else if (token.kind === 'op' && token.value === '\n') pending = []
+        else if (token.kind === 'body') {
+            const operator = pending.shift()
+            if (operator !== undefined && token.literal && token.span && data(operator)) spans.push(token.span)
+        }
+    }
+    return spans.reduceRight((text, [from, to]) => text.slice(0, from) + text.slice(to), command)
 }
 // tmux commands that open a session, window or pane running a shell command. Without -c, spawn.c starts one in
 // server_client_get_cwd of the command client, which has no session, so in the invoking shell's directory; respawn-pane
@@ -1502,7 +1569,7 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
         let content: GuardFileContent | undefined
         const seen: Seen = { background: false, loop: false }
         let unreadable: { text: string; reason: string; outlives?: true } | undefined
-        let innerRuns: { commands: GuardParseResult[]; reads: GuardParseResult[] } | undefined
+        let innerRuns: UnreadInner | undefined
         const frozen = (items: ParsedInvocation[]) => {
             for (const item of items) {
                 Object.freeze(item.argv)
@@ -1535,10 +1602,11 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
             }
             catch (error) {
                 if (!(error instanceof RefusalError) || error instanceof ForbiddenConstruct) throw error
-                const runs = innerCommands(command)
-                innerRuns = { commands: asCalls(runs.commands), reads: asCalls(runs.reads) }
+                const judged = dataHeredocsLeftOut(command, options)
+                const runs = innerCommands(judged)
+                innerRuns = { commands: asCalls(runs.commands), reads: asCalls(runs.reads), ...judged === command ? {} : { judged } }
                 unreadable = { text: command, reason: error.message,
-                    ...error instanceof OutlivingShell || seen.background || textOutlives(command) ? { outlives: true as const } : {} }
+                    ...error instanceof OutlivingShell || seen.background || textOutlives(judged) ? { outlives: true as const } : {} }
                 return []
             }
         }
@@ -1565,7 +1633,8 @@ export function parseGuardInput(input: unknown, options: GuardParseOptions = {})
                 content = { kind: 'patch', text: fields.command }
             }
         } else if (tool === 'NotebookEdit') {
-            if (!exactKeys(fields, ['notebook_path', 'new_source'], ['cell_id', 'cell_type', 'edit_mode'])
+            // The hook judges an oversized call without its new source, which the guard never reads.
+            if (!exactKeys(fields, ['notebook_path'], ['new_source', 'cell_id', 'cell_type', 'edit_mode'])
                 || !text(fields.notebook_path) || !posix.isAbsolute(fields.notebook_path)
                 || Object.values(fields).some(value => !text(value))
                 || fields.cell_type !== undefined && !['code', 'markdown'].includes(String(fields.cell_type))
