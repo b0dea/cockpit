@@ -32,7 +32,7 @@ export async function runWorkApplication(request: WorkApplicationRequest, compos
         const unsynced = await composition.unsyncedWork()
         if (unsynced.length) {
             return refusal(operation, `cockpit.toml changes ${unsynced.join(', ')} since the guards were generated, which widens what agents may do; `
-                + 'this needs a person: they run npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent, or the change is reverted')
+                + 'this needs a person: they run `cd <the cockpit root> && npx --no cockpit approve` in a terminal outside the agent, or the change is reverted')
         }
         if (captured.operation === 'browser-drive' || captured.operation === 'browser-screenshot') {
             const kind = captured.operation === 'browser-screenshot' ? 'screenshot' : 'drive'

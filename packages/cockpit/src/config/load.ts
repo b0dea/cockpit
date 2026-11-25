@@ -295,7 +295,7 @@ const SCHEMA_ISSUES_SHOWN = 3
 // Keys a release removed, by where they sit, with what replaced them; a file that still holds one is
 // refused like any unknown key, but named. `*` stands for any one path segment.
 const REMOVED_KEYS: Readonly<Record<string, string>> = {
-    autonomy: 'an agent may do everything except apply a change that widens what agents may do, which a person approves with npx --no cockpit approve in <the cockpit root>; declare [environment] seed to let an agent reset',
+    autonomy: 'an agent may do everything except apply a change that widens what agents may do, which a person approves with `cd <the cockpit root> && npx --no cockpit approve` in a terminal outside the agent; declare [environment] seed to let an agent reset',
     'work.gates': 'work-order steps are the agent\'s, except the few fixed ones that would let it lower the bar its own work is held to',
     unconfirmed: 'a person reviews the answers init wrote in the cockpit.toml diff',
     'sibling.*.derives.mcp_sources.*.provenance.confirmed': 'a person reviews inferred values in the cockpit.toml diff',

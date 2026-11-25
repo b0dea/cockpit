@@ -31,6 +31,7 @@ import {
     innerCommand,
     gitInvocation,
     gitStagingPathspecs,
+    type GitStagedListing,
     GIT_GLOB,
     GUARD_BRANCH_VERBS,
     gitTreeTargets,
@@ -52,7 +53,7 @@ import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../../gene
 import { parseOwnershipManifest } from '../../surfaces/ownership.js'
 import { installedPackageMetadata } from '../../package-metadata.js'
 import { GUARD_LOCAL_PATHS, guardHandlerSuperseded, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
-import { checkoutOf, mainCheckoutGuardIdentity, worktreeBindArgv } from '../../guards/linked-worktree.js'
+import { checkoutOf, mainCheckoutGuardIdentity, recordedWorktreeHolds, worktreeBindArgv } from '../../guards/linked-worktree.js'
 import { inspectGuardRecord } from '../../guards/guard-record.js'
 import {
     guardInstalledDirectories,
@@ -235,6 +236,26 @@ function otherCheckoutOfRepository(cwd: string, root: string, allowedRoots: read
     if (own?.top !== root) return undefined
     const other = checkoutOf(cwd)
     return other && other.top !== root && other.main === own.main ? other.top : undefined
+}
+
+/**
+ * Whether the missing `cwd`, outside every root, was a linked worktree of the repository checked out at `root`: Git's
+ * record still names one holding it, or its nearest existing ancestor is the directory holding the main checkout.
+ */
+function removedWorktreeOfRepository(cwd: string, root: string): boolean {
+    const main = checkoutOf(root)?.main
+    if (main === undefined) return false
+    if (recordedWorktreeHolds(main, cwd)) return true
+    // `git worktree remove` deletes Git's record with the directory, so a worktree kept beside the main checkout, as
+    // `git worktree add ../name` places it, leaves only a missing path there. That place alone is accepted without a
+    // record, and it is enough: the call is judged from the session's checkout only when it names no `..`, so what it
+    // reaches by a relative path lies below the removed directory, where nothing is left (macOS still resolves `..` from a
+    // removed directory to its former parent, measured 2026-11-25). A directory moved rather than removed keeps its
+    // entries; beside the main checkout, under this guard, the shell reached it as a worktree of this repository, laid
+    // out as the checkout that judges the call, so a relative path meets the same protections there.
+    let ancestor = dirname(cwd)
+    while (lstatIfPresentSync(ancestor) === undefined) ancestor = dirname(ancestor)
+    return ancestor === dirname(main)
 }
 
 /**
@@ -517,18 +538,61 @@ export async function runGuardEvaluationApplication(
         const widening = notice !== ''
         // A word the guard cannot expand is marked, not refused: the evaluator refuses it only where it
         // decides what is read, written or pushed.
-        const parsed = parseCall(data.payload)
-        if (parsed.status !== 'parsed') return unavailable(parsed.reason)
+        const reported = parseCall(data.payload)
+        if (reported.status !== 'parsed') return unavailable(reported.reason)
         // A shell left in a directory that was removed, such as a linked worktree kept inside the checkout, reaches nothing
         // by a physical relative path, and the agent tool then starts the guard in the session's own directory. Refused
         // for that, every call failed, the cd back out and absolute paths included. Such a directory inside a managed
         // root is judged as reported: the shell resolves `cd ..` and `cd name` from it by its spelling, as the guard does.
-        const removedCwd = parsed.cwd !== data.cwd && prepared.kind === 'complete' && lstatIfPresentSync(parsed.cwd) === undefined
-            && prepared.result.policy.allowedRoots.some(root => confinedPath(root, parsed.cwd))
+        const outsideRoots = prepared.kind !== 'complete' || !prepared.result.policy.allowedRoots.some(root => confinedPath(root, reported.cwd))
+        const removedCwd = reported.cwd !== data.cwd && !outsideRoots && lstatIfPresentSync(reported.cwd) === undefined
         // The harness reports the agent's working directory and starts the guard in a canonical one; they differ when
-        // the agent's shell changed directory through a link or under another spelling.
-        if (parsed.cwd !== data.cwd && !removedCwd) return unavailable(`The call reports the working directory ${JSON.stringify(parsed.cwd)}, but the guard runs in ${JSON.stringify(data.cwd)}: `
-            + `paths are judged from one directory only. Change to ${JSON.stringify(data.cwd)} itself, then run the command.`)
+        // the agent's shell changed directory through a link or under another spelling, or when it was left in a
+        // directory outside every root that was then removed, such as a worktree kept beside the checkout. A call that
+        // runs nothing where the shell is, but changes to a directory it names in full or is a file tool given full
+        // paths, means the same from either, and is judged from the guard's directory; so is any call from a removed
+        // worktree of this repository that names no `..`, the one relative spelling that reaches past the removed
+        // directory, from where it was.
+        const guardCwd = data.cwd
+        const relocated = (): typeof reported | string | undefined => {
+            if (prepared.kind !== 'complete' || typeof data.payload !== 'object' || data.payload === null || Array.isArray(data.payload)) return undefined
+            const payload = data.payload as Readonly<Record<string, unknown>>
+            const moved = parseCall({ ...payload, cwd: data.cwd })
+            if (moved.status !== 'parsed' || moved.invocations.length !== reported.invocations.length || reported.invocations.some((invocation, index) =>
+                moved.invocations[index]!.cwd !== (invocation.cwd === reported.cwd ? data.cwd : invocation.cwd))) return undefined
+            if (![...reported.paths, ...reported.removed].every(path => isAbsolute(path))) return undefined
+            const leaves = reported.tool === 'Bash'
+                ? !reported.unreadable && reported.invocations.filter(invocation => invocation.cwd === reported.cwd).every(({ executable, words, redirects, background }) =>
+                    executable === null && !background && redirects.length === 0 && words.length === 1 && words[0]!.role === 'directory'
+                    && !words[0]!.dynamic && isAbsolute(words[0]!.value))
+                : reported.tool === 'Edit' || reported.tool === 'Write' || reported.tool === 'NotebookEdit'
+            if (leaves) return moved
+            if (!outsideRoots || lstatIfPresentSync(reported.cwd) !== undefined || !removedWorktreeOfRepository(reported.cwd, identity.root)
+                || /(^|[^\w.])\.\.($|[^\w.])/.test(JSON.stringify(payload.tool_input ?? null))) return undefined
+            // A worktree moved rather than removed, by `git worktree move` or `mv`, keeps its checked-out branch, which a
+            // push, commit, reset or rebase acts on while the guard would read the branch of the checkout it runs in. So a
+            // Git command whose decision turns on the branch runs only where it names an existing directory in full, as with
+            // `git -C <path>` or after a `cd` to one; shell text the guard does not read, or a `git` it does not see as a
+            // command, could be such a command, and is refused with it.
+            const text = JSON.stringify(payload.tool_input ?? null)
+            const gits = reported.invocations.map(invocation => gitInvocation(invocation)).filter(git => git !== undefined)
+            const branchDependent = reported.unreadable !== undefined
+                || gits.some(git => (git.uncertain || git.verb === '' || GUARD_BRANCH_VERBS.has(git.verb)) && !lstatIfPresentSync(git.cwd)?.isDirectory())
+                || (text.match(/(^|[^\w-])git($|[^\w-])/g)?.length ?? 0) > gits.length
+                    && [...GUARD_BRANCH_VERBS].some(verb => new RegExp(`(^|[^\\w-])${verb}($|[^\\w-])`).test(text))
+            return branchDependent ? `A Git command that acts on the checked-out branch is not judged from ${JSON.stringify(reported.cwd)}: that worktree may have `
+                + `been moved rather than removed, and still hold another branch than ${JSON.stringify(guardCwd)}. Start the command with `
+                + `\`cd ${formatShellCommand([guardCwd])} && \`, or name an existing checkout in full with \`git -C\`.` : moved
+        }
+        const judgedFrom = reported.cwd === data.cwd || removedCwd ? reported : relocated()
+        if (typeof judgedFrom === 'string') return unavailable(judgedFrom)
+        const parsed = judgedFrom
+        if (parsed === undefined) {
+            const from = reported.tool === 'Bash' || reported.tool === 'Monitor'
+                ? `Start the command with \`cd ${formatShellCommand([data.cwd])} && \` so it runs from there.` : 'Name every path in full, from /.'
+            return unavailable(`The call reports the working directory ${JSON.stringify(reported.cwd)}, but the guard runs in ${JSON.stringify(data.cwd)}: `
+                + `paths are judged from one directory only. ${from}`)
+        }
         if (prepared.kind !== 'complete') {
             return unavailable(checkout.state === 'available'
                 ? `Guard policy authority could not be authenticated: ${prepared.diagnostics[0]?.message ?? 'no reason given'}`
@@ -646,25 +710,27 @@ export async function runGuardEvaluationApplication(
             })
         }
         // What a `git add` or `git commit` naming a glob or a directory, or the whole tree with none, stages: Git lists
-        // the changed and untracked paths it matches, or only the changed ones where the command stages tracked files.
+        // the changed and untracked paths it matches, or only the changed ones where the command stages tracked files;
+        // what a `git rm` naming one removes: every path the index holds there; and what `git restore --staged` or
+        // `git reset` sets back: every path where the index differs from the revision, the whole tree for `:/`.
         const staged = new Map<string, readonly string[] | null | undefined>()
-        const stagedKey = (cwd: string, path: string, literal: boolean, tracked: boolean) => `${cwd}\0${literal}\0${tracked}\0${path}`
+        const stagedKey = (cwd: string, path: string, literal: boolean, tracked: GitStagedListing) => `${cwd}\0${literal}\0${JSON.stringify(tracked)}\0${path}`
         for (const invocation of parsed.invocations) {
             const command = gitInvocation(invocation)
             const staging = command && !command.uncertain && allowed(command.cwd) ? gitStagingPathspecs(command, invocation) : undefined
             if (!staging || staging.force) continue
-            const list = (path: string, literal: boolean) => {
-                const key = stagedKey(command!.cwd, path, literal, staging.tracked)
+            const list = (path: string, literal: boolean, tracked = staging.tracked) => {
+                const key = stagedKey(command!.cwd, path, literal, tracked)
                 if (staged.has(key)) return
                 staged.set(key, undefined)
-                queries.push(async () => { staged.set(key, await guardStagedPaths(command!.cwd, path, literal, git.value, adapters.execute ?? executeProbe, staging.tracked)) })
+                queries.push(async () => { staged.set(key, await guardStagedPaths(command!.cwd, path, literal, git.value, adapters.execute ?? executeProbe, tracked)) })
             }
             if (staging.whole) list(':/', false)
             for (const pathspec of staging.pathspecs) {
                 const path = pathspec.literal ?? pathspec.spelled
                 const literal = pathspec.literal !== undefined
                 const target = resolve(command!.cwd, path)
-                if (allowed(target) && (!literal && GIT_GLOB.test(path) || lstatIfPresentSync(target)?.isDirectory())) list(path, literal)
+                if (!literal && path === ':/' || allowed(target) && (!literal && GIT_GLOB.test(path) || lstatIfPresentSync(target)?.isDirectory())) list(path, literal, pathspec.listing)
             }
         }
         for (const invocation of parsed.invocations) {
@@ -785,10 +851,10 @@ export async function runGuardEvaluationApplication(
                 const landsAt = join(realpathSync(cursor), ...rest)
                 // An existing file with another hard link is reported, since writing it writes every name it has.
                 const target = rest.length ? undefined : lstatIfPresentSync(landsAt)
-                return { status: 'resolved', path, landsAt, ...target?.isFile() ? { links: target.nlink } : {} }
+                return { status: 'resolved', path, landsAt, ...target?.isFile() ? { links: target.nlink } : {}, ...rest.length ? { missing: rest.length } : {} }
             }
             if (request.operation === 'pathspec') {
-                const matches = staged.get(stagedKey(request.cwd, request.path, request.literal === true, request.tracked === true))
+                const matches = staged.get(stagedKey(request.cwd, request.path, request.literal === true, request.tracked ?? false))
                 return matches ? { status: 'resolved', path, matches } : { status: 'unavailable', path, symlink: false }
             }
             if (request.operation === 'manifest') {
@@ -961,8 +1027,16 @@ export async function runGuardEvaluationApplication(
             : [...outside, ...parsed.invocations.flatMap(invocation => [invocation.cwd, gitInvocation(invocation)?.cwd ?? invocation.cwd])]
                 .map(path => otherCheckoutOfRepository(path, identity.root, policy.allowedRoots)).find(top => top !== undefined)
         if (elsewhere !== undefined) {
-            const kind = checkoutOf(elsewhere)?.main === elsewhere ? 'the main checkout' : 'a linked worktree'
-            return refused({ ...judged, reason: `${judged.reason} ${elsewhere} is ${kind} of this repository: run the command from there (cd ${elsewhere} first), where its own guard judges it.` })
+            const main = checkoutOf(elsewhere)?.main === elsewhere
+            // Claude Code resets the shell to the session's directory after a Bash cd outside the session's directories
+            // (measured 2026-11-25), so a cd never reaches the hand-over; its EnterWorktree tool moves the session into a
+            // worktree, and ExitWorktree returns it only to where it entered from.
+            const route = harness !== 'claudecode'
+                ? `${elsewhere} is ${main ? 'the main checkout' : 'a linked worktree'} of this repository. Start the session in ${elsewhere}, where its own guard judges the calls.`
+                : main
+                    ? `${elsewhere} is this repository's main checkout. Return the session there with the ExitWorktree tool if the session entered this worktree with EnterWorktree, or start a session there; a Bash cd outside the session's directories does not persist.`
+                    : `${elsewhere} is a linked worktree of this repository. Move the session there with the EnterWorktree tool (path ${elsewhere}); a Bash cd outside the session's directories does not persist. Calls made there are judged by its own guard.`
+            return refused({ ...judged, reason: `${judged.reason} ${route}` })
         }
         return refused(judged)
     } catch (error) {
@@ -1039,7 +1113,7 @@ function siblingRoots(config: CockpitConfig, siblingsRoot: string, served: Reado
 // names that path rather than the guard's own authority.
 class CallPathUnreadable extends RefusalError {
     constructor(path: string, cause: unknown) {
-        super(`Guard could not inspect ${forwardedReason(path)}, which this call names, so the call is held: ${errorCause(cause)}. Name a path the agent can read, or run the command in a terminal.`)
+        super(`Guard could not inspect ${forwardedReason(path)}, which this call names, so the call is held: ${errorCause(cause)}. Name a path the agent can read, or a person runs the command in a terminal.`)
     }
 }
 

@@ -241,7 +241,7 @@ export function guardWideningUnconfirmedDiagnostic(fields: readonly string[] | '
     return { severity: 'error' as const, target: 'guard',
         code: 'GUARD_CONFIG_WIDENED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED,
         message: `cockpit.toml changed since the guards were generated and ${reason}; nothing was written, as sync applies it only once a person confirms it`,
-        fix: 'this needs a person: they run npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent, or the change is reverted' }
+        fix: 'this needs a person: they run `cd <the cockpit root> && npx --no cockpit approve` in a terminal outside the agent, or the change is reverted' }
 }
 
 /** What `check` reports about an edit the guards were not regenerated for, or nothing. */
@@ -252,13 +252,13 @@ export async function inspectGuardConfigChange(root: string, configPath: string,
     if (change.kind === 'non-widening') return [{ severity: 'warning' as const, target: 'guard',
         code: 'GUARD_CONFIG_UNSYNCED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_UNSYNCED,
         message: 'cockpit.toml changed since the guards were generated without widening what agents may do; the guard judges agent calls under it, while the generated files still follow the configuration last synced until it is synced',
-        fix: `run ${cockpitCommand('sync', { config: configPath })}; an agent may run it while the guard can build its policy from the edit. Where it cannot, calls are judged under the configuration last synced and an agent's sync is refused: correct or revert the edit, or a person runs npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent` }]
+        fix: `run ${cockpitCommand('sync', { config: configPath })}; an agent may run it while the guard can build its policy from the edit. Where it cannot, calls are judged under the configuration last synced and an agent's sync is refused: correct or revert the edit, or a person runs \`cd <the cockpit root> && npx --no cockpit approve\` in a terminal outside the agent` }]
     return [{ severity: 'error' as const, target: 'guard',
         code: 'GUARD_CONFIG_WIDENED' as const satisfies typeof ENVIRONMENT_CODES.GUARD_CONFIG_WIDENED,
         message: `cockpit.toml changed since the guards were generated and ${guardConfigHeldReason(change)}; ${change.kind === 'widening'
             ? 'the guard judges agent calls under the configuration last synced, and refuses an agent\'s sync or upgrade, until a person syncs'
             : `the guard holds ${GUARD_HELD_CALLS} until a person syncs, while ${GUARD_UNHELD_CALLS} continue`}`,
         fix: change.kind === 'widening'
-            ? 'this needs a person: they run npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent, or the change is reverted'
+            ? 'this needs a person: they run `cd <the cockpit root> && npx --no cockpit approve` in a terminal outside the agent, or the change is reverted'
             : `a person reads the change and runs ${cockpitCommand('sync', { config: configPath })} in a terminal outside the agent, or the change is reverted` }]
 }

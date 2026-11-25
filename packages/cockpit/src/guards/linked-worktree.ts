@@ -1,6 +1,6 @@
 // Which main checkout a linked worktree belongs to, read from Git's own files as the hook's check reads them, so the
 // guard that admits a worktree's bind and the sync that performs it agree with the check that chose the guard.
-import { realpathSync } from 'node:fs'
+import { readdirSync, realpathSync } from 'node:fs'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 
 import { readBoundedFile } from '../bounded-read.js'
@@ -13,11 +13,12 @@ import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity }
  * Git directory or the shared `.git` directory do not name one. Git's record in the worktree's Git directory must name
  * the worktree back, so a `.git` file written by hand cannot borrow another checkout's record.
  */
+function firstLine(path: string): string | undefined {
+    const read = readBoundedFile(path, 4096)
+    return read.kind === 'complete' ? read.bytes.toString('utf8').split('\n')[0] : undefined
+}
+
 export function linkedWorktreeMainCheckout(worktree: string): string | undefined {
-    const firstLine = (path: string) => {
-        const read = readBoundedFile(path, 4096)
-        return read.kind === 'complete' ? read.bytes.toString('utf8').split('\n')[0] : undefined
-    }
     try {
         const pointer = firstLine(join(worktree, '.git'))
         if (!pointer?.startsWith('gitdir: ') || pointer === 'gitdir: ') return undefined
@@ -32,6 +33,24 @@ export function linkedWorktreeMainCheckout(worktree: string): string | undefined
         if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'ELOOP', 'EISDIR', 'EACCES')) return undefined
         throw error
     }
+}
+
+/**
+ * Whether one of Git's worktree records in the main checkout at `main` names a worktree that holds `path`. A worktree
+ * deleted without `git worktree remove` keeps its record until Git prunes it; `git worktree remove` takes it along.
+ */
+export function recordedWorktreeHolds(main: string, path: string): boolean {
+    const records = join(main, '.git/worktrees')
+    let names: string[]
+    try { names = readdirSync(records) } catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return false; throw error }
+    return names.some(name => {
+        let line: string | undefined
+        try { line = firstLine(join(records, name, 'gitdir')) }
+        catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'ELOOP', 'EISDIR', 'EACCES')) return false; throw error }
+        if (!line || basename(line) !== '.git') return false
+        const below = relative(dirname(resolve(records, name, line)), path)
+        return below !== '..' && !below.startsWith('../') && !below.startsWith('/')
+    })
 }
 
 /**

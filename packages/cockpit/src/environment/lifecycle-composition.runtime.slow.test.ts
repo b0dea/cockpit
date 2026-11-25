@@ -740,7 +740,7 @@ describe('production lifecycle adapter composition', { timeout: 180_000 }, () =>
         expect(await leftover.withAcquiredPorts(leftoverLoad.result, async () => true)).toBe(true)
         const held = await runUp({ configPath: input.configPath }, createLifecycleCommandAdapters(input, executeProbe))
         expect(held).toMatchObject({ kind: 'refusal', diagnostics: [{ code: 'EXECUTION_PRECONDITION_CHANGED',
-            fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config <your cockpit.toml> to release the claim, then ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml>' }] })
+            fix: 'run `cd <the cockpit root> && ./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config <your cockpit.toml> && ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml>`, which releases the claim and starts the stack afresh' }] })
         const released = await runDown({ configPath: input.configPath }, createDestructiveCommandAdapters({ ...input, dockerContext: 'default' }, executeProbe))
         expect(released, JSON.stringify(released)).toMatchObject({ kind: 'complete', result: { change: 'removed' } })
         await editCompose(first.candidate.checkout)

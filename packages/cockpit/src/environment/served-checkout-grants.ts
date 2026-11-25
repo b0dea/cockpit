@@ -384,7 +384,7 @@ function inspectLocalGuardAt(root: string, settingsRoot: string): readonly Envir
         code: 'CLAUDE_LOCAL_HOOK_MISSING' satisfies typeof ENVIRONMENT_CODES.CLAUDE_LOCAL_HOOK_MISSING,
         message: `${why}; Claude Code reads ${CLAUDE_SETTINGS} only from the directory a session starts in, so a session started below the cockpit root runs without the guard`,
         // Code and fix are literals, so the diagnostic inventory captures the fix beside the code.
-        target: join(settingsRoot, CLAUDE_LOCAL_SETTINGS), fix: 'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> in a terminal; if sync cannot read .claude/settings.local.json, make it a JSON object or remove it first' })
+        target: join(settingsRoot, CLAUDE_LOCAL_SETTINGS), fix: 'run `cd <the cockpit root> && ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>`; if sync cannot read .claude/settings.local.json, a person makes it a JSON object or removes it first, since the guard refuses an agent\'s write there' })
     const local = join(settingsRoot, CLAUDE_LOCAL_SETTINGS)
     if ('reason' in files) return [missing(`cockpit could not check the guard registration in ${local}: ${files.reason}`)]
     if (files.wanted.length === 0) return []

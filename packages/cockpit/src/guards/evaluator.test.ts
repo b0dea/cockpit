@@ -2051,6 +2051,116 @@ git status -s | rg -v "^\?\?"`
         }
     })
 
+    it('admits `git worktree add` of a new directory beside the checkout, alone in its call, and nothing wider', () => {
+        // Where a write outside the roots lands, through any link on its way; `missing` counts the trailing names not there yet.
+        const beside = (absent: readonly string[], links: Record<string, string> = {}, facts: Facts = {}): PathInspection => request => {
+            const path = posix.resolve(request.cwd, request.path)
+            return request.operation === 'external-write' ? { status: 'resolved', path, landsAt: links[path] ?? path, ...absent.includes(path) ? { missing: 1 } : {} }
+                : onBranch('refs/heads/topic', undefined, facts)(request)
+        }
+        const fresh = beside(['/workspace/project-copy', '/workspace/project_feature.2', '/workspace/other-copy', '/workspace/project-bin', '/workspace/node_modules', '/workspace/bower_components', '/workspace/other-name', '/workspace/.config', '/workspace/project-', '/workspace/projectx', '/workspace/nested/copy', '/copy'])
+        // Outside the roots the agent tool's own permissions still apply, as for any write there.
+        for (const command of ['git worktree add ../project-copy -b topic origin/main', 'git worktree add -b topic ../project-copy origin/main', 'git worktree add -B topic ../project-copy',
+            'git worktree add --detach ../project-copy HEAD', 'git worktree add -d ../project-copy', 'git worktree add ../project-copy', 'git worktree add /workspace/project-copy', 'git worktree add ../project_feature.2', 'git -C ../other worktree add ../other-copy -b topic']) {
+            for (const configured of [open(), { ...open(), writePaths: [`${home}/Downloads`] }]) expect(verdict(run(command, configured, fresh)), command).toBe('deferred')
+        }
+        for (const [command, evidence] of [['git worktree add -f ../project-copy -b topic', fresh], ['git worktree add --force ../project-copy', fresh], ['git worktree add --lock ../project-copy', fresh],
+            ['git worktree add --orphan topic ../project-copy', fresh], ['git worktree add ../project-copy -b topic && touch ../project-copy/notes.md', fresh], ['git worktree add ../project-copy; cd ../project-copy', fresh],
+            ['git worktree add ../project-copy -b topic | cat', fresh], ['git worktree add ../project-copy -b topic && echo done', fresh], ['git -c core.hooksPath=x worktree add ../project-copy', fresh],
+            // A directory that exists, one reached through a link, and one nested below or above the checkout's own directory.
+            ['git worktree add ../project-copy', beside([])], ['git worktree add ../project-copy', beside(['/workspace/project-copy'], { '/workspace/project-copy': '/elsewhere/project-copy' })],
+            ['git worktree add ../nested/copy', fresh], ['git worktree add ../../project-copy', fresh]] as const) {
+            expect(run(command, open(), evidence).decision, command).not.toBe('allow')
+        }
+        // Only a name built from the checkout's own is admitted: a resolver walks up to `node_modules` beside a project.
+        for (const name of ['node_modules', 'bower_components', 'other-name', '.config', 'project-', 'projectx']) {
+            expect(run(`git worktree add ../${name}`, open(), fresh), name).toEqual({ decision: 'deny', reason: expect.stringContaining('`project-<suffix>` or `project_<suffix>`') })
+        }
+        // A name a shell or the command search path loads stays refused; so is resetting a protected branch, beside the checkout or inside it.
+        expect(run('git worktree add ../project-bin', { ...open(), externalSearchDirectories: ['/workspace/project-bin/bin'] }, fresh)).toMatchObject({ decision: 'deny' })
+        for (const command of ['git worktree add -B main ../project-copy origin/main', 'git worktree add -B release/stable pkg/wt']) expect(run(command, open(), fresh), command).toMatchObject({ decision: 'deny' })
+        // The new worktree still asks when it holds an agent setting that differs from this checkout's.
+        expect(run('git worktree add ../project-copy -b topic', open(), beside(['/workspace/project-copy'], {}, { treeChanges: ['.claude/settings.json'] })).decision).toBe('ask')
+        // Git records the new worktree under .git itself; an agent writing there, or a worktree placed there, stays refused.
+        for (const command of ['git worktree add .git/worktrees/x', 'echo x > .git/worktrees/copy/gitdir']) expect(run(command, open(), fresh), command).toMatchObject({ decision: 'deny' })
+    })
+
+    it('judges a stash pop or apply by every path its entry changes, and with --index as staged too', () => {
+        // What each commit of a stash entry changes, as Git's tree diff lists it; a revision not named here is not listed.
+        const entry = (listed: Record<string, string[]>): PathInspection => request => request.operation === 'tree'
+            ? { status: 'resolved', path: posix.resolve(request.cwd, request.path), revision: request.revision, ...request.from === undefined ? {} : { from: request.from },
+                guarded: false, changed: [], ...request.lists && listed[request.revision!] ? { listed: listed[request.revision!]!.map(path => `${root}/${path}`) } : {} }
+            : onBranch('refs/heads/topic')(request)
+        const forms = ['git stash pop', 'git stash apply', 'git stash pop --index', 'git stash apply --index']
+        // An instruction file is judged by the text the entry holds, which here grants nothing.
+        for (const command of forms) {
+            expect(run(command, open(), entry({ 'stash@{0}': ['src/a.ts', '.claude/skills/probe/SKILL.md'], 'stash@{0}^2': ['src/a.ts'] })).decision, command).toBe('allow')
+            expect(run(command, open(), entry({})).decision, command).toBe('allow')
+            for (const listed of [{ 'stash@{0}': ['.env.local'] }, { 'stash@{0}^3': ['app/.secrets/key'] }, { 'stash@{0}': ['config/active.instance'] }] as Record<string, string[]>[]) {
+                expect(run(command, open(), entry(listed)), `${command} ${JSON.stringify(listed)}`).toMatchObject({ decision: 'deny' })
+            }
+        }
+        // What the entry had staged is restored only with --index, so only then is a staged guard script refused.
+        const staged = entry({ 'stash@{0}^2': ['.cockpit/guards/bash-guard.sh'] })
+        expect(run('git stash pop', open(), staged).decision).toBe('allow')
+        expect(run('git stash pop --index', open(), staged)).toMatchObject({ decision: 'deny' })
+        expect(run('git stash apply --index 1', open(), entry({ 'stash@{1}^2': ['.cockpit/guards/bash-guard.sh'] }))).toMatchObject({ decision: 'deny' })
+    })
+
+    it('judges a git rm, add or commit glob or directory by each path Git lists, and a checkout or restore of a directory by what Git compares', () => {
+        // What Git lists from the checkout root: every path the index holds for `git rm`, the changed ones for staging.
+        const index: Record<string, string[]> = { 'config/*': ['config/active.instance/data'], app: ['app/.secrets/key'], 'src/*.ts': ['src/a.ts', 'src/b.ts'],
+            '*.json': ['package.json', '.codex/hooks.json'], data: ['data/a.json'] }
+        const changed: Record<string, string[]> = { '*.json': ['package.json', '.codex/hooks.json'], '*.sh': ['.cockpit/guards/bash-guard.sh'] }
+        const listing: PathInspection = request => {
+            const listed = request.operation === 'pathspec' && request.cwd === root && !request.literal ? (request.tracked === 'index' ? index : changed)[request.path] : undefined
+            return listed ? { status: 'resolved', path: posix.resolve(request.cwd, request.path), matches: listed.map(path => `${root}/${path}`) } : onBranch('refs/heads/topic')(request)
+        }
+        for (const command of ["git rm 'src/*.ts'", "git rm --cached 'src/*.ts'", 'git rm -r --cached data', "git add '*.json'", "git commit -m Synthetic -- '*.json'"]) {
+            expect(run(command, open(), listing), command).toMatchObject({ decision: 'allow' })
+        }
+        // A listed instance file, secrets file or guard control is refused as if named; a guard script is not staged.
+        for (const command of ["git rm 'config/*'", "git rm --cached 'config/*'", 'git rm -r --cached app', "git rm --cached '*.json'", "git add '*.sh'"]) {
+            expect(run(command, open(), listing), command).toMatchObject({ decision: 'deny' })
+        }
+        // Unlisted, a glob that can match a guard control is still refused; one that cannot match any is not refused for its spelling.
+        expect(run("git rm --cached '*.json'")).toMatchObject({ decision: 'deny' })
+        expect(run("git rm --cached 'docs/*.md'")).toMatchObject({ decision: 'allow' })
+        // A checkout or restore of a directory writes what Git compares path by path, so where it answered, a directory
+        // that holds guard files is judged by that answer.
+        for (const command of ['git checkout -- .', 'git checkout .', 'git restore .', 'git restore --source=HEAD~1 -- .', 'git restore --source=FETCH_HEAD .', 'git checkout HEAD~1 -- .']) {
+            expect(run(command), command).toMatchObject({ decision: 'allow' })
+            expect(run(command, open(), onBranch('refs/heads/topic', undefined, { treeChanges: ['.codex/hooks.json'] })), command).toMatchObject({ decision: 'deny' })
+            expect(run(command, open(), onBranch('refs/heads/topic', undefined, { treeUnresolved: true })).decision, command).toBe('ask')
+        }
+        // Naming a guard control, or unstaging a directory that holds one, is judged as before.
+        for (const command of ['git checkout -- .codex/hooks.json', 'git restore --staged .']) expect(run(command).decision, command).not.toBe('allow')
+    })
+
+    it('judges git restore --staged and git reset of a directory, a glob or the whole tree by each path whose index entry differs from the revision', () => {
+        // Where the index differs from each revision below each pathspec, keyed `<revision> <pathspec>`; anything else is not listed.
+        let differs: Record<string, string[]> = {}
+        const listing: PathInspection = request => {
+            const against = request.operation === 'pathspec' && typeof request.tracked === 'object' ? request.tracked.against : undefined
+            const listed = against === undefined ? undefined : differs[`${against} ${request.path}`]
+            return listed ? { status: 'resolved', path: posix.resolve(request.cwd, request.path), matches: listed.map(path => `${root}/${path}`) } : onBranch('refs/heads/topic')(request)
+        }
+        const forms: Record<string, string> = { 'git restore --staged .': 'HEAD .', 'git reset .': 'HEAD .', 'git reset -- .': 'HEAD .', 'git reset': 'HEAD :/',
+            "git restore --staged 'src/*'": 'HEAD src/*', 'git restore -S --source=HEAD~1 src': 'HEAD~1 src', 'git reset HEAD~1 -- src': 'HEAD~1 src', 'git reset HEAD~1': 'HEAD~1 :/' }
+        for (const [command, key] of Object.entries(forms)) {
+            differs = { [key]: ['src/a.ts'] }
+            expect(run(command, open(), listing), command).toMatchObject({ decision: 'allow' })
+            // A control, an instance or a secret among the paths it sets back is judged as if named.
+            for (const path of ['config/active.instance', '.codex/hooks.json', 'app/.secrets/key']) {
+                differs = { [key]: ['src/a.ts', path] }
+                expect(run(command, open(), listing).decision, `${command} with ${path}`).not.toBe('allow')
+            }
+        }
+        // Where Git lists nothing, a directory that holds guard files asks as before.
+        differs = {}
+        expect(run('git restore --staged .', open(), listing).decision).toBe('ask')
+    })
+
     it('judges words it cannot expand only where they decide what is read, written or pushed', () => {
         const marked = (command: string, evidence: PathInspection = onBranch('refs/heads/topic')) =>
             evaluateGuard(parseGuardInput(shellPayload(command), { home }), open(), evidence)
@@ -2727,7 +2837,7 @@ git status -s | rg -v "^\?\?"`
             .map(name => ['legacy credential store', `xxd '${home}/${name}'`, undefined, { decision: 'deny', externalReads: 'native' }] as const),
         ['workspace script', 'pnpm -r build', undefined, { decision: 'ask', facts: { scripts: [], workspaceScripts: null } }],
         ['workspace script', 'pnpm --filter web osascript -e x', undefined, { decision: 'ask', facts: { scripts: [], workspaceScripts: ['build'] } }],
-        ...['git pull . evil', 'git restore --source=FETCH_HEAD .', 'git clone . build/c']
+        ...['git pull . evil', 'git clone . build/c']
             .map(command => ['covering Git operand asks', command, undefined, { decision: 'ask', facts: { guarded: true } }] as const),
     ]
     // Under the allow default a program the guard cannot read runs, as a project script it cannot read runs: these forms

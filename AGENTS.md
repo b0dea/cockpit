@@ -100,6 +100,11 @@ slow tier; run `test:changed:all` or the full suite locally only when a shared s
   restate them elsewhere.
 - **Every bug fix lands with a test that fails without it.** One test pins one public behaviour;
   extend the closest existing case.
+- **A reported problem is fixed with its whole family.** Before fixing, sweep from every direction:
+  the same rule in other commands, flags and spellings (`-A` beside `.`, `commit -a` beside `add`),
+  other harnesses, the inverse case, the refusal and fix texts that point at it, and the docs that
+  describe it. Fix them together and batch everything known into one release; a second report of
+  the same pattern means the sweep was too narrow.
 
 ## Keep docs current
 

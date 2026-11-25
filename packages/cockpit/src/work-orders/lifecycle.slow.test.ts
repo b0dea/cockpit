@@ -363,7 +363,7 @@ describe('work-order lifecycle', () => {
         writeFileSync(join(root, GUARD_LOCAL_PATHS.identity), encodeGuardLocalIdentity({ ...identity, configSha256: sha256Hex(checksToml) } as never))
         writeFileSync(join(root, GUARD_LOCAL_PATHS.generatedConfig), checksToml)
         expect((await work(root, ['work', 'status'])).diagnostics[0]?.message)
-            .toMatch(/cockpit\.toml changes work\.grading since the guards were generated, which widens what agents may do; this needs a person: they run npx --no cockpit approve/)
+            .toMatch(/cockpit\.toml changes work\.grading since the guards were generated, which widens what agents may do; this needs a person: they run `cd .+ && npx --no cockpit approve` in a terminal outside the agent/)
         // test-run reads the grading to judge test weakening, so it waits for that sync too.
         expect((await work(root, ['test-run', '--gate', 'quick', '--mode', 'canonical'])).diagnostics[0]?.message).toMatch(/changes work\.grading since the guards were generated/)
         // [testing] says which files hold tests and what each stage runs, so an edit of it waits as well.
@@ -840,7 +840,7 @@ describe('work-order lifecycle', () => {
         expect((await run(['work', 'accept', '--work-order', 'WO-14'])).status).toBe(0)
         writeFileSync(join(root, 'src/add.mjs'), 'export const add = (a, b) => a - b\n')
         expect((await run(['work', 'grade', '--work-order', 'WO-14', '--verdict', 'unmet', '--note', 'add subtracts'])).status).toBe(2)
-        expect((await run(['work', 'check', '--work-order', 'WO-14'])).diagnostics[0]?.message).toMatch(/attempt cap \(1\); record the root cause with work note, then close it with .*--partial\|--abandon --note <why>, or ask a person for fresh attempts: run .*work retry .*--note <the root cause>, then they run npx --no cockpit approve in \S+, from a terminal outside the agent$/)
+        expect((await run(['work', 'check', '--work-order', 'WO-14'])).diagnostics[0]?.message).toMatch(/attempt cap \(1\); record the root cause with work note, then close it with .*--partial\|--abandon --note <why>, or ask a person for fresh attempts: run .*work retry .*--note <the root cause>, then they run `cd \S+ && npx --no cockpit approve` in a terminal outside the agent$/)
         expect((await run(['work', 'accept', '--work-order', 'WO-14'])).diagnostics[0]?.message)
             .toMatch(/^WO-14 is already accepted and workorders\/WO-14\.md has not changed since, so there is nothing to amend; it is at its attempt cap \(1\): /)
         const retry = ['work', 'retry', '--work-order', 'WO-14', '--note', 'add subtracted; fixed in src/add.mjs']

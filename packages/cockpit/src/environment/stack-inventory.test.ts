@@ -241,7 +241,7 @@ describe('machine stack inventory', () => {
             expect.objectContaining({ stackId: stacks.gone, thisCockpit: true }), expect.objectContaining({ stackId: elsewhere, thisCockpit: false })]) },
         diagnostics: [{ severity: 'warning', code: 'STACKS_PRUNE_UNCONFIRMED', message: expect.stringContaining(elsewhere) }] } })
         expect(await agent.apply()).toMatchObject({ status: 0, result: { removedStateFolders: [legacy] },
-            diagnostics: [{ severity: 'warning', code: 'STACKS_PRUNE_UNCONFIRMED', fix: expect.stringContaining('run npx --no cockpit approve') }] })
+            diagnostics: [{ severity: 'warning', code: 'STACKS_PRUNE_UNCONFIRMED', fix: expect.stringMatching(/run `cd .+ && npx --no cockpit approve` in a terminal outside the agent/) }] })
         expect(await removed()).toEqual(['container c-gone', 'network n-gone', 'volume my-app-bbbbbbbbbbbb_data'])
 
         // A person's approval covers the machine.
