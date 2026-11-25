@@ -240,6 +240,17 @@ async function reportFailedService(
 }
 
 // A literal fix, so the diagnostic inventory captures it.
+function seedDeferred(services: readonly string[]): EnvironmentDiagnostic {
+    return {
+        severity: 'warning',
+        code: 'DATA_SEED_DEFERRED' satisfies typeof ENVIRONMENT_CODES.DATA_SEED_DEFERRED,
+        message: `the seed did not run, because ${services.join(', ')} ${services.length === 1 ? 'is' : 'are'} not running healthy; the stack's data may be missing until it does`,
+        target: 'environment.seed',
+        fix: 'fix the services named in the SESSION_SERVICES_UNHEALTHY warnings, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml>, which runs the seed once every service is healthy',
+    }
+}
+
+// A literal fix, so the diagnostic inventory captures it.
 function unhealthyForSession(service: string, why: Readonly<{ dependency: string } | { unread: string }> | undefined): EnvironmentDiagnostic {
     return {
         severity: 'warning',
@@ -643,13 +654,13 @@ async function executeUpRound(
             rememberRuntimeStart()
             const admitted = await startService(issuance.topology, service.id, adapters)
             if (admitted.kind !== 'complete') {
-                const logDiagnostics = await reportFailedService(
+                const logDiagnostics = [...await reportFailedService(
                     admitted.kind === 'failure' ? admitted.logs : undefined,
                     service.id,
                     context,
                     adapters,
                     admitted.kind === 'failure' ? admitted.stop : undefined,
-                )
+                ), ...(runtime.missingBindSources ?? []).filter(({ target }) => target === service.id)]
                 if (tolerate) {
                     setAside(service.id, logDiagnostics)
                     recording = false
@@ -893,8 +904,12 @@ async function upWithContext(context: LifecycleRunContext, adapters: UpCommandAd
                 stackId: context.stackId, holderId: context.holderId })
             if (seeded?.kind === 'refusal') return forwardedRefusal(seeded.diagnostics)
             // The stack stays up when its seed fails: the containers are healthy, and the next up
-            // runs the seed again because no success was recorded.
-            const data = await adapters.seed?.(context, result.result)
+            // runs the seed again because no success was recorded. A session that set a service aside
+            // defers it: a seed run then waited for the missing service, failed, and ended the session.
+            const setAside = result.result.unhealthy ?? []
+            if (setAside.length > 0 && adapters.seed) result = { ...result,
+                diagnostics: uniqueDiagnostics([...result.diagnostics, seedDeferred(setAside)]) }
+            const data = setAside.length > 0 ? undefined : await adapters.seed?.(context, result.result)
             if (data?.kind === 'refusal') return { kind: 'refusal', status: 2, result: null,
                 diagnostics: uniqueDiagnostics([...result.diagnostics, ...data.diagnostics]) }
             if (data?.kind === 'ran' || data?.kind === 'current') result = { ...result, result: { ...result.result, seed: data.kind } }

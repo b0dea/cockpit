@@ -1,4 +1,4 @@
-import { dirname, isAbsolute, normalize } from 'node:path'
+import { basename, dirname, isAbsolute, normalize } from 'node:path'
 import type { Diagnostic } from './environment/contract.js'
 
 // A printed command has to run as printed. Nothing wraps the installed entrypoint: the guard asks
@@ -52,6 +52,15 @@ export function cockpitCommand(command: ConfiguredCommand,
     const config = options.config === undefined ? CONFIG_PLACEHOLDER : formatShellCommand([options.config])
     const operand = options.operand === undefined ? '' : ` ${formatShellCommand([options.operand])}`
     return `./node_modules/@b00dea/cockpit/bin/cockpit.mjs ${command}${operand} --config ${config}${options.args === undefined ? '' : ` ${options.args}`}`
+}
+
+/**
+ * Sync of the configuration at the absolute `configPath` through the cockpit installed beside it, as one line that runs
+ * from any directory. The installed entrypoint is relative, so without the `cd` it ran the cockpit installed wherever the
+ * reader stood, which from a main checkout is not the one a linked worktree installs.
+ */
+export function installedSyncLine(configPath: string): string {
+    return oneCommandLine([cockpitCommand('sync', { config: basename(configPath) })], dirname(configPath))
 }
 
 /**

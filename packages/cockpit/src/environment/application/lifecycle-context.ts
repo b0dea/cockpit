@@ -80,6 +80,8 @@ export interface RuntimeReadiness {
     readonly inputs: RuntimeInputs
     /** The Compose profiles this runtime activates, sorted. */
     readonly activeProfiles: readonly string[]
+    /** A diagnostic for each bind source missing before the run, targeted at its service; for a start that fails. */
+    readonly missingBindSources?: readonly EnvironmentDiagnostic[]
 }
 
 export interface AcquiredPorts {

@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync, lstatSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { EXIT_CODES } from './invocation.js'
 import { GUARD_INPUT_LIMITS } from './guards/invocation-parser.js'
 import { adaptGuardDecision, normalizeOpenCodeInput } from './guards/harness-adapter.js'
 import { isGuardSurfaceTarget, type GuardSurfaceTarget } from './surfaces/harness-registry.js'
 import { renderJsonResponse } from './diagnostics.js'
-import { ENVIRONMENT_CODES, RefusalError, errorCause, type ExecutionStep } from './environment/contract.js'
+import { ENVIRONMENT_CODES, RefusalError, errorCause, hasErrorCode, type ExecutionStep } from './environment/contract.js'
+import { readBoundedFile } from './bounded-read.js'
 import { runGuardEvaluationApplication } from './environment/application/guard.js'
 import { observeSetupCheckout } from './environment/setup-observation.js'
 import { GUARD_EXECUTABLE_SEARCH_PATH, resolveExecutablePath, resolveGitExecutable } from './environment/executable.js'
@@ -14,6 +15,31 @@ import { authenticatedExecutionOutcome, executeProbe, runUntilDeadline } from '.
 import { loadCockpitConfig } from './config/load.js'
 import { GUARD_AGENT_VARIABLES } from './guards/agent-workspaces.js'
 import { GUARD_CHECK_PATH, GUARD_CHECK_UNSYNCED_PROTOCOL } from './guards/guard-record.js'
+
+/**
+ * Whether a file Claude Code's non-interactive shell reads before each command may set CDPATH where the hook cannot see
+ * it: zsh's .zshenv, the file BASH_ENV names, or the one CLAUDE_ENV_FILE names. One that mentions cdpath, in any case,
+ * or that exists but cannot be read whole within a small bound, leaves CDPATH unknown. A file sourced from one of these
+ * stays unseen.
+ */
+function startupMayChangeCdpath(env: Readonly<Record<string, string | undefined>>): boolean {
+    const zdotdir = env.ZDOTDIR || env.HOME
+    // Without a home there is no telling which .zshenv the shell reads.
+    if (!zdotdir) return true
+    return [join(zdotdir, '.zshenv'), env.BASH_ENV, env.CLAUDE_ENV_FILE].some(path => {
+        if (!path) return false
+        // A relative name resolves from wherever the shell starts, which the hook does not know.
+        if (!isAbsolute(path)) return true
+        // Dotfile managers link these files, so the link is followed and the file it leads to is read. A missing file sets
+        // nothing; any other failure to read it leaves CDPATH unknown, which keeps the refusal.
+        try {
+            const read = readBoundedFile(realpathSync(path), 65_536)
+            return read.kind !== 'complete' || /cdpath/i.test(read.bytes.toString('utf8'))
+        } catch (error) {
+            return !hasErrorCode(error, 'ENOENT', 'ENOTDIR')
+        }
+    })
+}
 
 // MCP arguments are opaque to a tool-name policy; bound the native envelope before parsing it.
 const NATIVE_INPUT_BYTES = 1_048_576
@@ -142,6 +168,7 @@ export async function runGuardCommand(
                 delegated: guardEnvironment.COCKPIT_GUARD_DELEGATED === '1',
                 ripgrepConfigActive: Object.hasOwn(guardEnvironment, 'RIPGREP_CONFIG_PATH') || guardEnvironment.COCKPIT_RIPGREP_CONFIG_ACTIVE === '1',
                 searchPath: guardEnvironment.PATH ?? '', agentSession, agentEnvironment,
+                ...harness === 'claudecode' && !startupMayChangeCdpath(guardEnvironment) ? { cdpath: guardEnvironment.CDPATH ?? '' } : {},
                 ...guardEnvironment.HOME ? { home: guardEnvironment.HOME } : {}, ...guardEnvironment.XDG_CONFIG_HOME ? { xdgConfigHome: guardEnvironment.XDG_CONFIG_HOME } : {} }, {
                 loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
                 resolveGit: () => resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH }),

@@ -8,8 +8,8 @@ import { loadCockpitConfig, readBoundedInput } from './config/load.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, isMissing, parseJsonText, RefusalError, tryParseJson, type EnvironmentDiagnostic } from './environment/contract.js'
 import type { CockpitConfig } from './schema.js'
 import { installedPackageMetadata } from './package-metadata.js'
-import { cockpitCommand, oneCommandLine } from './fix-catalogue.js'
-import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity } from './guards/local-identity.js'
+import { cockpitCommand, formatShellCommand, installedSyncLine, oneCommandLine } from './fix-catalogue.js'
+import { GUARD_LOCAL_PATHS, guardHandlerSuperseded, parseGuardLocalIdentity } from './guards/local-identity.js'
 import { EXACT_DEV_INSTALL, NODE_EXEC, nodeLockfile } from './init/derive.js'
 
 const PACKAGE = installedPackageMetadata.name
@@ -543,8 +543,8 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
                 : `another copy of cockpit is running: this command runs ${running}, while ${installed} links to ${linkedCopy}, so nothing here proves the installed copy, and the guard hook runs whichever copy last ran sync`,
             target: 'node_modules',
             fix: linkedCopy === undefined
-                ? `in a terminal, run \`${oneCommandLine([`${manager} install`, `${installedCopy} sync --config <your cockpit.toml>`], root)}\`, which installs the version package.json pins and binds the guard hook to it`
-                : `in a terminal in ${root}, run the installed copy instead: ${installedCopy} sync --config <your cockpit.toml>, which binds the guard hook to it; if that copy is out of date, run ${manager} install first`,
+                ? `in a terminal, run \`${oneCommandLine([`${manager} install`, `${installedCopy} sync --config ${formatShellCommand([basename(configPath)])}`], root)}\`, which installs the version package.json pins and binds the guard hook to it`
+                : `in a terminal, run the installed copy instead: \`${installedSyncLine(join(root, basename(configPath)))}\`, which binds the guard hook to it; if that copy is out of date, run ${manager} install in ${root} first`,
         })
     } else {
         const read = await readBoundedInput(join(root, GUARD_LOCAL_PATHS.identity)).catch((error: unknown) => {
@@ -558,7 +558,8 @@ export async function inspectTeamReadiness(configPath: string): Promise<readonly
             code: 'COCKPIT_NOT_INSTALLED' satisfies typeof ENVIRONMENT_CODES.COCKPIT_NOT_INSTALLED,
             message: `the guard hook runs the cockpit copy at ${identity.module}, not the one installed in ${own}, so it stops working when that copy is removed and can differ from the pinned version`,
             target: GUARD_LOCAL_PATHS.identity,
-            fix: `in a terminal in ${root}, run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>, which binds the guard hook to the installed copy`,
+            // The guard admits an agent's sync while the copy it runs still matches the install; otherwise it holds.
+            fix: `${guardHandlerSuperseded(root, identity.module) === undefined ? '' : 'in a terminal, '}run \`${installedSyncLine(join(root, basename(configPath)))}\`, which binds the guard hook to the installed copy`,
         })
     }
     const loaded = await loadCockpitConfig(configPath)

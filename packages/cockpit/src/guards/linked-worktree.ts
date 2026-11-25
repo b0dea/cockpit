@@ -1,11 +1,12 @@
 // Which main checkout a linked worktree belongs to, read from Git's own files as the hook's check reads them, so the
 // guard that admits a worktree's bind and the sync that performs it agree with the check that chose the guard.
 import { realpathSync } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 
 import { readBoundedFile } from '../bounded-read.js'
 import { hasErrorCode } from '../environment/contract.js'
 import { lstatIfPresentSync } from '../environment/presence.js'
+import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, type GuardHandlerIdentity } from './local-identity.js'
 
 /**
  * The canonical main checkout of the linked worktree at `worktree`, or undefined when its `.git` file, the worktree's
@@ -48,4 +49,24 @@ export function checkoutOf(path: string): Readonly<{ top: string; main: string }
         }
         if (directory === dirname(directory)) return undefined
     }
+}
+
+/**
+ * The guard identity the main checkout of the linked worktree at `worktree` recorded for itself, or undefined when
+ * `worktree` is no linked worktree or its main checkout has none.
+ */
+export function mainCheckoutGuardIdentity(worktree: string): GuardHandlerIdentity | undefined {
+    const main = linkedWorktreeMainCheckout(worktree)
+    if (main === undefined || main === worktree) return undefined
+    let read
+    try { read = readBoundedFile(join(main, GUARD_LOCAL_PATHS.identity), 65_536) }
+    catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'ELOOP', 'EISDIR')) return undefined; throw error }
+    const identity = read.kind === 'complete' ? parseGuardLocalIdentity(read.bytes.toString('utf8')) : undefined
+    return identity?.root === main ? identity : undefined
+}
+
+/** The command, as argv, that binds the guard of the worktree at `root` through the Node and cockpit package the main checkout's `identity` names. */
+export function worktreeBindArgv(root: string, identity: GuardHandlerIdentity): readonly string[] {
+    // The launcher of the package the guard's own handler belongs to; the handler path is canonical already.
+    return [identity.node, join(dirname(dirname(identity.module)), 'bin/cockpit.mjs'), 'sync', '--config', join(root, relative(identity.root, identity.configPath)), '--bind-worktree']
 }

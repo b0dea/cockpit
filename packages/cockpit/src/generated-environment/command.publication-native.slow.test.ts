@@ -224,6 +224,41 @@ describe('public surface publication transaction', () => {
             expect(codex(`printf x > ${join(codexHome, 'config.toml')}`)).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: expect.stringContaining('a control') })
         })
 
+        it('admits a cd to a dot-named directory under Claude Code only while the hook\'s CDPATH is empty', async () => {
+            const fixture = await surfaceConsumer('dot-cd')
+            expect(spawnSync('git', ['init', '--quiet', fixture.root]).status).toBe(0)
+            await writeFile(join(fixture.siblingDirectory, 'package-lock.json'), '{}')
+            const synced = await syncGeneratedEnvironment({ configPath: fixture.configPath })
+            expect(synced, JSON.stringify(synced.diagnostics)).toMatchObject({ kind: 'complete' })
+            const root = await realpath(fixture.root)
+            await mkdir(join(root, '.worktrees/x'), { recursive: true })
+            // A home of the test's own, so the person's start-up files do not decide.
+            const home = await realpath(await mkdtemp(join(tmpdir(), 'dot-cd-home-')))
+            roots.push(home)
+            const cd = (env: Record<string, string> = {}) => {
+                const run = spawnSync('/bin/bash', [join(root, '.cockpit/guards/bash-guard.sh'), '--harness', 'claudecode'], {
+                    cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home, ...env },
+                    input: JSON.stringify({ hook_event_name: 'PreToolUse', cwd: root, tool_name: 'Bash', tool_input: { command: 'cd .worktrees/x && pwd' } }),
+                })
+                expect(run.status, run.stderr).toBe(0)
+                // No answer leaves the call to Claude Code's own permission prompt.
+                return run.stdout ? JSON.parse(run.stdout).hookSpecificOutput.permissionDecision as string : 'unanswered'
+            }
+            expect(cd()).toBe('allow')
+            expect(cd({ CDPATH: '/somewhere' })).toBe('unanswered')
+            // The shell sources the files BASH_ENV and CLAUDE_ENV_FILE name before each command, where the hook cannot see
+            // what they set.
+            const startup = join(home, 'startup.sh')
+            for (const variable of ['BASH_ENV', 'CLAUDE_ENV_FILE']) {
+                for (const text of ['', 'export EDITOR=vi\n']) {
+                    await writeFile(startup, text)
+                    expect(cd({ [variable]: startup }), `${variable} ${JSON.stringify(text)}`).toBe('allow')
+                }
+                await writeFile(startup, 'CDPATH=~\n')
+                expect(cd({ [variable]: startup }), variable).toBe('unanswered')
+            }
+        })
+
         it('guards a Claude Code session started below the cockpit root through the local registration sync writes', async () => {
             const fixture = await surfaceConsumer('subdirectory-session')
             expect(spawnSync('git', ['init', '--quiet', fixture.root]).status).toBe(0)
@@ -435,6 +470,48 @@ describe('public surface publication transaction', () => {
             expect(call({ file_path: join(beside, 'notes.md'), content: 'synthetic' })).toBe('allow')
         // Each hook call and bind starts Node and Git several times, and this walks every way a bind is refused.
         }, 180_000)
+
+        it('answers a worktree sync run through its main checkout\'s cockpit with the worktree\'s own sync and the bind', async () => {
+            const git = (cwd: string, ...args: string[]) => expect(spawnSync('git', ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args],
+                { cwd, encoding: 'utf8' }).status).toBe(0)
+            const estate = await realpath(await mkdtemp(join(tmpdir(), 'own-install-')))
+            roots.push(estate)
+            const fixture = await surfaceConsumer('own-install', { parentDirectory: estate })
+            await writeFile(fixture.configPath, (await readFile(fixture.configPath, 'utf8')).replace('siblings_root = "."', 'siblings_root = ".."'))
+            await mkdir(join(estate, 'app'), { recursive: true })
+            await writeFile(join(estate, 'app/AGENTS.md'), 'Synthetic sibling guide.\n')
+            await writeFile(join(estate, 'app/package-lock.json'), '{}')
+            git(fixture.root, 'init', '--quiet')
+            expect(await syncTeamGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+            git(fixture.root, 'add', '-A')
+            git(fixture.root, 'commit', '--quiet', '-m', 'Synthetic cockpit')
+            const worktree = `${await realpath(fixture.root)}-feature`
+            git(fixture.root, 'worktree', 'add', '--quiet', '--detach', worktree)
+            const identity = parseGuardLocalIdentity(await readFile(join(fixture.root, '.cockpit/local/guard-identity'), 'utf8'))!
+            const packageRoot = dirname(dirname(identity.module))
+            const bind = [identity.node, join(packageRoot, 'bin/cockpit.mjs'), 'sync', '--config', join(worktree, 'cockpit.toml'), '--bind-worktree']
+            // The worktree installs the same cockpit at its own path, so the main checkout's cockpit is not the one installed there.
+            for (const file of ['package.json', 'bin/cockpit.mjs', 'dist/cli.js']) {
+                await mkdir(dirname(join(worktree, 'node_modules/@b00dea/cockpit', file)), { recursive: true })
+                await writeFile(join(worktree, 'node_modules/@b00dea/cockpit', file), await readFile(join(packageRoot, file)))
+            }
+            const ownSync = `cd ${worktree} && ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`
+            const refusal = async () => (await syncGeneratedEnvironment({ configPath: join(worktree, 'cockpit.toml') })).diagnostics[0]
+            // Nobody synced the worktree, so its guard admits only the bind, and the worktree's own sync is a person's.
+            expect(await refusal()).toMatchObject({ code: 'GENERATED_EXECUTABLE_UNAVAILABLE', fix: expect.stringContaining(`run \`${ownSync}\` in a terminal; or`) })
+            expect((await refusal())?.fix).toContain(`\`${bind.join(' ')}\``)
+            const [node, ...argv] = bind
+            const bound = spawnSync(node!, argv, { cwd: worktree, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME } })
+            expect(bound.status, `${bound.stdout}${bound.stderr}`).toBe(0)
+            // Bound to the same cockpit bytes it installs, the worktree's guard runs, so the agent runs its own sync as printed.
+            expect((await refusal())?.fix).toContain(`run \`${ownSync}\`; or`)
+            const hook = (JSON.parse(await readFile(join(worktree, '.claude/settings.json'), 'utf8')) as {
+                hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> } }).hooks.PreToolUse.at(-1)!.hooks[0]!.command
+            const run = spawnSync('/bin/sh', ['-c', hook], { cwd: worktree, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_PROJECT_DIR: worktree },
+                input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: worktree, tool_input: { command: ownSync } }) })
+            expect(run.status, run.stderr).toBe(0)
+            expect(JSON.parse(run.stdout).hookSpecificOutput.permissionDecision).toBe('allow')
+        }, 120_000)
 
         it('judges a call made in a linked worktree beside the session\'s checkout by that worktree\'s own check, and no other checkout', async () => {
             const git = (cwd: string, ...args: string[]) => expect(spawnSync('git', ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args],

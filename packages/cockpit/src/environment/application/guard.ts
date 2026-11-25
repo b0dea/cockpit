@@ -45,12 +45,12 @@ import {
     guardExtraction,
 } from '../../guards/evaluator.js'
 import { agentMayRun, commandConfiguration, commandSpelling, type OrdinaryGrant } from '../../command-table.js'
-import { GUARD_INPUT_LIMITS, parseGuardInput, type ParsedInvocation } from '../../guards/invocation-parser.js'
+import { GUARD_INPUT_LIMITS, leavesCdpathAlone, parseGuardInput, type ParsedInvocation } from '../../guards/invocation-parser.js'
 import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../../generated-environment/transaction.js'
 import { parseOwnershipManifest } from '../../surfaces/ownership.js'
 import { installedPackageMetadata } from '../../package-metadata.js'
 import { GUARD_LOCAL_PATHS, guardHandlerSuperseded, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
-import { checkoutOf, linkedWorktreeMainCheckout } from '../../guards/linked-worktree.js'
+import { checkoutOf, mainCheckoutGuardIdentity, worktreeBindArgv } from '../../guards/linked-worktree.js'
 import { inspectGuardRecord } from '../../guards/guard-record.js'
 import {
     guardInstalledDirectories,
@@ -107,6 +107,8 @@ export interface GuardEvaluationApplicationInput {
     readonly searchPath?: string
     /** HOME and XDG_CONFIG_HOME of the harness, where Git reads the person's global configuration. */
     readonly home?: string
+    /** CDPATH of the hook's process, empty when unset; only Claude Code's is the one its shell has. */
+    readonly cdpath?: string
     readonly xdgConfigHome?: string
     /** What the hook payload says about the agent's session, which locates its own files. */
     readonly agentSession?: GuardAgentSession
@@ -238,21 +240,15 @@ function otherCheckoutOfRepository(cwd: string, root: string, allowedRoots: read
  * one; the main checkout's upgrade is a person's sync, since binding new cockpit code is that approval.
  */
 function worktreeRebind(identity: GuardHandlerIdentity): WorktreeBootstrap | undefined {
-    const main = linkedWorktreeMainCheckout(identity.root)
-    if (main === undefined || main === identity.root) return undefined
-    let read
-    try { read = readBoundedFile(join(main, GUARD_LOCAL_PATHS.identity), 65_536) }
-    catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'ELOOP', 'EISDIR')) return undefined; throw error }
-    const mainIdentity = read.kind === 'complete' ? parseGuardLocalIdentity(read.bytes.toString('utf8')) : undefined
-    return mainIdentity?.root === main ? worktreeBind(identity.root, mainIdentity) : undefined
+    const mainIdentity = mainCheckoutGuardIdentity(identity.root)
+    return mainIdentity ? worktreeBind(identity.root, mainIdentity) : undefined
 }
 
 /** The bind of the worktree at `root` through the Node and cockpit package the main checkout's `identity` names. */
 function worktreeBind(root: string, identity: GuardHandlerIdentity): WorktreeBootstrap {
-    // The launcher of the package the guard's own handler belongs to; the handler path is canonical already.
+    const bind = worktreeBindArgv(root, identity)
     const packageRoot = dirname(dirname(identity.module))
-    const launcher = join(packageRoot, 'bin/cockpit.mjs')
-    const bind = [identity.node, launcher, 'sync', '--config', join(root, relative(identity.root, identity.configPath)), '--bind-worktree']
+    const launcher = bind[1]!
     let refused: string | undefined
     try {
         if (!confinedPath(packageRoot, realpathSync(launcher))) refused = `${launcher} leads out of the cockpit package at ${packageRoot}`
@@ -296,11 +292,12 @@ export async function runGuardEvaluationApplication(
         return { decision: { ...decision, reason }, diagnostics: [{ severity: 'error', code: 'GUARD_REFUSED', message: reason, target: 'guard' }] }
     }
     try {
-        const data = ownDataValues(snapshotJson(input), ['cwd', 'guardRoot', 'harness', 'identity', 'payload'], ['askIsDeny', 'unsyncedWorktree', 'delegated', 'ripgrepConfigActive', 'searchPath', 'home', 'xdgConfigHome', 'agentSession', 'agentEnvironment'])
+        const data = ownDataValues(snapshotJson(input), ['cwd', 'guardRoot', 'harness', 'identity', 'payload'], ['askIsDeny', 'unsyncedWorktree', 'delegated', 'ripgrepConfigActive', 'searchPath', 'home', 'cdpath', 'xdgConfigHome', 'agentSession', 'agentEnvironment'])
         const directory = (value: unknown) => value === undefined || typeof value === 'string' && isAbsolute(value) && !/[\x00-\x1f\x7f]/.test(value)
             && Buffer.byteLength(value) <= GUARD_INPUT_LIMITS.pathBytes
         if (!data || !directory(data.home) || !directory(data.xdgConfigHome)
             || data.searchPath !== undefined && (typeof data.searchPath !== 'string' || /[\x00-\x1f\x7f]/.test(data.searchPath) || Buffer.byteLength(data.searchPath) > GUARD_INPUT_LIMITS.inputBytes)
+            || data.cdpath !== undefined && typeof data.cdpath !== 'string'
             || data.askIsDeny !== undefined && typeof data.askIsDeny !== 'boolean'
             || data.unsyncedWorktree !== undefined && typeof data.unsyncedWorktree !== 'boolean'
             || data.delegated !== undefined && typeof data.delegated !== 'boolean'
@@ -311,6 +308,23 @@ export async function runGuardEvaluationApplication(
         if (!agentSession || !agentEnvironment || ![...Object.values(agentSession), ...Object.values(agentEnvironment)]
             .every(value => typeof value === 'string' && !/[\x00-\x1f\x7f]/.test(value) && Buffer.byteLength(value) <= GUARD_INPUT_LIMITS.pathBytes)) return unavailable('Guard request is malformed.')
         const harness = data.harness
+        // Claude Code runs each Bash command in a shell that first sources its shell snapshot, and the snapshot exports
+        // only PATH and sets neither CDPATH nor zsh's cdpath (measured 2026-11-25), so that shell's CDPATH is the one Claude
+        // Code's own process has, which its hooks inherit. When the hook's is empty, `cd name` resolves from the working
+        // directory alone, a dot-leading name included. The hook passes no CDPATH when a start-up file the shell reads,
+        // .zshenv, BASH_ENV's or CLAUDE_ENV_FILE's, mentions cdpath or cannot be read; a file sourced from those stays
+        // unseen. Codex and OpenCode shells may source a profile, so a bare name there, as under a non-empty CDPATH, stays
+        // one a CDPATH entry could send elsewhere.
+        const knownEmpty = harness === 'claudecode' && data.cdpath === ''
+        // Shell text that runs in this shell can set CDPATH unseen: a sourced file, as `. ./x.sh && cd .aws` after a write
+        // of x.sh, `eval`, zsh's `emulate -c`, a `mapfile` callback or a loaded builtin. So the empty CDPATH holds only for
+        // a call whose every command, nested ones included, is an external program or a builtin that evaluates nothing;
+        // any other call is read with CDPATH unknown, from its first command.
+        const parseCall = (payload: unknown) => {
+            const parsed = parseGuardInput(payload, { home: homedir(), ...knownEmpty ? { cdpath: '' } : {} })
+            return knownEmpty && parsed.status === 'parsed' && (parsed.unreadable || !parsed.invocations.every(leavesCdpathAlone))
+                ? parseGuardInput(payload, { home: homedir() }) : parsed
+        }
         const captured = ownDataValues(snapshotJson(data.identity), ['root', 'rootInode', 'configPath', 'configSha256', 'configInode', 'node', 'nodeSha256', 'nodeFingerprint', 'module', 'moduleSha256'])
         if (!captured
             || !Object.values(captured).every(value => typeof value === 'string')
@@ -324,7 +338,7 @@ export async function runGuardEvaluationApplication(
         // A hold over a stale binding in a linked worktree admits exactly the bind through its main checkout's cockpit, and
         // names it; every other hold stays a person's.
         const rebind = worktreeRebind(identity)
-        const early = rebind && parseGuardInput(data.payload, { home: homedir() })
+        const early = rebind && parseCall(data.payload)
         const stale = (held: GuardEvaluationApplicationResult): GuardEvaluationApplicationResult => {
             if (!rebind) return held
             if (early?.status === 'parsed' && early.cwd === data.cwd && bootstrapAdmits(early, rebind)) {
@@ -500,7 +514,7 @@ export async function runGuardEvaluationApplication(
         const widening = notice !== ''
         // A word the guard cannot expand is marked, not refused: the evaluator refuses it only where it
         // decides what is read, written or pushed.
-        const parsed = parseGuardInput(data.payload, { home: homedir() })
+        const parsed = parseCall(data.payload)
         if (parsed.status !== 'parsed') return unavailable(parsed.reason)
         // The harness reports the agent's working directory and starts the guard in a canonical one; they differ when
         // the agent's shell changed directory through a link or under another spelling.

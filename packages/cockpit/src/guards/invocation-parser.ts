@@ -746,6 +746,30 @@ const XARGS_REFUSAL = 'xargs is read only with -0, -r, -t, -x, -o, -p, -n, -L, -
 // no file; only these exact spellings qualify.
 const DEVICE_SINKS = new Set(['/dev/null', '/dev/stdout', '/dev/stderr'])
 const reserved = new Set(['if', 'then', 'else', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac', 'select', 'time', '!', 'coproc', 'repeat', '[['])
+// The builtins of bash and zsh, which run in the shell itself and so may change its state, CDPATH included.
+const SHELL_BUILTINS = new Set(['.', ':', '[', '-', 'alias', 'autoload', 'bg', 'bind', 'bindkey', 'break', 'builtin', 'bye', 'caller', 'cd', 'chdir',
+    'command', 'compadd', 'comparguments', 'compcall', 'compctl', 'compdescribe', 'compfiles', 'compgen', 'complete', 'compgroups', 'compopt',
+    'compquote', 'compset', 'comptags', 'comptry', 'compvalues', 'continue', 'declare', 'dirs', 'disable', 'disown', 'echo', 'echotc', 'echoti',
+    'emulate', 'enable', 'eval', 'exec', 'exit', 'export', 'false', 'fc', 'fg', 'float', 'functions', 'getln', 'getopts', 'hash', 'help', 'history',
+    'integer', 'jobs', 'kill', 'let', 'limit', 'local', 'log', 'logout', 'mapfile', 'noglob', 'popd', 'print', 'printf', 'private', 'pushd', 'pushln',
+    'pwd', 'r', 'read', 'readarray', 'readonly', 'rehash', 'return', 'sched', 'set', 'setopt', 'shift', 'shopt', 'source', 'suspend', 'test', 'times',
+    'trap', 'true', 'ttyctl', 'type', 'typeset', 'ulimit', 'umask', 'unalias', 'unfunction', 'unhash', 'unlimit', 'unset', 'unsetopt', 'vared', 'wait',
+    'whence', 'where', 'which', 'zcompile', 'zformat', 'zle', 'zmodload', 'zparseopts', 'zregexparse', 'zsocket', 'zstat', 'zstyle', 'ztcp'])
+// Builtins that neither evaluate text nor set a variable they are handed by name.
+const INERT_BUILTINS = new Set(['cd', 'pwd', 'echo', 'test', '[', 'true', 'false', ':', 'exit', 'return', 'printf'])
+
+/**
+ * Whether a parsed invocation leaves the calling shell's CDPATH as it found it: an external program, which runs in a
+ * child process, or a builtin that evaluates no text and sets no variable by name. Every other builtin, reserved word or
+ * definition, and a command the guard read only in part, may set CDPATH where the guard cannot see it.
+ */
+export function leavesCdpathAlone(item: ParsedInvocation): boolean {
+    if (item.executable === null) return item.words.every((entry) => ['directory', 'redirect-target', 'heredoc-body', 'comment'].includes(entry.role))
+    if (item.executable.includes('/')) return true
+    if (reserved.has(item.executable)) return false
+    if (!SHELL_BUILTINS.has(item.executable)) return true
+    return INERT_BUILTINS.has(item.executable) && !(item.executable === 'printf' && item.argv.some((arg) => /^-[^-]*v/.test(arg)))
+}
 
 function evaluationRefusal(token: Token): never {
     refuse(`${shown(token.value)} holds an expansion that can run code the guard cannot see: arithmetic on a subscript, a prompt or zsh flag expansion, or a zsh glob made from a value. Write the value out.`)
@@ -1041,7 +1065,9 @@ function invocation(tokens: Token[], cwd: string, context: Context): ParsedInvoc
         const name = posix.basename(executable)
         if (privileged.has(name) || name === 'osascript' && args.slice(cursor + 1).some((token) => /administrator\s+privileges/i.test(token.value))) forbid(`${shown(executable)} runs a command with another user's privileges. Privilege escalation is a person's action: ask them to run it in their own terminal.`)
         // The string runs in a child shell: its commands are judged as these are, and its `cd` moves only that shell.
-        const childShell = (text: string, directory: string) => parseShell(text, directory, { ...context, depth: context.depth + 1 }).map((item) => ({ ...item, wrapped: true }))
+        // A child shell reads its own start-up files, and a tmux one the server's environment, so the hook's CDPATH is not its.
+        const childShell = (text: string, directory: string) => parseShell(text, directory, { ...context, options: { ...context.options, cdpath: undefined }, depth: context.depth + 1 })
+            .map((item) => ({ ...item, wrapped: true }))
         if (scriptShells.has(name)) {
             const [first, script, ...rest] = args.slice(cursor + 1)
             if (first?.value === '-c') {
@@ -1111,10 +1137,13 @@ function changedDirectory(tokens: readonly Token[], context: Context): string | 
     const byName = context.options.cdpath === undefined && !context.cdSteered && !target.startsWith('.')
     const explicit = /^(?:\/|\.\.?(?:\/|$))/.test(target)
     if (context.options.cdpath !== '' && !explicit && !byName) refuse(CD_REFUSAL)
-    if (!explicit) context.seen.cdByName = true
     // Both shells resolve `cd` by spelling unless set to follow links (`set -P`, zsh's chase_links),
     // which the guard cannot see, as it cannot see CDPATH.
     if (climbsOutOfName(target)) refuse(`${CD_REFUSAL} A .. after a directory name is not: a shell set to follow links resolves it from wherever a link there leads.`)
+    // With CDPATH known to be empty, and not set by the call, no CDPATH entry can send a relative name to the home
+    // directory, so it is not marked as one; the evaluator still holds a name that exists nowhere below the working
+    // directory, where a `cd` the person's shell redefines, as zoxide's does, may take it anywhere.
+    if (!explicit && context.options.cdpath !== '') context.seen.cdByName = true
     return target
 }
 

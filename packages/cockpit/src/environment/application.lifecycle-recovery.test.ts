@@ -826,6 +826,60 @@ describe('lifecycle application contracts', () => {
         expect(outcome.diagnostics.every(({ severity }) => severity !== 'error')).toBe(true)
     })
 
+    // A session set its database aside, then ran the seed, which waited for that database, failed, and
+    // ended the session on DATA_SEED_FAILED instead of running the command without it.
+    it('defers the seed of a session that set a service aside, and still runs its command', async () => {
+        const { configPath, context } = await lifecycleContextFixture()
+        const lease = Object.freeze({ stackId: context.stackId, offset: 0, ports: Object.freeze({ APP_PORT: 4100 }) })
+        const projection = Object.freeze({
+            lease,
+            ownership: Object.freeze({
+                change: 'unchanged' as const, holderId: context.holderId, recordRevision: 2,
+                holderCount: 1, holderIds: Object.freeze([context.holderId]),
+            }),
+            entrypoints: Object.freeze([]),
+        })
+        stubUpPlanner((input) => ({
+            kind: 'execute', mode: 'start',
+            plan: { progress: { workBasisSha256: 'd'.repeat(64), operationGeneration: input.operationGeneration, completedServices: [] }, diagnostics: [] },
+        } as never))
+        applicationOwners.lifecycle.consumeLifecycleIssuance = () => ({
+            topology: { services: [{ id: 'api', dependsOn: [] }, { id: 'postgres', dependsOn: [] }] },
+            firstIncompleteServiceIndex: 0, portOwnership: { holderId: context.holderId },
+        } as never)
+        applicationOwners.runtime.resolveRuntimeServiceOrder = () => ['api', 'postgres']
+        applicationOwners.runtime.startRuntimeService = async ({ service, execute }) => {
+            await execute({ id: `${service}:start` } as never)
+            return (service === 'postgres' ? { kind: 'failure', logs: { service }, stop: { id: 'postgres:stop' } }
+                : { kind: 'observed', observation: { service, containerId: 'd'.repeat(64) } }) as never
+        }
+        applicationOwners.runtime.admitRuntimeServiceHealth = (observation) => observation as never
+        applicationOwners.logs.planFailureLogs = () => ({ kind: 'planned', step: { id: 'postgres:logs' } } as never)
+        applicationOwners.logs.admitFailureLogs = () => ({ kind: 'complete', records: [{ service: 'postgres',
+            timestamp: '2026-09-10T08:00:00.000Z', stream: 'stderr', message: 'synthetic slow initialisation' }] } as never)
+        stubColdStart(context.stackId)
+        const seed = vi.fn(async () => ({ kind: 'ran' as const }))
+
+        const { outcome, commands } = await sessionOver(configPath, context.stackId, {
+            load: async () => ({ kind: 'complete', status: 0, diagnostics: [], result: context }),
+            withRuntimeReadiness: async (_context, use) => use({ topology: {}, lifecycle: {}, hostObservations: [], inputs: RUNTIME_INPUTS, activeProfiles: [] } as never),
+            withLifecycleStage: async (_context, use) => use({} as never),
+            withAcquiredPorts: async (_context, use) => use({
+                retainOnFailure: vi.fn(),
+                leaseResult: { kind: 'complete', change: 'unchanged', holderId: context.holderId, recordRevision: 2, lease },
+                projection,
+            } as never),
+            execute: async () => ({ kind: 'complete' }) as never,
+            seed,
+        })
+
+        expect(seed).not.toHaveBeenCalled()
+        expect(commands).toHaveLength(1)
+        expect(outcome).toMatchObject({ kind: 'complete', status: 0 })
+        expect(outcome.diagnostics).toContainEqual(expect.objectContaining({ code: 'DATA_SEED_DEFERRED', severity: 'warning',
+            target: 'environment.seed', message: expect.stringContaining('postgres') }))
+    })
+
     // Joining is refused for a stack another session holds unless its services are healthy, so one
     // unhealthy add-on there turned every later session away. The joiner restarts nothing it does not hold.
     it.each([
