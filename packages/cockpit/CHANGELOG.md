@@ -13,6 +13,20 @@ file layout, and the overlay contract. Deprecation and migration rules are in th
 
 <!-- Changesets inserts each release above the first version heading, so this heading keeps the introduction above every release. -->
 
+## 0.1.41
+
+### Patch Changes
+
+- db42f41: Sync refusals that point at the installed cockpit now print the exact line to run, `cd <checkout> && ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config cockpit.toml`, and say "in a terminal" only where the guard would stop an agent running it. In a linked worktree whose main checkout is synced, they also name the bind to that checkout's cockpit.
+  
+  Under Claude Code, `cd .name && …` is no longer refused when CDPATH is empty: the shell resolves it from the working directory, so the guard judges it as `cd ./.name`. A non-empty CDPATH, Codex and OpenCode keep the old behaviour.
+- db42f41: Make three lifecycle failures say what went wrong:
+  
+  - `DATA_SEED_FAILED` now ends with the last of the seed's stderr, bounded and redacted, beside its exit status.
+  - A `session` that sets a service aside no longer runs the seed against the incomplete stack, where it failed and ended the session. It warns with `DATA_SEED_DEFERRED`, and the next `up` that brings every service up runs the seed.
+  - When a service fails to start, `up` names each of its bind sources that did not exist beforehand (`BIND_SOURCE_MISSING`). Docker creates a missing source as an empty directory, and nothing in `cockpit.toml` creates one.
+  - `up`, `sleep` and `down` read the checkout again when a Git command elsewhere in the repository changed it mid-read, instead of refusing with "authenticated checkout evidence is unavailable", and name that activity when it keeps happening.
+
 ## 0.1.40
 
 ### Patch Changes
