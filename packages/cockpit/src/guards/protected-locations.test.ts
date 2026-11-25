@@ -129,6 +129,11 @@ describe('guard protected locations', () => {
         // Other magic, and a pathspec outside the repository, are not listed.
         expect(await staged('.', ':(glob)src/*')).toBeUndefined()
         expect(await staged('src', '../../outside', true)).toBeUndefined()
+        // `:/` is the whole tree from any directory, as `git add -A` stages it without a pathspec; tracked only, it is
+        // what `git add -u` and `git commit -a` stage: changes and deletions, never an untracked file.
+        expect(await staged('src/app', ':/')).toEqual(await staged('.', '.'))
+        expect(await guardStagedPaths(join(root, 'src/app'), ':/', false, git, executeProbe, true))
+            .toEqual(['src/app/s/[domain]/page.tsx', 'src/app/s/d/page.tsx', 'src/app/s/x/page.tsx', 'src/gone.ts'].map(path => join(root, path)))
     })
 
     it('lists the protected paths a default ripgrep search reads from Git, and declines where Git cannot stand for ripgrep', async () => {

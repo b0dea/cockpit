@@ -417,9 +417,47 @@ describe('resolved guard evaluation', () => {
         expect(run('git commit -m Synthetic --pathspec-from-file=paths.txt')).toMatchObject({ decision: 'ask' })
     })
 
+    it('judges `git add -A`, `git add -u` and `git commit -a` without a pathspec by what Git lists for the whole tree, as `git add .` at the top', () => {
+        // A synthetic work tree: the tracked paths Git lists as changed, deletions included, and the untracked ones.
+        let changed: string[] = []
+        let untracked: string[] = []
+        const listing: PathInspection = request => request.operation === 'pathspec' && !request.literal && (request.path === ':/' || request.cwd === root && request.path === '.')
+            ? { status: 'resolved', path: posix.resolve(request.cwd, request.path), matches: [...changed, ...request.tracked ? [] : untracked].map(path => `${root}/${path}`) }
+            : inspect(request)
+        const run = (command: string, cwd = root) => evaluateGuard(parseGuardInput(shellPayload(command, cwd)), policy(), listing)
+        const forms = ['git add -A', 'git add --all', 'git add --no-ignore-removal', 'git add -Av', 'git add -u', 'git add --update', 'git add -nu',
+            'git commit -am Synthetic', 'git commit --all -m Synthetic', 'git commit -vam Synthetic']
+        changed = ['src/a.ts', 'src/gone.ts']
+        untracked = ['src/new.ts']
+        expect(run('git add .')).toMatchObject({ decision: 'allow' })
+        for (const command of forms) expect(run(command), command).toEqual(run('git add .'))
+        // A changed instance or guard script is refused as `git add .` refuses it.
+        for (const path of ['config/active.instance', '.cockpit/guards/bash-guard.sh']) {
+            changed = ['src/a.ts', path]
+            untracked = []
+            expect(run('git add .'), path).toMatchObject({ decision: 'deny' })
+            for (const command of forms) expect(run(command), `${command} with ${path}`).toEqual(run('git add .'))
+        }
+        // `-u` and `commit -a` stage tracked files only, so an untracked instance is not theirs to stage.
+        changed = ['src/a.ts']
+        untracked = ['config/active.instance']
+        expect(run('git add -A')).toEqual({ decision: 'deny', reason: 'Refusing mutation or staging of a declared environment instance.' })
+        for (const command of ['git add -u', 'git commit -am Synthetic']) expect(run(command), command).toMatchObject({ decision: 'allow' })
+        // From a subdirectory these forms still stage the whole tree.
+        expect(run('git add -A', `${root}/src`)).toEqual(run('git add -A'))
+        // Where Git cannot list the tree first, `git commit -a` gets the answer `git add -A` gets then.
+        for (const [commit, add] of [['touch src/b.ts && git commit -am Synthetic', 'touch src/b.ts && git add -A'], ['git commit --all -m Synthetic | cat', 'git add -A | cat'],
+            ['git -c core.quotePath=false commit -vam Synthetic', 'git -c core.quotePath=false add -A']]) {
+            expect(run(add), add).toMatchObject({ decision: 'deny' })
+            expect(run(commit), commit).toEqual(run(add))
+        }
+    })
+
     it('reads a commit message as text, whichever short options it is bundled with', () => {
+        // `-a` commits what Git lists for the whole tree: here, nothing changed.
+        const unchanged: PathInspection = request => request.operation === 'pathspec' && request.path === ':/' ? { status: 'resolved', path: posix.resolve(request.cwd, request.path), matches: [] } : inspect(request)
         for (const command of ['git commit -am "Subject\n\nBody line.\n\nTrailer: x"', 'git commit -qm "Subject\n\nBody"', 'git commit -m "*"', 'git commit -vam "[wip] *"']) {
-            expect(decide(command), command).toMatchObject({ decision: 'allow' })
+            expect(evaluateGuard(parseGuardInput(shellPayload(command)), policy(), unchanged), command).toMatchObject({ decision: 'allow' })
         }
         // A path after the message is still staged and judged; -S takes only the rest of its word, so `.env` is a path.
         for (const command of ['git commit -am Subject .env', 'git commit -Sm .env', 'git commit -mSubject -- .env']) expect(decide(command), command).toMatchObject({ decision: 'deny' })

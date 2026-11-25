@@ -347,20 +347,24 @@ export async function guardUnignoredSensitivePaths(path: string, watched: readon
  * modified (deletions included) or untracked below the pathspec, with only the `.gitignore` files applied, so a
  * global or repository exclude, which an agent can set aside for one command, hides nothing. Matched without regard
  * to case, as a case-insensitive volume or GIT_ICASE_PATHSPECS can, with ignore rules applied both with and without regard to case. `literal` names one path exactly, as
- * `:(literal)` does; otherwise the pathspec is a glob. Undefined when it holds other magic, lies outside the
- * repository, its directory's own spelling holds a glob character, or Git did not answer; null past the path bound.
+ * `:(literal)` does; otherwise the pathspec is a glob, and `:/` is the whole tree, which `git add -A` and `-u` stage
+ * without a pathspec. `tracked` lists only modified and deleted paths, which `-u` and `git commit` stage. Undefined when
+ * it holds other magic, lies outside the repository, its directory's own spelling holds a glob character, or Git did
+ * not answer; null past the path bound.
  */
-export async function guardStagedPaths(cwd: string, pathspec: string, literal: boolean, git: ResolvedExecutable, execute: GuardExecute): Promise<readonly string[] | null | undefined> {
-    if (!literal && pathspec.startsWith(':')) return undefined
+export async function guardStagedPaths(cwd: string, pathspec: string, literal: boolean, git: ResolvedExecutable, execute: GuardExecute,
+    tracked = false): Promise<readonly string[] | null | undefined> {
+    const whole = !literal && pathspec === ':/'
+    if (!literal && !whole && pathspec.startsWith(':')) return undefined
     const repository = repositoryAbove(cwd)
     if (repository === undefined) return undefined
     // Git prefixes a pathspec with the working directory's path as literal text, which a glob from the top cannot spell.
-    if (/[*?[\\]/.test(relative(repository, cwd))) return undefined
-    const fromTop = relative(repository, resolve(cwd, pathspec))
+    if (!whole && /[*?[\\]/.test(relative(repository, cwd))) return undefined
+    const fromTop = whole ? '' : relative(repository, resolve(cwd, pathspec))
     if (fromTop === '..' || fromTop.startsWith('../') || posix.isAbsolute(fromTop)) return undefined
     // Ignore patterns, a `!` re-inclusion among them, match by case as core.ignoreCase says, so both answers are listed.
     const listings = await Promise.all(['false', 'true'].map(ignoreCase => gitPaths(git, repository, ['-c', `core.ignoreCase=${ignoreCase}`, 'ls-files', '-z',
-        '--modified', '--others', '--exclude-per-directory=.gitignore', '--', `:(icase${literal ? ',literal' : ''})${fromTop}`], execute)))
+        '--modified', ...tracked ? [] : ['--others'], '--exclude-per-directory=.gitignore', '--', `:(icase${literal ? ',literal' : ''})${fromTop}`], execute)))
     if (listings.some(listed => listed === null)) return undefined
     const unique = [...new Set(listings.flatMap(listed => listed!))]
     return unique.length > GUARD_STAGED_PATHS ? null : unique.map(path => join(repository, path)).sort()
