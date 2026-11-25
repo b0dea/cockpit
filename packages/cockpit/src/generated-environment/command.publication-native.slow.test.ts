@@ -444,6 +444,22 @@ describe('public surface publication transaction', () => {
                 await writeFile(join(checkout, '.claude/settings.json'), syncedSettings)
             }
             await writeFile(join(beside, '.cockpit/generated-environment-ownership.json'), syncedManifest)
+            // So is cockpit's region of a shared file: a sibling guide revised and synced in another worktree, whose AGENTS.md
+            // both checkouts then hold and whose record this one holds, matches everywhere but the main checkout's last sync.
+            const ledger = '.cockpit/generated-environment-ownership.json'
+            const siblingGuide = await readFile(join(estate, 'app/AGENTS.md'))
+            const syncedAgents = await readFile(join(fixture.root, 'AGENTS.md'))
+            const revised = `${fixture.root}-revised`
+            git(fixture.root, 'worktree', 'add', '--quiet', '--detach', revised)
+            await writeFile(join(estate, 'app/AGENTS.md'), 'Synthetic sibling guide, revised.\n')
+            expect(await syncTeamGeneratedEnvironment({ configPath: join(revised, 'cockpit.toml') })).toMatchObject({ kind: 'complete' })
+            for (const checkout of [fixture.root, beside]) await writeFile(join(checkout, 'AGENTS.md'), await readFile(join(revised, 'AGENTS.md')))
+            await writeFile(join(beside, ledger), await readFile(join(revised, ledger)))
+            expect(binds(beside)).toMatchObject({ status: 2,
+                output: expect.stringMatching(/GUARD_WORKTREE_BIND_REFUSED[\s\S]*has changes its last sync did not record, starting at AGENTS\.md/) })
+            await writeFile(join(estate, 'app/AGENTS.md'), siblingGuide)
+            for (const checkout of [fixture.root, beside]) await writeFile(join(checkout, 'AGENTS.md'), syncedAgents)
+            await writeFile(join(beside, ledger), syncedManifest)
             expect(binds(beside)).toMatchObject({ status: 0 })
             // Bound, the worktree's own guard judges it, running the main checkout's cockpit, whose package it protects.
             expect(call({ file_path: join(beside, 'notes.md'), content: 'synthetic' })).toBe('allow')
@@ -567,7 +583,7 @@ describe('public surface publication transaction', () => {
             }
             expect(await raw(main)).toEqual(await raw(synced))
             // Made from the main checkout, a call naming the worktree stays refused there, and the refusal says where to run it.
-            const runThere = `${synced} is a linked worktree of this repository: run the command from there (cd ${synced} first), where its own guard judges it.`
+            const runThere = `${synced} is a linked worktree of this repository. Move the session there with the EnterWorktree tool (path ${synced}); a Bash cd outside the session's directories does not persist. Calls made there are judged by its own guard.`
             for (const [tool_input, tool_name] of [[{ command: `git -C ${synced} add notes.md` }, 'Bash'], [{ file_path: join(synced, 'notes.md'), content: 'synthetic' }, 'Write']] as const) {
                 expect(await call(main, main, tool_input, tool_name), tool_name).toMatchObject({ permissionDecision: 'deny',
                     permissionDecisionReason: expect.stringContaining(`escapes configured roots`) })
@@ -586,7 +602,84 @@ describe('public surface publication transaction', () => {
                 expect(await call(main, elsewhere, { command: 'pwd' }), elsewhere).toMatchObject({ permissionDecision: 'deny',
                     permissionDecisionReason: expect.stringContaining('Guard path escapes configured roots') })
             }
+            // A cd into another checkout does not persist in Claude Code, so from the main checkout it stays refused, alone or joined.
+            const answer = async (command: string) => {
+                const run = spawnSync('/bin/sh', ['-c', await hookOf(join(main, '.claude/settings.json'))], { cwd: main, encoding: 'utf8',
+                    env: { PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_PROJECT_DIR: main },
+                    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: main, tool_input: { command } }) })
+                expect(run.status, run.stderr).toBe(0)
+                // No answer leaves the call to Claude Code's own permissions, which ask.
+                return run.stdout ? (JSON.parse(run.stdout).hookSpecificOutput as { permissionDecision: string }).permissionDecision : 'unanswered'
+            }
+            for (const command of [`cd ${synced}`, `cd ${unsynced} && pwd`, `cd ${synced} && ls`, `cd ${synced} || pwd`, `cd ${synced} && pwd > out.txt`, `cd ${unrelated}`, `cd ${forged}`]) {
+                expect(await answer(command), command).toBe('deny')
+            }
+            // A .. after a name is a cd the guard does not read, which it leaves to the tool's own permissions.
+            expect(await answer(`cd ${synced}/../x`)).toBe('unanswered')
+            expect((await call(main, main, { command: `cd ${synced} && ls` })).permissionDecisionReason).toContain(runThere)
+            expect((await call(synced, synced, { command: `git -C ${main} add notes.md` })).permissionDecisionReason).toContain(`${main} is this repository's main checkout. Return the session there with the ExitWorktree tool if the session entered this worktree with EnterWorktree, or start a session there; a Bash cd outside the session's directories does not persist.`)
         // Each delegated call starts the hook's Node twice.
+        }, 180_000)
+
+        it('judges a call from a removed worktree outside every root from the session\'s checkout', async () => {
+            const git = (cwd: string, ...args: string[]) => expect(spawnSync('git', ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args],
+                { cwd, encoding: 'utf8' }).status).toBe(0)
+            const hookOf = async (settings: string) => (JSON.parse(await readFile(settings, 'utf8')) as {
+                hooks: { PreToolUse: Array<{ hooks: Array<{ command: string }> }> } }).hooks.PreToolUse.at(-1)!.hooks[0]!.command
+            const estate = await realpath(await mkdtemp(join(tmpdir(), 'removed-worktree-')))
+            roots.push(estate)
+            const fixture = await surfaceConsumer('removed', { parentDirectory: estate })
+            await writeFile(fixture.configPath, (await readFile(fixture.configPath, 'utf8')).replace('siblings_root = "."', 'siblings_root = ".."'))
+            await mkdir(join(estate, 'app'), { recursive: true })
+            await writeFile(join(estate, 'app/AGENTS.md'), 'Synthetic sibling guide.\n')
+            await writeFile(join(estate, 'app/package-lock.json'), '{}')
+            git(fixture.root, 'init', '--quiet')
+            expect(await syncTeamGeneratedEnvironment({ configPath: fixture.configPath })).toMatchObject({ kind: 'complete' })
+            git(fixture.root, 'add', '-A')
+            git(fixture.root, 'commit', '--quiet', '-m', 'Synthetic cockpit')
+            const main = await realpath(fixture.root)
+            // A worktree removed while the session's shell is in it: the agent tool starts the hook in the session's checkout
+            // and reports the removed directory, outside every root. The cd back and calls by absolute path are judged from
+            // the checkout; a path that climbs out of the removed directory resolves from where it was, so it is not.
+            const fromGone = async (cwd: string, tool_input: object, tool_name = 'Bash') => {
+                const run = spawnSync('/bin/sh', ['-c', await hookOf(join(main, '.claude/settings.json'))], { cwd: main, encoding: 'utf8',
+                    env: { PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_PROJECT_DIR: main },
+                    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name, cwd, tool_input }) })
+                expect(run.status, run.stderr).toBe(0)
+                return JSON.parse(run.stdout).hookSpecificOutput as { permissionDecision: string; permissionDecisionReason?: string }
+            }
+            // `git worktree remove` takes Git's record with it; a worktree deleted by hand leaves its record, wherever it was kept.
+            const removed = `${main}-removed`
+            git(main, 'worktree', 'add', '--quiet', '--detach', removed)
+            git(main, 'worktree', 'remove', removed)
+            const pruned = join(estate, 'kept/elsewhere/pruned')
+            git(main, 'worktree', 'add', '--quiet', '--detach', pruned)
+            await rm(pruned, { recursive: true, force: true })
+            for (const cwd of [removed, join(pruned, 'sub')]) {
+                for (const [tool_input, tool_name] of [[{ command: `cd ${main}` }, 'Bash'], [{ command: `cd ${main} && git status` }, 'Bash'], [{ command: `ls ${main}` }, 'Bash'],
+                    [{ file_path: join(main, 'notes.md'), content: 'synthetic' }, 'Write']] as const) {
+                    expect(await fromGone(cwd, tool_input, tool_name), `${cwd}: ${JSON.stringify(tool_input)}`).toMatchObject({ permissionDecision: 'allow' })
+                }
+                expect(await fromGone(cwd, { command: 'cat ../notes.md' }), cwd).toMatchObject({ permissionDecision: 'deny' })
+            }
+            // A missing directory no record names, away from the main checkout, admits only what runs nowhere but where it names.
+            const never = join(estate, 'kept/elsewhere/never')
+            expect(await fromGone(never, { command: `cd ${main} && git status` })).toMatchObject({ permissionDecision: 'allow' })
+            expect(await fromGone(never, { file_path: join(main, 'notes.md'), content: 'synthetic' }, 'Write')).toMatchObject({ permissionDecision: 'allow' })
+            expect(await fromGone(never, { command: `ls ${main}` })).toMatchObject({ permissionDecision: 'deny',
+                permissionDecisionReason: expect.stringContaining(`Start the command with \`cd ${main} && \` so it runs from there.`) })
+            // A worktree moved rather than removed still holds its branch, here a protected one the main checkout does not, so a
+            // Git command that acts on the branch is not judged from the main checkout.
+            const protectedBranch = spawnSync('git', ['symbolic-ref', '--short', 'HEAD'], { cwd: main, encoding: 'utf8' }).stdout.trim()
+            git(main, 'switch', '--quiet', '-c', 'feature')
+            const movedFrom = `${main}-moved`
+            git(main, 'worktree', 'add', '--quiet', movedFrom, protectedBranch)
+            git(main, 'worktree', 'move', movedFrom, `${main}-moved-again`)
+            for (const command of ['git push', 'git reset --hard HEAD~1', 'git push origin HEAD']) {
+                expect(await fromGone(movedFrom, { command }), command).toMatchObject({ permissionDecision: 'deny',
+                    permissionDecisionReason: expect.stringContaining(`Start the command with \`cd ${main} && \``) })
+            }
+        // Each hook call starts Node and Git several times.
         }, 180_000)
 
         it('judges a file tool call larger than the parser reads by its path, while a command that large stays refused', async () => {

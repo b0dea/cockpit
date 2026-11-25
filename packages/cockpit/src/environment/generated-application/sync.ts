@@ -2,14 +2,14 @@ import { prepareTeamMetadata, applyTeamMetadata, type TeamMetadataChange } from 
 import { createHash } from 'node:crypto'
 import { lstatSync } from 'node:fs'
 import { lstat, readFile, realpath } from 'node:fs/promises'
-import { basename, isAbsolute, join, relative, sep } from 'node:path'
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, writeCockpitLocalFiles, writeGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
 import { linkedWorktreeMainCheckout } from '../../guards/linked-worktree.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode } from '../contract.js'
 import { readBoundedFile } from '../../bounded-read.js'
 import { ADOPTABLE_SURFACE_PATHS } from '../../surfaces/contract.js'
-import { parseOwnershipManifest } from '../../surfaces/ownership.js'
+import { classifyGeneratedPaths, parseOwnershipManifest, projectGeneratedPathFacts } from '../../surfaces/ownership.js'
 import { publicationCockpitId } from '../identity.js'
 import { adoptedCopyPath } from '../../surfaces/adoption.js'
 import { GUARD_HELD_CALLS } from '../../surfaces/harness-registry.js'
@@ -110,14 +110,14 @@ function sameTrackedBytes(left: string, right: string): boolean {
     return Buffer.isBuffer(a) ? Buffer.isBuffer(b) && a.equals(b) : a === b && a !== 'other'
 }
 
-function bindRefusal(reason: string, fix = 'a person reviews the worktree and runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> there, in a terminal outside the agent'): RefusalOutcome {
+function bindRefusal(configPath: string, reason: string, fix = `a person reviews the worktree, then runs \`${installedSyncLine(resolve(configPath))}\` in a terminal outside the agent`): RefusalOutcome {
     return refuse('GUARD_WORKTREE_BIND_REFUSED' satisfies typeof ENVIRONMENT_CODES.GUARD_WORKTREE_BIND_REFUSED,
         `${reason}, so the worktree's guard was not bound and nothing was written`, 'guard', fix)
 }
 
 /**
  * The first path of the main checkout that differs from what its last sync recorded, its configuration against the
- * guard identity and every whole generated file against the ownership manifest, or undefined when they all match. The bind
+ * guard identity and every generated file or region against the ownership manifest, or undefined when they all match. The bind
  * copies the main checkout's state, so that state must be the one a person synced, not one edited since.
  */
 function unsyncedMainChange(main: string, identity: GuardHandlerIdentity, cockpitName: string): string | undefined {
@@ -134,10 +134,20 @@ function unsyncedMainChange(main: string, identity: GuardHandlerIdentity, cockpi
     let manifest
     try { manifest = readBoundedFile(join(main, OWNERSHIP_PATH), 16_777_216) }
     catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'ELOOP', 'EISDIR')) return OWNERSHIP_PATH; throw error }
-    const ownership = manifest.kind === 'complete' ? parseOwnershipManifest(manifest.bytes.toString('utf8'),
-        { root: main, configPath: identity.configPath, cockpitId: publicationCockpitId({ name: cockpitName }) }) : undefined
+    const authority = { root: main, configPath: identity.configPath, cockpitId: publicationCockpitId({ name: cockpitName }) }
+    const ownership = manifest.kind === 'complete' ? parseOwnershipManifest(manifest.bytes.toString('utf8'), authority) : undefined
     if (ownership?.kind !== 'complete' || ownership.manifest.source.sha256 !== identity.configSha256) return OWNERSHIP_PATH
-    return ownership.manifest.entries.find(entry => entry.kind === 'file' && digest(join(main, entry.path)) !== entry.sha256)?.path
+    const projected = projectGeneratedPathFacts(ownership.manifest, authority, [])
+    if (projected.kind !== 'complete') return OWNERSHIP_PATH
+    for (const fact of projected.facts) {
+        let read
+        try { read = readBoundedFile(join(main, fact.path), 16_777_216) }
+        catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'ELOOP', 'EISDIR')) return fact.path; throw error }
+        const classified = read.kind === 'complete' ? classifyGeneratedPaths([fact], [{ path: fact.path, kind: 'file', bytes: read.bytes,
+            confinement: 'confined', identity: 'main checkout' }]) : undefined
+        if (classified?.kind !== 'complete' || classified.paths[0]?.state !== 'unchanged') return fact.path
+    }
+    return undefined
 }
 
 // A new linked worktree carries the committed cockpit files but not the machine-local identity sync binds, and its
@@ -153,22 +163,22 @@ async function bindLinkedWorktree(request: GeneratedEnvironmentSyncInput,
     if ('refusal' in publication) return publication.refusal
     const { prepared, plan } = publication
     const main = linkedWorktreeMainCheckout(prepared.root)
-    if (!main) return bindRefusal(`${prepared.root} is not a linked worktree whose Git record names it back from a main checkout`)
+    if (!main) return bindRefusal(request.configPath, `${prepared.root} is not a linked worktree whose Git record names it back from a main checkout`)
     let mainIdentity: GuardHandlerIdentity | undefined
     try { mainIdentity = parseGuardLocalIdentity(await readFile(join(main, GUARD_LOCAL_PATHS.identity), 'utf8')) }
-    catch (error) { if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return bindRefusal(`the guard identity of ${main} could not be read (${errorCause(error)})`) }
-    if (!mainIdentity || mainIdentity.root !== main) return bindRefusal(`its main checkout ${main} has no guard identity of its own to bind to`)
+    catch (error) { if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return bindRefusal(request.configPath, `the guard identity of ${main} could not be read (${errorCause(error)})`) }
+    if (!mainIdentity || mainIdentity.root !== main) return bindRefusal(request.configPath, `its main checkout ${main} has no guard identity of its own to bind to`)
     const running = await realpath(fileURLToPath(new URL('../../../dist/cli.js', import.meta.url)))
     if (running !== mainIdentity.module || createHash('sha256').update(await readFile(running)).digest('hex') !== mainIdentity.moduleSha256) {
-        return bindRefusal(`this cockpit runs from ${running}, not ${mainIdentity.module}, the one the guard of ${main} runs`)
+        return bindRefusal(request.configPath, `this cockpit runs from ${running}, not ${mainIdentity.module}, the one the guard of ${main} runs`)
     }
     if (await realpath(process.execPath) !== await realpath(mainIdentity.node).catch(() => undefined)) {
-        return bindRefusal(`this cockpit runs on ${process.execPath}, not ${mainIdentity.node}, the Node the guard of ${main} runs`)
+        return bindRefusal(request.configPath, `this cockpit runs on ${process.execPath}, not ${mainIdentity.node}, the Node the guard of ${main} runs`)
     }
     if (relative(prepared.root, prepared.configPath) !== relative(main, mainIdentity.configPath)) {
-        return bindRefusal(`${prepared.configPath} is not at the place in the worktree where ${main} keeps its synced configuration`)
+        return bindRefusal(request.configPath, `${prepared.configPath} is not at the place in the worktree where ${main} keeps its synced configuration`)
     }
-    if (prepared.sourceSha256 !== mainIdentity.configSha256) return bindRefusal(`${prepared.configPath} differs from the configuration synced in ${main}`)
+    if (prepared.sourceSha256 !== mainIdentity.configSha256) return bindRefusal(request.configPath, `${prepared.configPath} differs from the configuration synced in ${main}`)
     // The configuration names its siblings relative to where it lies, so the same bytes elsewhere can grant other directories.
     // A sibling inside each checkout at the same place, such as the root sibling `dir = "."`, is that checkout's own
     // directory on either side; any other must be the very same directory, or the worktree's guard would grant another.
@@ -177,7 +187,7 @@ async function bindLinkedWorktree(request: GeneratedEnvironmentSyncInput,
         || confinedPath(prepared.root, worktree) && confinedPath(main, checkout) && relative(prepared.root, worktree) === relative(main, checkout))
     if (siblings.kind !== 'complete' || siblings.roots.siblings.size !== prepared.siblingRoots.siblings.size
         || [...prepared.siblingRoots.siblings].some(([slug, sibling]) => !sameSibling(sibling.root, siblings.roots.siblings.get(slug)?.root))) {
-        return bindRefusal(`its configuration resolves its siblings to other directories from ${prepared.root} than from ${main}`)
+        return bindRefusal(request.configPath, `its configuration resolves its siblings to other directories from ${prepared.root} than from ${main}`)
     }
     // Rendered files do not name their checkout, so every tracked input sync reads and every file it owns must hold the
     // main checkout's bytes: a branch can commit another adopted settings copy with the files regenerated from it.
@@ -189,11 +199,11 @@ async function bindLinkedWorktree(request: GeneratedEnvironmentSyncInput,
         OWNERSHIP_PATH, ...prepared.owned.map(row => row.path), ...prepared.surfaces.map(row => row.path),
         ...publication.ownership.kind === 'complete' ? publication.ownership.manifest.entries.map(row => row.path) : []])]
     const unsynced = unsyncedMainChange(main, mainIdentity, prepared.registry.config.cockpit.name)
-    if (unsynced !== undefined) return bindRefusal(`${main} has changes its last sync did not record, starting at ${unsynced}`,
-        `a person reviews the main checkout and runs ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config ${mainIdentity.configPath} in ${main}, in a terminal outside the agent, then the bind runs again`)
+    if (unsynced !== undefined) return bindRefusal(request.configPath, `${main} has changes its last sync did not record, starting at ${unsynced}`,
+        `a person reviews the main checkout, then runs \`${installedSyncLine(mainIdentity.configPath)}\` in a terminal outside the agent, and the bind runs again`)
     const differing = compared.find(path => !sameTrackedBytes(join(prepared.root, path), join(main, path)))
-    if (differing !== undefined) return bindRefusal(`${differing} differs from the copy in ${main}`)
-    if (plan.changes.length) return bindRefusal(`its generated files are not the ones its configuration generates: sync would ${plan.changes[0]!.operation} ${plan.changes[0]!.path}`)
+    if (differing !== undefined) return bindRefusal(request.configPath, `${differing} differs from the copy in ${main}`)
+    if (plan.changes.length) return bindRefusal(request.configPath, `its generated files are not the ones its configuration generates: sync would ${plan.changes[0]!.operation} ${plan.changes[0]!.path}`)
     // Bound to the Node and cockpit the main checkout's guard runs, which this process is.
     const guardHandler: GuardHandlerIdentity = { ...mainIdentity, root: prepared.root, rootInode: String((await lstat(prepared.root)).ino),
         configPath: prepared.configPath, configInode: String((await lstat(prepared.configPath)).ino) }
@@ -225,7 +235,7 @@ export async function syncTeamGeneratedEnvironment(
     if (metadata.kind === 'refusal') return refuse(metadata.code, metadata.message, metadata.target, metadata.fix)
     if (request.bindWorktree) {
         return metadata.authority.changes.length
-            ? bindRefusal(`it would write the team metadata ${metadata.authority.changes[0]!.path}`)
+            ? bindRefusal(request.configPath, `it would write the team metadata ${metadata.authority.changes[0]!.path}`)
             : bindLinkedWorktree(request, adapterOverrides)
     }
     const prepared = await prepareGeneratedEnvironmentSync(request, adapterOverrides, metadata.authority.changes)
@@ -299,7 +309,7 @@ export async function applyGeneratedEnvironmentRepair(
         const claude = await writeClaudeLocalGuard(prepared.root)
         if (claude.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
             `the committed guard files were published, but ${claude.message}; a Claude Code session started below the cockpit root runs without the guard until it is written`,
-            '.claude/settings.local.json', `make .claude/settings.local.json a JSON object or remove it, then run \`${installedSyncLine(prepared.configPath)}\` again`)
+            '.claude/settings.local.json', `a person makes .claude/settings.local.json a JSON object or removes it, since the guard refuses an agent's write there, then run \`${installedSyncLine(prepared.configPath)}\` again`)
     }
     if (prepared.openCodeGrantRoots.length > 0 && settings.dryRun !== true) {
         // A checkout `use` serves from outside the declared one is what OpenCode is granted, as `use` wrote it.

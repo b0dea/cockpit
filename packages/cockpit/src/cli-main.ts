@@ -502,8 +502,8 @@ function weakenedTestsDiagnostic(operation: WorkApplicationRequest['operation'],
     return { severity: 'error', message,
         code: 'WORK_TEST_WEAKENED' satisfies typeof ENVIRONMENT_CODES.WORK_TEST_WEAKENED,
         fix: operation === 'work-grade'
-            ? 'read result.testProtection.findings and the verdict on them: restore each test weakened to make the change pass. Under [work] grading = "independent" the evaluator judged the test changes unjustified in the diff; under "self" or "subagent" your --note names each flagged file and why; under "checks" run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why it is not a weakening> for a legitimate change, and a person approves it with npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent; never answer it for them'
-            : 'read result.testProtection: restore each deleted, skipped, suppressed or loosened test. A grade without an order has the evaluator judge the test changes; an order records the base they are compared with, and under [work] grading = "checks" a legitimate change is acknowledged with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why>, which a person approves with npx --no cockpit approve in <the cockpit root>' }
+            ? 'read result.testProtection.findings and the verdict on them: restore each test weakened to make the change pass. Under [work] grading = "independent" the evaluator judged the test changes unjustified in the diff; under "self" or "subagent" your --note names each flagged file and why; under "checks" run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why it is not a weakening> for a legitimate change, and a person approves it with `cd <the cockpit root> && npx --no cockpit approve` in a terminal outside the agent; never answer it for them'
+            : 'read result.testProtection: restore each deleted, skipped, suppressed or loosened test. A grade without an order has the evaluator judge the test changes; an order records the base they are compared with, and under [work] grading = "checks" a legitimate change is acknowledged with ./node_modules/@b00dea/cockpit/bin/cockpit.mjs work acknowledge --config <your cockpit.toml> --work-order <id> --note <why>, which a person approves with `cd <the cockpit root> && npx --no cockpit approve` in a terminal outside the agent' }
 }
 
 type PersonHandler = 'work-accept' | 'work-signoff' | 'work-acknowledge' | 'work-retry'
@@ -515,7 +515,7 @@ function personRequired(handler: PersonHandler, title: string): CommandOutcome {
     const rule = handler === 'work-retry' ? 'always a person\'s step' : 'a person\'s step here, as it would let the agent lower the bar its own work is held to'
     return { artifact: null, destination: null, result: { title }, status: 2, diagnostics: [{ severity: 'error', message: `${handler.slice('work-'.length)} is ${rule}; nothing changed`,
         code: 'WORK_PERSON_REQUIRED' satisfies typeof ENVIRONMENT_CODES.WORK_PERSON_REQUIRED,
-        fix: 'this needs a person: they run npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent, which shows the step and asks them; never answer it for them' }] }
+        fix: 'this needs a person: they run `cd <the cockpit root> && npx --no cockpit approve` in a terminal outside the agent, which shows the step and asks them; never answer it for them' }] }
 }
 
 // A grade by the same tool that did the work is weaker than one by another tool, so it is never silent.
@@ -1481,7 +1481,7 @@ async function canonicalConfig(configPath: string): Promise<string> {
 
 // What an agent hands the person for a step left waiting: one line to copy, and where it runs. Claude Code's `!` runs a
 // command inside the agent's session, where approve finds no person to answer it.
-const approveHandOff = (command = 'npx --no cockpit approve') => `run \`cd <the cockpit root> && ${command}\` in a terminal of your own, not with \`!\` in this session, which can't take your answer`
+const approveHandOff = (command = 'npx --no cockpit approve') => `run \`cd <the cockpit root> && ${command}\` in a terminal outside the agent, not with \`!\` in this session, which can't take your answer`
 
 /** Records a step that waits for a person, as the command to run again, with its configuration made canonical. */
 async function recordForPerson(handler: HandlerIdentifier, configured: string, args: readonly string[], outcome: CommandOutcome): Promise<CommandOutcome> {
@@ -1521,7 +1521,7 @@ async function runApprove(configPath: string, io: CliIo, overrides: CliHandlerOv
         const upgrade = read.kind === 'complete' && read.items.some(item => item.config === config && item.argv[0] === 'upgrade')
             ? `; for the waiting upgrade, the person runs \`cd ${formatShellCommand([root])} && ${await personApproveCommand(runtime.env ?? process.env, root)}\`` : ''
         return refused('APPROVE_TERMINAL_REQUIRED', `approve asks a person, and this run has none: ${absent}${upgrade}`,
-            'open a terminal outside the agent and, in <the cockpit root>, run: npx --no cockpit approve; as one line, run `cd <the cockpit root> && npx --no cockpit approve` in a terminal of your own, not with `!` in this session, which can\'t take your answer')
+            'run `cd <the cockpit root> && npx --no cockpit approve` in a terminal outside the agent, not with `!` in this session, which can\'t take your answer')
     }
     if (read.kind === 'refusal') return refused('PENDING_APPROVALS_INVALID', read.message,
         'delete that file; each step an agent runs again that needs a person is recorded again')
@@ -1561,7 +1561,7 @@ async function runApprove(configPath: string, io: CliIo, overrides: CliHandlerOv
         // Answered: a declined step is not asked again until an agent's run records it anew.
         const removed = read.items.includes(item) && !kept ? await removePendingApproval(root, item.argv) : undefined
         if (removed) return refused('PENDING_APPROVALS_INVALID', `the answered step could not be removed: ${removed}`,
-            'make .cockpit/local in the cockpit root a plain directory you can write, then run npx --no cockpit approve in <the cockpit root> again', { steps })
+            'make .cockpit/local in the cockpit root a plain directory you can write, then run `cd <the cockpit root> && npx --no cockpit approve` again in a terminal outside the agent', { steps })
         steps.push({ title: item.title, outcome, ...kept ? { kept: true as const } : {} })
     }
     const count = (outcome: string) => steps.filter(step => step.outcome === outcome).length

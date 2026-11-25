@@ -406,7 +406,7 @@ async function executeUpRound(
             if (leftClaim) {
                 return { kind: 'complete', result: lifecycleRefusal(ENVIRONMENT_CODES.EXECUTION_PRECONDITION_CHANGED,
                     `this checkout still holds a claim on the stack down removed, left by an earlier command, so up cannot start it afresh; run \`${lifecycleSuggestion(context, 'down')}\` to release the claim, then \`${lifecycleSuggestion(context, 'up')}\``, context.stackId,
-                    'run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config <your cockpit.toml> to release the claim, then ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml>') }
+                    'run `cd <the cockpit root> && ./node_modules/@b00dea/cockpit/bin/cockpit.mjs down --config <your cockpit.toml> && ./node_modules/@b00dea/cockpit/bin/cockpit.mjs up --config <your cockpit.toml>`, which releases the claim and starts the stack afresh') }
             }
             const coHolders = freshSoleHolder ? [] : await otherLeaseHolders(context, ports.projection.ownership.holderIds)
             if (coHolders.length > 0) return { kind: 'complete', result: lifecycleRefusal(ENVIRONMENT_CODES.CLAIM_CO_TENANT,

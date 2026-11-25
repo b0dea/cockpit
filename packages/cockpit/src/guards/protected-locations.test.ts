@@ -330,6 +330,62 @@ describe('guard protected locations', () => {
         expect(await guardWorktreeChanges(sibling, { revision: 'HEAD' }, [guard], git, executeProbe)).toEqual({ guarded: false, changed: [] })
     })
 
+    it('lists every path a stash entry writes, what it staged and the untracked files it took, and every path the index holds for git rm', async () => {
+        const resolution = await resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+        if (resolution.state !== 'available') throw new Error(resolution.reason)
+        const git = resolution.value
+        const root = scratch()
+        const run = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args], { encoding: 'utf8' })
+        const write = (path: string, content: string) => { mkdirSync(join(root, path, '..'), { recursive: true }); writeFileSync(join(root, path), content) }
+        write('src/a.ts', 'a\n')
+        write('src/keep.ts', 'keep\n')
+        write('tools/run.sh', 'run\n')
+        run('init', '-q', '-b', 'work')
+        run('add', '.')
+        run('commit', '-qm', 'base')
+        // Staged, then put back on disk: only the entry's index holds this change.
+        write('tools/run.sh', 'staged\n')
+        run('add', 'tools/run.sh')
+        write('tools/run.sh', 'run\n')
+        write('src/a.ts', 'edited\n')
+        write('notes/new.md', 'new\n')
+        run('stash', 'push', '-q', '--include-untracked')
+        const listed = async (revision: string, from: string) => (await guardWorktreeChanges(root, { revision, from, lists: true }, [], git, executeProbe))?.listed
+        expect(await listed('stash@{0}', 'stash@{0}^1')).toEqual([join(root, 'src/a.ts')])
+        expect(await listed('stash@{0}^2', 'stash@{0}^1')).toEqual([join(root, 'tools/run.sh')])
+        expect(await listed('stash@{0}^3', ':empty')).toEqual([join(root, 'notes/new.md')])
+        expect(await guardWorktreeChanges(root, { revision: 'stash@{0}', from: 'stash@{0}^1' }, [], git, executeProbe)).toEqual({ guarded: false, changed: [] })
+        // `git rm` removes every path the index holds below its pathspec, changed or not; staging lists only the changed ones.
+        expect(await guardStagedPaths(root, 'src', false, git, executeProbe, 'index')).toEqual([join(root, 'src/a.ts'), join(root, 'src/keep.ts')])
+        expect(await guardStagedPaths(root, 'src', false, git, executeProbe, true)).toEqual([])        // `git restore --staged` and `git reset` set back every path where the index differs from the revision.
+        write('src/keep.ts', 'staged\n')
+        run('add', 'src/keep.ts')
+        expect(await guardStagedPaths(root, '.', false, git, executeProbe, { against: 'HEAD' })).toEqual([join(root, 'src/keep.ts')])
+        expect(await guardStagedPaths(join(root, 'src'), ':/', false, git, executeProbe, { against: 'HEAD' })).toEqual([join(root, 'src/keep.ts')])
+        expect(await guardStagedPaths(root, 'tools', false, git, executeProbe, { against: 'HEAD' })).toEqual([])
+        expect(await guardStagedPaths(root, '.', false, git, executeProbe, { against: 'nowhere' })).toBeUndefined()
+    })
+
+    it('names an environment file or .npmrc a checkout of another revision would write, but not a documentation name', async () => {
+        const resolution = await resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+        if (resolution.state !== 'available') throw new Error(resolution.reason)
+        const git = resolution.value
+        const root = scratch()
+        const run = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', ...args], { encoding: 'utf8' })
+        const write = (path: string, content: string) => { mkdirSync(join(root, path, '..'), { recursive: true }); writeFileSync(join(root, path), content) }
+        for (const path of ['app/.env.local', 'app/.npmrc', 'app/.env.example', 'src/a.ts']) write(path, 'base\n')
+        run('init', '-q', '-b', 'work')
+        run('add', '.')
+        run('commit', '-qm', 'base')
+        run('switch', '-qc', 'other')
+        const changes = async () => (await guardWorktreeChanges(root, { revision: 'other', from: 'worktree', paths: ['.'] }, [], git, executeProbe))?.changed
+        for (const path of ['app/.env.local', 'app/.npmrc', 'app/.env.example', 'src/a.ts']) write(path, 'other\n')
+        run('commit', '-qam', 'other')
+        run('switch', '-q', 'work')
+        // `git checkout other -- .` would write each of them; only the environment file and the .npmrc are named.
+        expect(await changes()).toEqual([join(root, 'app/.env.local'), join(root, 'app/.npmrc')])
+    })
+
     it('names every agent tool setting, guard script and skill a Git verb would write anywhere in the tree', async () => {
         const resolution = await resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH })
         if (resolution.state !== 'available') throw new Error(resolution.reason)

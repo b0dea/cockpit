@@ -172,7 +172,7 @@ THE SOFTWARE.
 
 ---
 
-## es-toolkit 1.53.0
+## es-toolkit 1.53.2
 
 SPDX license: MIT
 
@@ -865,7 +865,7 @@ SOFTWARE.
 
 ---
 
-## rulesync 43.4.2
+## rulesync 43.8.3
 
 SPDX license: MIT
 

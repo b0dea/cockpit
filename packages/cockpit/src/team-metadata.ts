@@ -183,8 +183,8 @@ function packageDependencySlots(manifest: Record<string, unknown>): PackageDepen
     return { devDependencies, misplaced }
 }
 
-function misplacedDependencyMessage(sections: readonly string[]): string {
-    return `package.json declares ${PACKAGE} in ${sections.join(', ')} outside cockpit-owned devDependencies; cockpit requires one exact development dependency so the team has one version authority. Run \`${oneCommandLine([`npm uninstall ${PACKAGE}`, `npm install --save-dev --save-exact ${PACKAGE}@${VERSION}`, './node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>'])}\``
+function misplacedDependencyMessage(sections: readonly string[], root: string): string {
+    return `package.json declares ${PACKAGE} in ${sections.join(', ')} outside cockpit-owned devDependencies; cockpit requires one exact development dependency so the team has one version authority. Run \`${oneCommandLine([`npm uninstall ${PACKAGE}`, `npm install --save-dev --save-exact ${PACKAGE}@${VERSION}`, './node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml>'], root)}\``
 }
 
 // Each refusal names the entry and what to run: one message for every conflict ("resolve the
@@ -409,7 +409,7 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
         const packageBefore = await readOptional(authority, packagePath)
         const candidate = packageCandidate(packageBefore?.bytes, await rootPackageManager(root), await verifiedLocalPin(authority, packageBefore?.bytes))
         if (candidate.misplaced) return refuse('TEAM_METADATA_UNAVAILABLE',
-            misplacedDependencyMessage(candidate.misplaced), packagePath)
+            misplacedDependencyMessage(candidate.misplaced, root), packagePath)
         if (!candidate.valid) return refuse('TEAM_METADATA_UNAVAILABLE',
             `${candidate.cause}, then run ${cockpitCommand('sync', { config: configPath })}`, packagePath)
         const ignorePath = join(root, '.gitignore')
@@ -465,7 +465,7 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
         if (object(parsed) && !slots) return refuse('TEAM_METADATA_UNAVAILABLE',
             'package.json direct npm dependency sections must be objects; repair package.json, then run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> again', packagePath)
         if (slots?.misplaced.length) return refuse('TEAM_METADATA_UNAVAILABLE',
-            misplacedDependencyMessage(slots.misplaced), packagePath)
+            misplacedDependencyMessage(slots.misplaced, root), packagePath)
         const pinned = slots?.devDependencies[PACKAGE]
         if (typeof pinned === 'string' && pinned.startsWith('file:')) {
             if (pinned !== await verifiedLocalPin(authority, current?.bytes)) {

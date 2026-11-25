@@ -226,7 +226,7 @@ describe('cockpit upgrade for an agent and a person', () => {
         const envelope = agent.json()
         expect(envelope.diagnostics).toEqual([expect.objectContaining({ severity: 'error', code: 'UPGRADE_PERSON_REQUIRED',
             message: expect.stringContaining(`from ${installedPackageMetadata.version} to 9.9.9`) })])
-        expect(envelope.guidance[0].text).toBe(`run \`npx --no cockpit approve\` in ${f.project}, in a terminal outside the agent`)
+        expect(envelope.guidance[0].text).toBe(`in a terminal outside the agent, run \`cd ${f.project} && npx --no cockpit approve\``)
         // On the default branch the branch to commit on comes first, before the person's step.
         expect(envelope.result.next).toBe(`in a terminal outside the agent, run \`cd ${f.project} && git switch -c cockpit-9.9.9 origin/main && npx --no cockpit approve\` to start a branch first and approve the upgrade`)
         expect(f.calls()).toEqual(['npm view @b00dea/cockpit version --json exempt='])
@@ -304,7 +304,7 @@ describe('cockpit upgrade for an agent and a person', () => {
         const f = repository()
         f.git('switch', '--quiet', '-c', 'fresh-topic')
         const agent = await f.cli(['upgrade', '--config', f.config, '--json'], { ...f.env, CLAUDECODE: '1' })
-        expect(agent.json().result.next).toBe(`run \`npx --no cockpit approve\` in ${f.project}, in a terminal outside the agent`)
+        expect(agent.json().result.next).toBe(`in a terminal outside the agent, run \`cd ${f.project} && npx --no cockpit approve\` to approve the upgrade`)
         expect(JSON.stringify(agent.json().diagnostics)).not.toContain('start a branch')
     })
 
@@ -336,8 +336,8 @@ describe('cockpit upgrade for an agent and a person', () => {
         const underSafeChain = { ...f.env, PATH: `${wrapped}:${f.env.PATH}` }
         const line = `cd ${f.project} && ${EXEMPTION}=@b00dea/cockpit npx --no cockpit approve`
         const agent = (await f.cli(['upgrade', '--config', f.config, '--json'], { ...underSafeChain, CLAUDECODE: '1' })).json()
-        expect(agent.result.next).toBe(`run \`${EXEMPTION}=@b00dea/cockpit npx --no cockpit approve\` in ${f.project}, in a terminal outside the agent`)
-        expect(agent.diagnostics[0].message).toContain(`For the person: run \`${line}\` in a terminal of your own`)
+        expect(agent.result.next).toBe(`in a terminal outside the agent, run \`cd ${f.project} && ${EXEMPTION}=@b00dea/cockpit npx --no cockpit approve\` to approve the upgrade`)
+        expect(agent.diagnostics[0].message).toContain(`For the person: run \`${line}\` in a terminal outside the agent`)
         // An agent that runs approve itself is told the same line to hand over.
         const refusedApprove = await f.cli(['approve', '--config', f.config, '--json'], { ...underSafeChain, CLAUDECODE: '1' })
         expect(refusedApprove.json().diagnostics[0]).toMatchObject({ code: 'APPROVE_TERMINAL_REQUIRED', message: expect.stringContaining(line) })

@@ -382,6 +382,37 @@ it('recreates deleted shared-region outputs with only the cockpit region', async
     expect(await checkGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
 }, 120_000)
 
+it('admits a new worktree beside the checkout and judges git rm of a directory by what the index holds there', async () => {
+    const { root, configPath } = await surfaceConsumer('worktree-and-index')
+    const author = ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test']
+    expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)
+    expect(spawnSync('git', ['-C', root, ...author, 'commit', '--quiet', '--allow-empty', '-m', 'Synthetic']).status).toBe(0)
+    await writeFile(join(root, 'app/package-lock.json'), '{}')
+    expect(await syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+    const hook = JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8')).hooks.PreToolUse
+        .flatMap((row: { hooks: { command: string }[] }) => row.hooks).find((row: { command: string }) => row.command.includes('/.cockpit/guards/check.sh')).command as string
+    const invoke = (command: string) => spawnSync('/bin/sh', ['-c', hook], { cwd: root, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: root },
+        input: JSON.stringify({ hook_event_name: 'PreToolUse', cwd: root, tool_name: 'Bash', tool_input: { command } }) })
+    // Beside the checkout, alone in its call, the new worktree is left to the agent tool's own permissions; a forced one is refused.
+    expect(invoke(`git worktree add ${JSON.stringify(`${root}-copy`)} -b copy`)).toMatchObject({ status: 0, stderr: '', stdout: '' })
+    expect(invoke(`git worktree add -f ${JSON.stringify(`${root}-copy`)} -b copy`).stdout).toContain('permissionDecision":"deny')
+    // Git lists every path the index holds below the directory, a secrets file among them.
+    await mkdir(join(root, 'app/keys/.secrets'), { recursive: true })
+    await writeFile(join(root, 'app/keys/.secrets/token'), 'synthetic\n')
+    expect(spawnSync('git', ['-C', root, 'add', '-f', 'app/keys']).status).toBe(0)
+    expect(invoke('git rm -r --cached app/keys').stdout).toContain('permissionDecision":"deny')
+    // Unstaging sets back every path where the index differs from HEAD, the staged secrets file among them.
+    for (const command of ['git restore --staged .', 'git reset']) expect(invoke(command).stdout, command).toContain('permissionDecision":"deny')
+    // A checkout of another revision that would write an .npmrc is refused, as writing one is.
+    expect(spawnSync('git', ['-C', root, 'rm', '-rq', '--cached', 'app/keys']).status).toBe(0)
+    expect(spawnSync('git', ['-C', root, 'switch', '-qc', 'npmrc']).status).toBe(0)
+    await writeFile(join(root, 'app/.npmrc'), 'script-shell=/bin/sh\n')
+    expect(spawnSync('git', ['-C', root, 'add', 'app/.npmrc']).status).toBe(0)
+    expect(spawnSync('git', ['-C', root, ...author, 'commit', '-qm', 'npmrc']).status).toBe(0)
+    expect(spawnSync('git', ['-C', root, 'switch', '-q', '-']).status).toBe(0)
+    expect(invoke('git checkout npmrc -- .').stdout).toContain('permissionDecision":"deny')
+}, 120_000)
+
 it('re-keys ownership to a renamed cockpit on sync and keeps consumer text around its regions', async () => {
     const { root, configPath } = await surfaceConsumer('renamed-cockpit')
     expect(spawnSync('git', ['init', '--quiet', root]).status).toBe(0)

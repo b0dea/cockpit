@@ -9,11 +9,11 @@ import { readBoundedFile } from '../bounded-read.js'
 import { parse as parseYaml } from 'yaml'
 import { basename, dirname, join, posix, relative, resolve } from 'node:path'
 
-import { ENVIRONMENT_CODES, snapshotExecutionStep, type ExecutionStep, RefusalError } from '../environment/contract.js'
+import { DOTENV_DOCUMENTATION, ENVIRONMENT_CODES, snapshotExecutionStep, type ExecutionStep, RefusalError } from '../environment/contract.js'
 import { GIT_CHILD_CONFIG, type ResolvedExecutable } from '../environment/executable.js'
 import { authenticatedExecutionOutcome, type ExecuteProbeOutcome } from '../environment-exec/execute.js'
 import { instructionRisk } from './instruction-frontmatter.js'
-import { agentInstructionFile, foldGuardSpelling, GUARD_ARCHIVE_ENTRIES, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity, isSensitiveGuardName, plantedAgentControl, runsFromCheckout, globSource, type GitTreeTarget } from './evaluator.js'
+import { agentInstructionFile, foldGuardSpelling, GUARD_ARCHIVE_ENTRIES, GUARD_LOCATION_LIMITS, GUARD_SECRET_FILE_LIMIT, guardIdentity, isSensitiveGuardName, plantedAgentControl, runsFromCheckout, globSource, type GitStagedListing, type GitTreeTarget } from './evaluator.js'
 
 function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
 
@@ -348,12 +348,14 @@ export async function guardUnignoredSensitivePaths(path: string, watched: readon
  * global or repository exclude, which an agent can set aside for one command, hides nothing. Matched without regard
  * to case, as a case-insensitive volume or GIT_ICASE_PATHSPECS can, with ignore rules applied both with and without regard to case. `literal` names one path exactly, as
  * `:(literal)` does; otherwise the pathspec is a glob, and `:/` is the whole tree, which `git add -A` and `-u` stage
- * without a pathspec. `tracked` lists only modified and deleted paths, which `-u` and `git commit` stage. Undefined when
+ * without a pathspec. `tracked` lists only modified and deleted paths, which `-u` and `git commit` stage; `index` lists
+ * every path the index holds, changed or not, which `git rm` removes; `against` lists every path where the index differs
+ * from a revision, which `git restore --staged` and `git reset` set back to it. Undefined when
  * it holds other magic, lies outside the repository, its directory's own spelling holds a glob character, or Git did
  * not answer; null past the path bound.
  */
 export async function guardStagedPaths(cwd: string, pathspec: string, literal: boolean, git: ResolvedExecutable, execute: GuardExecute,
-    tracked = false): Promise<readonly string[] | null | undefined> {
+    tracked: GitStagedListing = false): Promise<readonly string[] | null | undefined> {
     const whole = !literal && pathspec === ':/'
     if (!literal && !whole && pathspec.startsWith(':')) return undefined
     const repository = repositoryAbove(cwd)
@@ -362,9 +364,18 @@ export async function guardStagedPaths(cwd: string, pathspec: string, literal: b
     if (!whole && /[*?[\\]/.test(relative(repository, cwd))) return undefined
     const fromTop = whole ? '' : relative(repository, resolve(cwd, pathspec))
     if (fromTop === '..' || fromTop.startsWith('../') || posix.isAbsolute(fromTop)) return undefined
+    const scoped = `:(icase${literal ? ',literal' : ''})${fromTop}`
+    if (typeof tracked === 'object') {
+        // A revision spelled like an option is never one Git compares with.
+        if (tracked.against.startsWith('-')) return undefined
+        const differing = await gitPaths(git, repository, ['diff', '--cached', '--no-ext-diff', '--no-renames', '--name-only', '-z', tracked.against, '--', scoped], execute)
+        if (differing === null) return undefined
+        const unique = [...new Set(differing)]
+        return unique.length > GUARD_STAGED_PATHS ? null : unique.map(path => join(repository, path)).sort()
+    }
     // Ignore patterns, a `!` re-inclusion among them, match by case as core.ignoreCase says, so both answers are listed.
     const listings = await Promise.all(['false', 'true'].map(ignoreCase => gitPaths(git, repository, ['-c', `core.ignoreCase=${ignoreCase}`, 'ls-files', '-z',
-        '--modified', ...tracked ? [] : ['--others'], '--exclude-per-directory=.gitignore', '--', `:(icase${literal ? ',literal' : ''})${fromTop}`], execute)))
+        ...tracked === 'index' ? ['--cached'] : ['--modified', ...tracked ? [] : ['--others'], '--exclude-per-directory=.gitignore'], '--', scoped], execute)))
     if (listings.some(listed => listed === null)) return undefined
     const unique = [...new Set(listings.flatMap(listed => listed!))]
     return unique.length > GUARD_STAGED_PATHS ? null : unique.map(path => join(repository, path)).sort()
@@ -464,12 +475,18 @@ export async function guardRemoteCredentials(repository: string, git: ResolvedEx
 
 // Where agent tool settings, hooks, guard scripts and instruction files live at any depth, for Git to
 // list; which of them matter is decided by plantedAgentControl and agentInstructionFile.
-const AGENT_CONTROL_PATHSPECS = ['**/.claude/**', '**/.codex/**', '**/.opencode/**', '**/.cockpit/**', '**/.cockpit', '**/.mcp.json', '**/opencode.json', '**/opencode.jsonc', '**/SKILL.md']
-    .map(pattern => `:(glob,icase)${pattern}`)
+const AGENT_CONTROL_PATHSPECS = ['**/.claude/**', '**/.codex/**', '**/.opencode/**', '**/.cockpit/**', '**/.cockpit', '**/.mcp.json', '**/opencode.json', '**/opencode.jsonc', '**/SKILL.md',
+    '**/.env*', '**/.npmrc'].map(pattern => `:(glob,icase)${pattern}`)
+// Files the guard refuses to write by name at any depth, as the evaluator's own rules do: an environment file other
+// than a documentation name, and an `.npmrc`, whose settings npm applies to the cockpit launcher. Folded names.
+const writeRefusedName = (folded: string) => {
+    const name = basename(folded)
+    return (name === '.env' || name.startsWith('.env.')) && !DOTENV_DOCUMENTATION.has(name) || name === '.npmrc'
+}
 
 /**
  * Which of `protectedPaths` the work tree holding `cwd` contains (`guarded`); which of them, or of the
- * agent controls at any depth, a Git verb would write or remove (`changed`); which agent instruction
+ * agent controls, environment files and `.npmrc` files at any depth, a Git verb would write or remove (`changed`); which agent instruction
  * files it would write that run, register or grant something, or that a Git filter would rewrite on
  * checkout (`instructions`); and, for a verb that applies another revision's changes to HEAD, which of
  * those paths differ between HEAD and the files on disk (`unsettled`), since its changes are then not
@@ -477,10 +494,11 @@ const AGENT_CONTROL_PATHSPECS = ['**/.claude/**', '**/.codex/**', '**/.opencode/
  * disk, which is what the verb overwrites: HEAD can be moved without touching them. Null when Git could
  * not answer. A revision that names no commit is unresolved, unless the target falls back to the index
  * or to HEAD as checkout and `worktree add` do, or is optional; a `from` that names none compares with
- * nothing, listing every such path the revision holds.
+ * nothing, listing every such path the revision holds. A target that `lists` also names every path two revisions
+ * differ at (`listed`), when Git lists them within the staging bound.
  */
 export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, protectedPaths: readonly string[], git: ResolvedExecutable, execute: GuardExecute,
-    env: GuardGitEnvironment = {}): Promise<Readonly<{ guarded: boolean; changed: readonly string[]; instructions?: readonly string[]; unsettled?: readonly string[] }> | null> {
+    env: GuardGitEnvironment = {}): Promise<Readonly<{ guarded: boolean; changed: readonly string[]; instructions?: readonly string[]; unsettled?: readonly string[]; listed?: readonly string[] }> | null> {
     const top = repositoryAbove(cwd)
     if (top === undefined) return null
     const inside = protectedPaths.filter(path => path === top || path.startsWith(`${top}/`)).map(path => relative(top, path)).filter(Boolean)
@@ -542,6 +560,8 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
     let names: readonly string[] | null
     // Against the files on disk a path only they hold is one the verb removes; between revisions, one only the first holds.
     let removed: string
+    // The comparison of two revisions, which a target that `lists` names every path of.
+    let between: readonly string[] | undefined
     if (to === ':index') { names = await run([...diff, ...pathspecs]); removed = '' }
     else if (from === 'worktree') {
         names = await run([...diff, to, ...pathspecs])
@@ -564,7 +584,8 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
         const base = from === ':merge-base' ? await mergeBase() : await commit(from ?? 'HEAD')
         if (base === null) return null
         const empty = base ?? (await run(['hash-object', '-t', 'tree', '/dev/null']))?.join('').trim()
-        names = empty ? await run([...diff, empty, to, ...pathspecs]) : null
+        between = empty ? [...diff, empty, to] : undefined
+        names = between ? await run([...between, ...pathspecs]) : null
         removed = 'D'
     }
     if (names === null) return null
@@ -578,7 +599,7 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
         const folded = foldGuardSpelling(name)
         if (!inScope(folded)) continue
         // Removing a nested agent setting or an instruction file takes nothing from the guard; removing a protected path does.
-        if (protectedName(name) || plantedAgentControl(folded) && status !== removed) changed.push(join(top, name))
+        if (protectedName(name) || writeRefusedName(folded) || plantedAgentControl(folded) && status !== removed) changed.push(join(top, name))
         else if (agentInstructionFile(folded) && status !== removed) written.push(name)
     }
     if (changed.length + written.length > GUARD_LOCATION_LIMITS.sensitivePaths) return null
@@ -594,7 +615,7 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
         const touched = new Set(pairs(headDiff).map(([, name]) => name))
         for (const [, name] of pairs(moved)) {
             const folded = foldGuardSpelling(name)
-            if (touched.has(name) && inScope(folded) && (protectedName(name) || plantedAgentControl(folded) || agentInstructionFile(folded))) unsettled.push(join(top, name))
+            if (touched.has(name) && inScope(folded) && (protectedName(name) || writeRefusedName(folded) || plantedAgentControl(folded) || agentInstructionFile(folded))) unsettled.push(join(top, name))
         }
     }
     // Each instruction file is read as the verb would write it, and passes when it runs, registers and grants
@@ -609,7 +630,16 @@ export async function guardWorktreeChanges(cwd: string, target: GitTreeTarget, p
         const text = filtered.has(name) ? null : await run(['cat-file', '-p', to === ':index' ? `:${name}` : `${to}:${name}`])
         if (text === null || instructionRisk(text.join('\0')) !== undefined) instructions.push(join(top, name))
     }
-    return { guarded, changed: changed.sort(), ...instructions.length ? { instructions: instructions.sort() } : {}, ...unsettled.length ? { unsettled: unsettled.sort() } : {} }
+    // Every path the revision writes or removes, for a verb judged path by path; left out where Git did not list
+    // them within the bound, so the verb is judged as before.
+    let listed: readonly string[] | undefined
+    if (target.lists && between) {
+        const all = await run([...between, '--'])
+        const every = all === null ? undefined : [...new Set(pairs(all).map(([, name]) => name))].filter(name => inScope(foldGuardSpelling(name)))
+        listed = every && every.length <= GUARD_STAGED_PATHS ? every.map(name => join(top, name)).sort() : undefined
+    }
+    return { guarded, changed: changed.sort(), ...instructions.length ? { instructions: instructions.sort() } : {}, ...unsettled.length ? { unsettled: unsettled.sort() } : {},
+        ...listed ? { listed } : {} }
 }
 
 // A package manifest is a few kilobytes; a larger one is not read.

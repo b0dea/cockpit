@@ -79,7 +79,7 @@ it('refuses without a person at a terminal outside an agent, and says where to r
         const printed = args.length ? JSON.stringify(JSON.parse(stdout)) : stderr
         expect(printed, reason).toContain('APPROVE_TERMINAL_REQUIRED')
         expect(printed, reason).toContain(reason)
-        expect(printed, reason).toContain(`open a terminal outside the agent and, in ${root}, run: npx --no cockpit approve`)
+        expect(printed, reason).toContain(`run \`cd ${root} && npx --no cockpit approve\` in a terminal outside the agent`)
     }
     expect(begin).not.toHaveBeenCalled()
 })
@@ -87,7 +87,7 @@ it('refuses without a person at a terminal outside an agent, and says where to r
 it('hands the person one copyable line for a step it leaves waiting, and approve refused in an agent session says the same', async () => {
     const { root, config } = cockpitRoot()
     const handOff = `cd ${root} && npx --no cockpit approve`
-    const notHere = 'in a terminal of your own, not with `!` in this session, which can\'t take your answer'
+    const notHere = 'in a terminal outside the agent, not with `!` in this session, which can\'t take your answer'
     const { begin } = retryStep()
     const agent = await agentRuns(['work', 'retry', '--work-order', 'WO-1', '--note', 'a flaky fixture', '--config', config], { beginOperatorWorkApplication: begin })
     expect(agent.envelope.diagnostics[0].message).toContain(`run \`${handOff}\` ${notHere}`)
@@ -104,7 +104,7 @@ it('leaves an agent\'s person step for approve, which shows it briefly and appli
     const agent = await agentRuns(['work', 'retry', '--work-order', 'WO-1', '--note', 'a flaky fixture', '--config', config], { beginOperatorWorkApplication: begin })
     expect(agent.status).toBe(2)
     expect(agent.envelope.diagnostics[0].code).toBe('WORK_PERSON_REQUIRED')
-    expect(agent.envelope.guidance[0].text).toContain(`npx --no cockpit approve in ${root}`)
+    expect(agent.envelope.guidance[0].text).toContain(`cd ${root} && npx --no cockpit approve`)
     expect(apply).not.toHaveBeenCalled()
     expect(pending()).toEqual([expect.objectContaining({ argv: ['work', 'retry', '--work-order', 'WO-1', '--note', 'a flaky fixture', '--config', config] })])
 

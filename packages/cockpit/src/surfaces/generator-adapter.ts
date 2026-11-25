@@ -155,7 +155,7 @@ interface EstatePassResult {
 
 // The bundled Rulesync release, recorded as every generated surface's provenance. Written by
 // npm run bundle:rulesync from devDependencies.rulesync in package.json; --check refuses a drift.
-export const RULESYNC_VERSION = '43.4.2'
+export const RULESYNC_VERSION = '43.8.3'
 const OPERATION_TIMEOUT_MS = 30_000
 const CLEANUP_TIMEOUT_MS = 2_000
 const MAX_NODE_BYTES = 536_870_912
@@ -173,7 +173,7 @@ const EMPTY_WARNINGS = Object.freeze([]) as readonly SurfaceGenerationWarning[]
 // This digest binds the checked-in, self-contained generator asset. The build-time package
 // tree is deliberately absent from the runtime authority boundary. npm run bundle:rulesync
 // writes it with the bundle.
-const PINNED_GENERATOR_BUNDLE_SHA256 = 'ea7032a125b95b3d31643861dedbf86c856cb01306c3aa05cf5a5e99386e36a6'
+const PINNED_GENERATOR_BUNDLE_SHA256 = '44f280d50488ca14048b1ce7eff31ea626ad9efd92ffa6324c2d4e4a01fe861a'
 // The worker programs enforce these bounds; they receive them in each request so the limits keep
 // one owner here.
 const WORKER_OUTPUT_LIMITS = Object.freeze({

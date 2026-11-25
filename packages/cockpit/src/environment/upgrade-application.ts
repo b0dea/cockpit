@@ -304,7 +304,7 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
     // going back is a package-manager install, which the guard asks a person about.
     if (order < 0) return refused({ severity: 'error' as const, code: 'UPGRADE_VERSION_INVALID' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_VERSION_INVALID, target: '<version>',
         message: `${target} is older than the installed ${installed}; upgrade only moves forward`,
-        fix: `to go back, a person installs it with the package manager, such as ${formatShellCommand([lockfile.manager, lockfile.verb, ...lockfile.flags, `${name}@${target}`])}, and confirms that version's sync the way it asks: npx --no cockpit approve where that version has approve, otherwise ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal outside the agent` })
+        fix: `to go back, a person installs it with the package manager, such as ${formatShellCommand([lockfile.manager, lockfile.verb, ...lockfile.flags, `${name}@${target}`])}, and confirms that version's sync the way it asks: \`${oneCommandLine(['npx --no cockpit approve'], root)}\` where that version has approve, otherwise ./node_modules/@b00dea/cockpit/bin/cockpit.mjs sync --config <your cockpit.toml> --interactive in a terminal outside the agent` })
     const spec = `${name}@${target}`
     const installArgv = [lockfile.manager, lockfile.verb, ...lockfile.flags, spec]
     // Sync runs from the newly installed package's own entrypoint with this Node: a package manager's
@@ -340,11 +340,11 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
     const branchCommand = branch && `git switch -c cockpit-${target} ${typeof before !== 'string' && before.defaultRef || 'origin/<default branch>'}`
     const approve = branchCommand
         ? `in a terminal outside the agent, run \`${oneCommandLine([branchCommand, approveCommand], root)}\` to start a branch first and approve the upgrade`
-        : `run \`${approveCommand}\` in ${root}, in a terminal outside the agent`
+        : `in a terminal outside the agent, run \`${oneCommandLine([approveCommand], root)}\` to approve the upgrade`
     if (input.agent) return { status: 2, result: { ...result, approve: approveCommand, next: approve },
         diagnostics: [{ severity: 'error' as const, code: 'UPGRADE_PERSON_REQUIRED' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_PERSON_REQUIRED,
             message: `upgrading cockpit from ${installed} to ${target} installs a new package version, which a person approves; nothing was installed${branch ? `; ${branch}` : ''}`,
-            fix: 'run `npx --no cockpit approve` in <the cockpit root>, in a terminal outside the agent' }] }
+            fix: 'in a terminal outside the agent, run `cd <the cockpit root> && npx --no cockpit approve`' }] }
     // A person at approve installs past Safe Chain's minimum package age for cockpit alone, and only in
     // the install's own environment: the sync after it and every later command run without it.
     const exemption = { [AGE_EXEMPTION]: name }

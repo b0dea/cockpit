@@ -104,7 +104,7 @@ function resetRefusal(policy: OperatorPolicy, configPath: string, unchanged: str
     return { status: 2, result: null, diagnostics: [{ severity: 'error' as const, target: 'environment.seed',
         code: ENVIRONMENT_CODES.RESET_CONFIRMATION_REQUIRED,
         message: `cockpit.toml declares no [environment] seed to refill the data a reset deletes, so this run cannot apply it without a person; ${unchanged}`,
-        fix: 'this needs a person: they run npx --no cockpit approve in <the cockpit root>, from a terminal outside the agent, or the team declares [environment] seed in cockpit.toml' }] }
+        fix: 'this needs a person: they run `cd <the cockpit root> && npx --no cockpit approve` in a terminal outside the agent, or the team declares [environment] seed in cockpit.toml' }] }
 }
 
 export async function runResetOperatorApplication(
@@ -212,7 +212,7 @@ export async function runSyncOperatorApplication(
     // Where the change since the last sync cannot be shown, every server the yes leaves enabled is listed.
     const mcpServers = declared.filter(row => !row.approved || policy.unrecorded || policy.widened.includes(`mcp.approved.${row.name}`))
     const changed = () => refusal(ENVIRONMENT_CODES.CONFIG_CHANGED_DURING_EXECUTION, 'cockpit.toml changed during review; nothing was written', input.configPath,
-        'run npx --no cockpit approve in <the cockpit root> again and review the fresh preview')
+        'run `cd <the cockpit root> && npx --no cockpit approve` again in a terminal outside the agent and review the fresh preview')
     if ((preview.result as { sourceSha256?: unknown }).sourceSha256 !== policy.configSha256) return changed()
     let configSha256 = policy.configSha256
     if (policy.widened.length || policy.unrecorded || mcpServers.length) {
