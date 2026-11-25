@@ -538,11 +538,20 @@ takes refspecs from `--refmap` or `--stdin`.
 Staging without explicit paths asks. A removal outside the configured roots is refused, as a write
 there is, even when a declared allow matches.
 
-`git add -A`, `git add .` or a directory operand covering a secrets directory at any depth or an
-environment instance is a hard denial: stage the changed files by name. The guard walks the operand
-to find nested secrets directories; a tree past the walk's bound stays at `ask`, and a walk that
-fails is `unavailable`. Unsupported staging options or unproven pathspec grammar produce
-`unavailable`.
+A glob or directory pathspec of `git add` or `git commit` is judged by what Git lists for it before
+the call runs: every changed, deleted or untracked path it matches, with only `.gitignore` files
+applied, each judged as if named on its own, so a guard script among them is refused as above. A
+bracket is a glob: `src/[slug]/page.tsx` also matches `src/s/page.tsx`, and a backslash escape is one
+too. `--literal-pathspecs` and `GIT_LITERAL_PATHSPECS=1` on the command, unless a wrapper such as
+`env -u` drops it, make each pathspec name one path, as `:(literal)<path>` does for one. `git commit --pathspec-from-file` asks. `-A` and `-u` stage only
+below the pathspecs they are given, and the whole tree without one.
+
+Where Git cannot list them (with `-f`, after an earlier command in the call that writes, past the
+listing's bound, or outside a repository), `git add -A`, `git add .` or a directory operand covering
+a secrets directory at any depth or an environment instance is a hard denial: stage the changed
+files by name. The guard walks the operand to find nested secrets directories; a tree past the
+walk's bound stays at `ask`, and a walk that fails is `unavailable`. Unsupported staging options, a
+glob Git did not list, and other pathspec magic produce `unavailable`.
 
 Any other command runs, except Git that prints files outside the configured roots and a cockpit
 command its own table does not admit, which ask.

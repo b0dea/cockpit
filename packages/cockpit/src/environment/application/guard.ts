@@ -30,6 +30,8 @@ import {
     cockpitShaped,
     innerCommand,
     gitInvocation,
+    gitStagingPathspecs,
+    GIT_GLOB,
     GUARD_BRANCH_VERBS,
     gitTreeTargets,
     foldGuardSpelling,
@@ -67,6 +69,7 @@ import {
     guardCommittedSensitivePaths,
     guardTrackedSensitivePaths,
     guardUnignoredSensitivePaths,
+    guardStagedPaths,
 } from '../../guards/protected-locations.js'
 import { classifyReadOnlyInvocation } from '../../guards/read-only.js'
 import { fileFingerprint, recordVerifiedDigest } from '../../environment-exec/verified-digest.js'
@@ -516,9 +519,15 @@ export async function runGuardEvaluationApplication(
         // decides what is read, written or pushed.
         const parsed = parseCall(data.payload)
         if (parsed.status !== 'parsed') return unavailable(parsed.reason)
+        // A shell left in a directory that was removed, such as a linked worktree kept inside the checkout, reaches nothing
+        // by a physical relative path, and the agent tool then starts the guard in the session's own directory. Refused
+        // for that, every call failed, the cd back out and absolute paths included. Such a directory inside a managed
+        // root is judged as reported: the shell resolves `cd ..` and `cd name` from it by its spelling, as the guard does.
+        const removedCwd = parsed.cwd !== data.cwd && prepared.kind === 'complete' && lstatIfPresentSync(parsed.cwd) === undefined
+            && prepared.result.policy.allowedRoots.some(root => confinedPath(root, parsed.cwd))
         // The harness reports the agent's working directory and starts the guard in a canonical one; they differ when
         // the agent's shell changed directory through a link or under another spelling.
-        if (parsed.cwd !== data.cwd) return unavailable(`The call reports the working directory ${JSON.stringify(parsed.cwd)}, but the guard runs in ${JSON.stringify(data.cwd)}: `
+        if (parsed.cwd !== data.cwd && !removedCwd) return unavailable(`The call reports the working directory ${JSON.stringify(parsed.cwd)}, but the guard runs in ${JSON.stringify(data.cwd)}: `
             + `paths are judged from one directory only. Change to ${JSON.stringify(data.cwd)} itself, then run the command.`)
         if (prepared.kind !== 'complete') {
             return unavailable(checkout.state === 'available'
@@ -635,6 +644,22 @@ export async function runGuardEvaluationApplication(
                 const tool = await resolveExecutable(extracted.format === 'tar' ? 'tar' : 'unzip', { PATH: GUARD_EXECUTABLE_SEARCH_PATH })
                 if (tool.state === 'available') archives.set(key, await guardArchiveEntries(path, extracted.format, tool.value, adapters.execute ?? executeProbe))
             })
+        }
+        // What a `git add` or `git commit` naming a glob or a directory stages: Git lists the changed and untracked paths it matches.
+        const staged = new Map<string, readonly string[] | null | undefined>()
+        const stagedKey = (cwd: string, path: string, literal: boolean) => `${cwd}\0${literal}\0${path}`
+        for (const invocation of parsed.invocations) {
+            const command = gitInvocation(invocation)
+            const staging = command && !command.uncertain && allowed(command.cwd) ? gitStagingPathspecs(command, invocation) : undefined
+            for (const pathspec of staging && !staging.force ? staging.pathspecs : []) {
+                const path = pathspec.literal ?? pathspec.spelled
+                const literal = pathspec.literal !== undefined
+                const target = resolve(command!.cwd, path)
+                const key = stagedKey(command!.cwd, path, literal)
+                if (!allowed(target) || staged.has(key) || !(!literal && GIT_GLOB.test(path) || lstatIfPresentSync(target)?.isDirectory())) continue
+                staged.set(key, undefined)
+                queries.push(async () => { staged.set(key, await guardStagedPaths(command!.cwd, path, literal, git.value, adapters.execute ?? executeProbe)) })
+            }
         }
         for (const invocation of parsed.invocations) {
             const command = gitInvocation(invocation)
@@ -755,6 +780,10 @@ export async function runGuardEvaluationApplication(
                 // An existing file with another hard link is reported, since writing it writes every name it has.
                 const target = rest.length ? undefined : lstatIfPresentSync(landsAt)
                 return { status: 'resolved', path, landsAt, ...target?.isFile() ? { links: target.nlink } : {} }
+            }
+            if (request.operation === 'pathspec') {
+                const matches = staged.get(stagedKey(request.cwd, request.path, request.literal === true))
+                return matches ? { status: 'resolved', path, matches } : { status: 'unavailable', path, symlink: false }
             }
             if (request.operation === 'manifest') {
                 const manifest = allowed(path) ? guardPackageManifest(path, allowed, request.workspace === true) : null
@@ -885,6 +914,9 @@ export async function runGuardEvaluationApplication(
             try { const read = readBoundedFile(path, 1_048_576); return read.kind === 'complete' ? read.bytes.toString('utf8') : undefined }
             catch (error) { if (hasErrorCode(error, 'ENOENT')) return undefined; throw new CallPathUnreadable(path, error) }
         }) : undefined
+        // Each of these reads costs a child process, so they run together; their results are checked in the order below.
+        const publicationAfter = settle(readPublication())
+        const moduleAfter = settle(read(dirname(identity.module), basename(identity.module), 16_777_216))
         const current = await adapters.loadConfig(policySource.path)
         if (current.kind !== 'complete' || current.result.source.sha256 !== policySource.sha256) return unavailable('Guard configuration changed during evaluation.')
         for (const [path, before] of [...roots, ...inspected]) {
@@ -894,11 +926,11 @@ export async function runGuardEvaluationApplication(
                 || before.isFile() && (before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs || before.size !== after.size)) return unavailable('Guard filesystem authority changed during evaluation.')
         }
         for (const [link, target] of readLinks) if (realpathSync(link) !== target) return unavailable('Guard read link target changed during evaluation.')
-        const currentPublication = await readPublication()
+        const currentPublication = unwrap(await publicationAfter)
         for (const [path, hash] of [[manifestPath, manifestRead.sha256], [GUARD_LOCAL_PATHS.identity, publication.get(GUARD_LOCAL_PATHS.identity)!.sha256], ...published] as const) {
             if (currentPublication.get(path)!.sha256 !== hash) return unavailable('Guard publication changed during evaluation.')
         }
-        if ((await read(dirname(identity.module), basename(identity.module), 16_777_216)).sha256 !== identity.moduleSha256) return unavailable('Guard handler changed during evaluation.')
+        if (unwrap(await moduleAfter).sha256 !== identity.moduleSha256) return unavailable('Guard handler changed during evaluation.')
         // A person may approve working in another cockpit, so the ask says that is what it is about. It holds
         // for a command that only reads too: one rule, whatever the command.
         const another = `Runs cockpit on ${foreign}, not ${identity.configPath}, the configuration this guard was generated from and judges by: an agent works in its own cockpit, so a person approves working in another.`

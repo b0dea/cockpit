@@ -150,10 +150,14 @@ interface PathInspectionRequest {
      * `manifest` is the nearest package.json at or above the path: its `name` and its `scripts` names.
      * An `external-write` is a path outside the roots a write may land on; its evidence carries
      * `landsAt`, the path with every existing link on the way resolved. An `archive` is an archive of
-     * `format` an extraction reads; its evidence carries `entries`, every member name it lists.
+     * `format` an extraction reads; its evidence carries `entries`, every member name it lists. A
+     * `pathspec` is what a `git add` or `git commit` from `cwd` stages; its evidence carries `matches`, every changed or
+     * untracked path Git lists for it, as absolute paths.
      */
     /** `list` reads names only; it is asked for a listing outside the roots, where a directory may be listed but not read. */
-    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'list' | 'remove' | 'search' | 'unignored-search' | 'repository' | 'branch' | 'remote' | 'patch' | 'tree' | 'manifest' | 'external-write' | 'archive'
+    readonly operation: 'cwd' | 'write' | 'stage' | 'read' | 'list' | 'remove' | 'search' | 'unignored-search' | 'repository' | 'branch' | 'remote' | 'patch' | 'tree' | 'manifest' | 'external-write' | 'archive' | 'pathspec'
+    /** For a `pathspec`, Git reads it as naming one path exactly, as `:(literal)` does; otherwise it is a glob. */
+    readonly literal?: true
     readonly format?: 'tar' | 'zip'
     readonly revision?: string
     readonly from?: string
@@ -284,6 +288,22 @@ function canonical(value: JsonSnapshot | undefined): value is string {
     return scalar(value) && value.startsWith('/') && value !== '/' && posix.normalize(value) === value && !value.endsWith('/')
 }
 function within(path: string, root: string): boolean { return path === root || path.startsWith(root === '/' ? '/' : root + '/') }
+// Why a word the guard would judge as a path, or the working directory it resolves from, is not one: named with the rule it breaks.
+function brokenPathRule(value: JsonSnapshot | undefined): string | undefined {
+    return typeof value !== 'string' || value.length === 0 ? 'is empty'
+        : /[\x00-\x1f\x7f]/.test(value) ? 'holds a control character, such as a newline, which no path the guard judges holds'
+        : /[\uD800-\uDFFF]/u.test(value) ? 'holds an unpaired surrogate, which is not text'
+        : Buffer.byteLength(value) > GUARD_INPUT_LIMITS.pathBytes ? `is longer than ${GUARD_INPUT_LIMITS.pathBytes} bytes` : undefined
+}
+const shownJsonWord = (value: JsonSnapshot | undefined) => typeof value === 'string' ? ` ${shownGuardWord(value)}` : ''
+function malformedPath(path: JsonSnapshot | undefined): string | undefined {
+    const rule = brokenPathRule(path)
+    return rule && `Guard path or working directory is malformed: the word${shownJsonWord(path)}, judged as a path, ${rule}.`
+}
+function malformedDirectory(cwd: JsonSnapshot | undefined): string | undefined {
+    const rule = brokenPathRule(cwd) ?? (canonical(cwd) ? undefined : 'is not an absolute, normalised path other than /')
+    return rule && `Guard path or working directory is malformed: the working directory${shownJsonWord(cwd)} ${rule}.`
+}
 function identity(value: JsonSnapshot | undefined): value is string { return typeof value === 'string' && value.length <= 64 && IDENTITY.test(value) }
 function strings(value: JsonSnapshot | undefined): value is readonly string[] {
     return Array.isArray(value) && value.every(scalar)
@@ -461,8 +481,11 @@ export function approvedReadOnlyInvocation(invocation: ParsedInvocation, policy:
     return classifyReadOnlyInvocation(invocation, policy)
 }
 
-/** `directories` holds each `-C` operand as spelled, with the directory it resolves from. */
-export interface GitInvocation { verb: string; args: readonly string[]; cwd: string; directories: readonly { path: string; cwd: string }[]; uncertain: boolean }
+/**
+ * `directories` holds each `-C` operand as spelled, with the directory it resolves from. `literalPathspecs` marks
+ * `--literal-pathspecs`, which Git reads as naming each path exactly; it is admitted only where it stages.
+ */
+export interface GitInvocation { verb: string; args: readonly string[]; cwd: string; directories: readonly { path: string; cwd: string }[]; uncertain: boolean; literalPathspecs?: true }
 // Git verbs whose decision depends on the repository's current branch or push destination.
 export const GUARD_BRANCH_VERBS: ReadonlySet<string> = new Set(['push', 'commit', 'rebase', 'reset', 'pull', 'filter-branch', 'filter-repo'])
 export function gitInvocation(invocation: ParsedInvocation): GitInvocation | undefined {
@@ -472,6 +495,7 @@ export function gitInvocation(invocation: ParsedInvocation): GitInvocation | und
     let cwd = invocation.cwd
     let uncertain = false
     const directories: { path: string; cwd: string }[] = []
+    let literalPathspecs = false
     while (args[cursor]?.startsWith('-')) {
         const option = args[cursor++]
         if (option === '--') break
@@ -485,12 +509,16 @@ export function gitInvocation(invocation: ParsedInvocation): GitInvocation | und
             uncertain = true
         } else if (['--no-pager', '--paginate', '--no-optional-locks'].includes(option)) {
             continue
+        } else if (option === '--literal-pathspecs') {
+            literalPathspecs = true
         } else if (/^--(?:git-dir|work-tree|namespace|config-env)=/.test(option)) {
             uncertain = true
         } else return { verb: '', args: [], cwd, directories, uncertain: true }
     }
     const verb = args[cursor++] ?? ''
-    return { verb, args: splitGitShortOptions(verb, args.slice(cursor)), cwd, directories, uncertain }
+    // Every other verb's pathspec checks read magic and globs as Git does by default.
+    if (literalPathspecs && !GIT_STAGING_VERBS.has(verb)) return { verb: '', args: [], cwd, directories, uncertain: true }
+    return { verb, args: splitGitShortOptions(verb, args.slice(cursor)), cwd, directories, uncertain, ...literalPathspecs ? { literalPathspecs: true } : {} }
 }
 
 /**
@@ -1703,6 +1731,49 @@ const GIT_CONTENT_VERBS = new Set(['grep', 'blame', 'annotate', 'show', 'diff', 
 
 // Git verbs that list names or history matching their pathspecs and write nothing there.
 const GIT_PATHSPEC_LISTERS = new Set(['status', 'ls-files', 'ls-tree', 'shortlog', 'rev-list', 'check-ignore', 'check-attr'])
+// What makes Git match a pathspec as a glob: a backslash escapes the next character, so `guard\s` matches `guards`.
+export const GIT_GLOB = /[*?[\\]/
+// `git add` and `git commit <paths>` stage what their pathspecs name.
+const GIT_STAGING_VERBS: ReadonlySet<string> = new Set(['add', 'commit'])
+// `git commit` options whose value is the next word, never a path it stages.
+const GIT_COMMIT_VALUED = ['-m', '--message', '-F', '--file', '-C', '--reuse-message', '-c', '--reedit-message', '--author', '--date',
+    '--fixup', '--squash', '-t', '--template', '--trailer', '--cleanup', '--pathspec-from-file']
+/** A pathspec a staging command names, as spelled, and the one path it names exactly where Git reads it literally. */
+export interface GitStagingPathspec { readonly spelled: string; readonly literal?: string }
+/**
+ * The pathspecs a `git add` or `git commit` stages, and whether `git add` forces ignored files in. Git reads each
+ * literally under `--literal-pathspecs` or GIT_LITERAL_PATHSPECS=1 on the command, and one spelled `:(literal)<path>`.
+ */
+export function gitStagingPathspecs(git: GitInvocation, invocation: ParsedInvocation): Readonly<{ pathspecs: readonly GitStagingPathspec[]; force: boolean }> | undefined {
+    if (!GIT_STAGING_VERBS.has(git.verb)) return undefined
+    const operands: string[] = []
+    let force = false
+    if (git.verb === 'add') {
+        let options = true
+        for (const arg of git.args) {
+            if (options && arg === '--') options = false
+            else if (options && arg.startsWith('-')) force ||= arg === '-f' || arg === '--force'
+            else operands.push(arg)
+        }
+    } else {
+        for (let index = 0; index < git.args.length; index++) {
+            const arg = git.args[index]!
+            if (arg === '--') { operands.push(...git.args.slice(index + 1)); break }
+            if (GIT_COMMIT_VALUED.includes(arg)) { index++; continue }
+            // A bundle such as `-am` ends at the first letter that takes a value: -m, -F, -C, -c and -t take the rest of
+            // the word, or the next word when they end it, which is the message, not a path. -S and -u take only the rest.
+            const letters = /^-([a-zA-Z]+)$/.exec(arg)?.[1]
+            const valued = letters ? [...letters].findIndex(letter => 'mFCctSu'.includes(letter)) : -1
+            if (letters && valued === letters.length - 1 && 'mFCct'.includes(letters[valued]!)) index++
+            else if (!arg.startsWith('-')) operands.push(arg)
+        }
+    }
+    const assigned = invocation.words.filter(word => word.role === 'environment-assignment-value' && word.name === 'GIT_LITERAL_PATHSPECS').at(-1)
+    // A wrapper such as `env -u` or `exec -c` can drop the assignment before Git starts, so only an unwrapped one counts.
+    const literal = git.literalPathspecs === true || assigned?.value === '1' && !assigned.dynamic && !invocation.wrapped
+    return { force, pathspecs: operands.map(spelled => literal ? { spelled, literal: spelled }
+        : spelled.startsWith(':(literal)') ? { spelled, literal: spelled.slice(':(literal)'.length) } : { spelled }) }
+}
 
 function gitPrintsContent(git: GitInvocation | undefined): boolean {
     return git !== undefined && (GIT_CONTENT_VERBS.has(git.verb) || git.verb === 'stash' && git.args[0] === 'show')
@@ -2624,8 +2695,9 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (hazard) hold(externalWriteDenial(request.path, hazard))
     }
     const inspectPath = (request: PathInspectionRequest, controlCoverage = false, approvedReadCwd = false): JsonSnapshotObject | undefined => {
-        if (!scalar(request.path) || Buffer.byteLength(request.path) > GUARD_INPUT_LIMITS.pathBytes || !canonical(request.cwd)) {
-            hold(unavailable('Guard path or working directory is malformed.'))
+        const malformed = malformedPath(request.path) ?? malformedDirectory(request.cwd)
+        if (malformed) {
+            hold(unavailable(malformed))
             return
         }
         const lexical = posix.resolve(request.cwd, request.path)
@@ -2708,6 +2780,27 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         if (found === null) holdBoundary(invocation, ask(`Staging ${path} covers more than the guard walks to prove it holds no secrets directory. Stage the changed files by name.`))
         else if (found.some((item) => fold(item).split('/').includes('.secrets'))) hold(coveringStageDenial)
     }
+    // A glob or a directory stages whatever it matches. Where Git listed the changed and untracked paths it matches,
+    // each is judged as a path named on its own, a guard script among them included; otherwise a glob is unproven and
+    // a directory is walked. `src/[slug]` is a glob that also matches `src/s`, so it is judged by what Git lists.
+    const stagePathspec = (invocation: ParsedInvocation, cwd: string, pathspec: GitStagingPathspec, listable: boolean) => {
+        pathCount++
+        const path = pathspec.literal ?? pathspec.spelled
+        const glob = pathspec.literal === undefined && (path.startsWith(':') || GIT_GLOB.test(path))
+        let evidence: JsonSnapshot | undefined
+        if (listable) try { evidence = snapshotJson(inspect({ path, cwd, operation: 'pathspec', ...pathspec.literal === undefined ? {} : { literal: true } })) }
+        catch (error) { inspectionFailure = errorCause(error) }
+        const matches = record(evidence) && evidence.status === 'resolved' && evidence.path === posix.resolve(cwd, path) && strings(evidence.matches)
+            && evidence.matches.every(match => canonical(match) && inRoots(match)) ? evidence.matches : undefined
+        if (matches) {
+            for (const match of matches) {
+                // A file below a declared instance is part of it.
+                if (resolved.instances.some(item => within(fold(match), fold(item.path)))) hold(instanceDenial)
+                inspectPath({ path: posix.relative(cwd, match), cwd, operation: 'stage' })
+            }
+        } else if (glob) hold(unavailable('Unproven Git staging pathspec grammar.'))
+        else inspectStage(invocation, path, cwd)
+    }
     // Removing a control, anything below a control directory, or a directory containing one can
     // disable the guard before its next invocation. Missing evidence never softens a spelling denial.
     // The return value preserves a prompt for command removals beyond the inspector's authority.
@@ -2768,13 +2861,15 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     // it, `*` crosses `/`, and `:(...)`, `:/` and `:!` prefixes are magic; a control directory counts
     // through every file below it.
     const controlPathspec = (spec: string, cwd: string) => {
-        const pattern = spec.replace(/^:(?:\([^)]*\)|[/!^]*)/, '')
+        // An escaped character matches itself; read unescaped, `\*` is a wildcard, which matches more.
+        const pattern = spec.replace(/^:(?:\([^)]*\)|[/!^]*)/, '').replace(/\\(.)/g, '$1')
         const source = fold(posix.resolve(spec.startsWith(':/') ? resolved.canonicalRoot : cwd, pattern))
         const expression = new RegExp(`^${globSource(source)}(?:/.*)?$`)
         return [...controlFiles, ...controlDirectories.map((directory) => `${directory}/x`)].some((target) => expression.test(fold(target)))
     }
     const inspectLinkSource = (invocation: ParsedInvocation, source: string, cwd: string, destinations: readonly string[], symbolic: boolean) => {
-        if (!scalar(source) || Buffer.byteLength(source) > GUARD_INPUT_LIMITS.pathBytes) { hold(unavailable('Guard path or working directory is malformed.')); return }
+        const malformed = malformedPath(source)
+        if (malformed) { hold(unavailable(malformed)); return }
         const protectedTargets = [secretRoot, ...resolved.instances.map((item) => item.path), ...resolved.secretPaths ?? [], ...controlFiles, ...controlDirectories].map(fold)
         const bases = new Set([cwd, ...destinations.flatMap((path) => { const target = posix.resolve(cwd, path); return [target, posix.dirname(target)] })])
         for (const base of bases) {
@@ -3768,7 +3863,10 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         // `--cacheinfo` takes `<mode>,<object>,<path>` or three words.
         const cached = git.args.flatMap((arg, at) => arg === '--cacheinfo' ? [git.args[at + 1]?.includes(',') ? git.args[at + 1]!.split(',')[2] ?? '' : git.args[at + 3] ?? '']
             : arg.startsWith('--cacheinfo=') ? [arg.split(',')[2] ?? ''] : [])
-        const pathspecs = [...git.args.filter(arg => !arg.startsWith('-') && (/[*?[]/.test(arg) || arg.startsWith(':'))), ...cached]
+        // A commit's message is text, not a pathspec.
+        const staging = gitStagingPathspecs(git, invocation)
+        const operandWords = staging ? staging.pathspecs.flatMap(pathspec => pathspec.literal === undefined ? [pathspec.spelled] : []) : git.args.filter(arg => !arg.startsWith('-'))
+        const pathspecs = [...operandWords.filter(arg => GIT_GLOB.test(arg) || arg.startsWith(':')), ...cached]
         // A verb that prints or lists only selects with its pathspecs, an exclusion included, and writes nothing they
         // match. `git grep -O` opens what it selects in a program the agent names, and a variable set on the command,
         // such as GIT_EXTERNAL_DIFF, can name one too.
@@ -3826,31 +3924,31 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
         }
         if (git.verb === 'add') {
             let options = true
-            let operands = 0
+            let whole = false
             for (const arg of git.args) {
                 if (options && arg === '--') { options = false; continue }
                 if (options && arg.startsWith('-')) {
-                    if (['-A', '--all', '-u', '--update'].includes(arg)) {
-                        // These forms can stage an instance even without a literal operand.
-                        inspectStage(invocation, '.', git.cwd)
-                    } else if (!['-f', '--force', '-v', '--verbose', '-n', '--dry-run'].includes(arg)) hold(unavailable('Unsupported Git staging option. Stage with `git add <paths>`, `-A` or `-u`; a person runs any other staging form.'))
-                } else {
-                    operands++
-                    pathCount++
-                    if (arg.startsWith(':') || /[*?\[]/.test(arg)) hold(unavailable('Unproven Git staging pathspec grammar.'))
-                    else inspectStage(invocation, arg, git.cwd)
+                    if (['-A', '--all', '-u', '--update'].includes(arg)) whole = true
+                    else if (!['-f', '--force', '-v', '--verbose', '-n', '--dry-run'].includes(arg)) hold(unavailable('Unsupported Git staging option. Stage with `git add <paths>`, `-A` or `-u`; a person runs any other staging form.'))
                 }
             }
-            if (!operands) holdBoundary(invocation, ask('Staging without explicit paths requires human approval.'))
+            // Without a pathspec these forms stage the whole tree, and can stage an instance with no literal operand.
+            if (whole && !staging?.pathspecs.length) inspectStage(invocation, '.', git.cwd)
+            if (!staging?.pathspecs.length) holdBoundary(invocation, ask('Staging without explicit paths requires human approval.'))
         }
-        // `git commit <paths>` stages what it names before it commits, as `git add` would.
-        if (git.verb === 'commit') {
-            for (const arg of gitOperands(git.args, ['-m', '--message', '-F', '--file', '-C', '--reuse-message', '-c', '--reedit-message', '--author', '--date',
-                '--fixup', '--squash', '-t', '--template', '--trailer', '--cleanup', '--pathspec-from-file'])) {
-                pathCount++
-                if (arg.startsWith(':') || /[*?\[]/.test(arg)) hold(unavailable('Unproven Git staging pathspec grammar.'))
-                else inspectStage(invocation, arg, git.cwd)
-            }
+        if (git.verb === 'commit' && git.args.some(arg => /^--pathspec-from-file(?:=|$)/.test(arg))) {
+            holdBoundary(invocation, ask(`${named(invocation)} takes the paths it commits from a file, which the guard does not read. Name the paths on the command line.`))
+        }
+        if (staging) {
+            // What Git lists before the call runs is what the command stages only when nothing earlier in the call or beside
+            // it in a pipeline can change the files, the ignore rules or the environment Git reads, and `-f` adds ignored
+            // files it does not list.
+            const listable = !staging.force && !git.uncertain && !invocation.dynamic && !invocation.background && !input.loop
+                && invocation.words.every(word => word.role !== 'environment-assignment-value' || word.name === 'GIT_LITERAL_PATHSPECS')
+                && !invocation.piped && !invocations[index + 1]?.piped
+                && invocations.slice(0, index).every(earlier => readOnly.has(earlier) || gitInvocation(earlier)?.verb === 'add'
+                    || earlier.executable === null && earlier.words.every(word => word.role === 'directory'))
+            for (const pathspec of staging.pathspecs) stagePathspec(invocation, git.cwd, pathspec, listable)
         }
     }
     linking = false

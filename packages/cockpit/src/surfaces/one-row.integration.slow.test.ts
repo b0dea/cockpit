@@ -255,7 +255,16 @@ describe('one-row generated surface integration', () => {
             encoding: 'utf8', timeout: 30_000, maxBuffer: 65_536,
         })
         expect(JSON.parse(staged.stdout).hookSpecificOutput).toMatchObject({ permissionDecision: 'deny',
-            permissionDecisionReason: expect.stringContaining('Stage the changed files by name instead.') })
+            permissionDecisionReason: 'Refusing mutation or staging of a declared environment instance.' })
+        // An empty secrets directory stages nothing; a file in one is listed below the staged directory and refused.
+        await writeFile(join(added.root, 'worker/deep/.secrets/synthetic'), 'synthetic\n')
+        const nestedStage = spawnSync('/bin/bash', [join(added.root, '.cockpit/guards/bash-guard.sh'), '--harness', 'claudecode'], {
+            cwd: added.root,
+            input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: added.root, tool_input: { command: 'git add worker/deep' } }),
+            encoding: 'utf8', timeout: 30_000, maxBuffer: 65_536,
+        })
+        expect(JSON.parse(nestedStage.stdout).hookSpecificOutput).toMatchObject({ permissionDecision: 'deny',
+            permissionDecisionReason: 'Refusing mutation or staging below a secrets directory.' })
         await rm(join(added.root, 'worker/deep'), { recursive: true })
 
         // A sibling's own guide edit leaves the committed copy stale; check names that guide until sync.

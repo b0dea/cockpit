@@ -149,7 +149,10 @@ const RUNNING_STACK_ROWS = Object.freeze([
 ])
 // Posture checks that describe a runtime; a cockpit that declares none has nothing for them to measure.
 const RUNTIME_ROWS = Object.freeze([POSTURE_REQUIREMENT_OWNER])
-for (const id of [...RUNNING_STACK_ROWS, ...RUNTIME_ROWS]) {
+// The machine floor is measured through Docker, so without a usable Docker these rows read as missing
+// evidence beside the finding that already names Docker.
+const MACHINE_FLOOR_ROWS = Object.freeze(['machine-memory', 'machine-cpu', 'machine-disk'])
+for (const id of [...RUNNING_STACK_ROWS, ...RUNTIME_ROWS, ...MACHINE_FLOOR_ROWS]) {
     if (id !== POSTURE_REQUIREMENT_OWNER && !validatedProductionDeclarations.some((declaration) => declaration.id === id)) {
         throw new RefusalError(`stopped-stack applicability names an undeclared observation: ${id}`)
     }
@@ -174,8 +177,11 @@ export function awaitsRunningStack(check: Pick<EvaluatedObservation, 'verdict' |
  * Which rows cannot be observed when no stack runs, and why. The key is a declaration id, or the
  * posture-requirement owner for the posture checks.
  */
-export function stoppedStackApplicability(input: { readonly runtimeDeclared: boolean }): ReadonlyMap<string, string> {
+export function stoppedStackApplicability(input: { readonly runtimeDeclared: boolean; readonly runtimeUsable: boolean }): ReadonlyMap<string, string> {
     const rows = new Map<string, string>(RUNNING_STACK_ROWS.map((id) => [id, runningStackReason(id)]))
+    if (!input.runtimeUsable) {
+        for (const id of MACHINE_FLOOR_ROWS) rows.set(id, `${id} is measured through Docker, which is not usable here; start Docker, then rerun this command`)
+    }
     if (!input.runtimeDeclared) {
         for (const id of [...RUNNING_STACK_ROWS, ...RUNTIME_ROWS]) rows.set(id, 'this cockpit declares no runtime, so there is nothing for it to measure')
     }

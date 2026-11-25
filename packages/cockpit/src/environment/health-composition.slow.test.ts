@@ -13,6 +13,7 @@ import { runDoctor } from './application/doctor.js'
 import { runPreflight } from './application/health.js'
 import { runUp } from './application/lifecycle.js'
 import { checkoutId, cockpitId, holderId, stackId } from './identity.js'
+import { composeProjectName } from './identity.js'
 import { transactState } from './state.js'
 import { observeProcessStart, processHost } from './claims.js'
 import { createLifecycleCommandAdapters } from './lifecycle-composition.js'
@@ -308,7 +309,8 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         }, executeProbe))
 
         // The rows a running stack answers had no evidence, and none of them is a missing prerequisite.
-        expect(doctor.diagnostics).toContainEqual(expect.objectContaining({ code: 'GIT_STATE_UNHEALTHY', message: 'git-working-tree evidence is missing' }))
+        expect(doctor.diagnostics.filter(({ code }) => code === 'STACK_NOT_RUNNING' || code === 'RUNTIME_UNAVAILABLE')).toEqual([expect.objectContaining({ code: 'STACK_NOT_RUNNING', target: candidate.stack, message: expect.stringContaining('a session holds this stack') })])
+        expect(doctor.result.checks).toContainEqual(expect.objectContaining({ code: 'GIT_STATE_UNHEALTHY', source: `${candidate.configPath}:working-tree`, verdict: 'pass' }))
         const gaps = (doctor.result as { readiness: { gaps: readonly { id: string; findings: readonly { message: string }[] }[] } }).readiness.gaps
         expect(gaps.flatMap(({ findings }) => findings.map(({ message }) => message))).not.toContainEqual(expect.stringContaining('evidence is missing'))
         expect(gaps.map(({ id }) => id)).not.toContain('cockpit-committed')
@@ -419,6 +421,99 @@ describe('production health adapter composition', { timeout: 180_000 }, () => {
         } finally {
             session.kill('SIGKILL')
         }
+    })
+
+    // The hold a session left when it ended without its closing sleep, its process confirmed gone.
+    async function holdLeftByEndedSession(candidate: Awaited<ReturnType<typeof fixture>>) {
+        const session = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+        const exited = once(session, 'exit')
+        try {
+            const checkout = checkoutId({ checkoutPath: candidate.checkout })
+            const started = await observeProcessStart(session.pid!, processHost(executeProbe))
+            if (started.state !== 'present') throw new Error(JSON.stringify(started))
+            const holder = holderId({ stackId: candidate.stack, checkoutId: checkout, sessionId: 'ended-session' })
+            const address = candidate.namespace.paths.coordination(candidate.stack)
+            expect((await transactState(candidate.namespace, address, { ownerId: holder }, () => ({
+                format: 'cockpit-state/v1' as const, kind: 'coordination' as const, cockpitId: address.cockpitId,
+                subjectId: candidate.stack, revision: 0, updatedAt: new Date().toISOString(),
+                value: { holders: [{ holderId: holder, checkoutId: checkout, claimedAt: new Date().toISOString(), pid: session.pid!, processStart: started.start }],
+                    lastReleasedHolder: null,
+                    lease: { offset: 0, ports: { APP_PORT: 61230 }, released: false, declaration: { step: 10, count: 1, bases: { APP_PORT: 61230 } } } },
+            }))).kind).toBe('complete')
+        } finally {
+            session.kill('SIGKILL')
+            await exited
+        }
+    }
+
+    // A terminal that joined a session's stack and ran sleep released only its own hold, and the session
+    // then ended without its closing sleep. Docker lists the stack, but its lifecycle record names the
+    // released hold, so the stack cannot be read. Doctor had already committed every check to a running
+    // stack: beside the one stack finding, each check that needs no stack failed as missing evidence.
+    it('reports a stack its ended sessions left once when Docker lists it but it cannot be read, and still runs the checks that need no stack', async () => {
+        const candidate = await fixture({ configuredRuntime: true })
+        await holdLeftByEndedSession(candidate)
+        // The up the released hold ran started every service.
+        const released = holderId({ stackId: candidate.stack, checkoutId: checkoutId({ checkoutPath: candidate.checkout }), sessionId: 'health-fixture' })
+        const lifecycle = candidate.namespace.paths.lifecycle(candidate.stack)
+        expect((await transactState(candidate.namespace, lifecycle, { ownerId: released }, () => ({
+            format: 'cockpit-state/v1' as const, kind: 'lifecycle' as const, cockpitId: lifecycle.cockpitId, subjectId: candidate.stack,
+            revision: 1, updatedAt: new Date().toISOString(),
+            value: { holderId: released, workBasisSha256: '1'.repeat(64), operationGeneration: '2'.repeat(64),
+                completedServices: [{ service: 'api', containerId: 'a'.repeat(64) }], steady: true },
+        }))).kind).toBe('complete')
+        const project = composeProjectName({ cockpitName: 'synthetic-cockpit', stackId: candidate.stack })
+        const docker = join(candidate.root, 'docker')
+        await writeFile(docker, (await readFile(docker, 'utf8')).replace('if [ "$1" = "compose" ]; then',
+            `case " $* " in *" ps "*) printf '%s\\n' '{"Project":"${project}","Service":"api","State":"running"}'; exit 0 ;; esac\nif [ "$1" = "compose" ]; then`))
+
+        const doctor = await runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:${process.env.PATH}`, HOME: candidate.home },
+            timeoutMs: 5_000,
+        }, executeProbe))
+
+        expect(doctor.diagnostics.filter(({ code }) => code === 'STACK_NOT_RUNNING'), JSON.stringify(doctor.diagnostics)).toEqual([
+            expect.objectContaining({ target: candidate.stack, message: expect.stringContaining('every session that held this stack has ended') })])
+        // Docker listed a running service, so the stack is not called asleep.
+        expect(doctor.diagnostics.map(({ message }) => message)).not.toContainEqual(expect.stringContaining('is asleep'))
+        expect(doctor.diagnostics.map(({ message }) => message)).not.toContainEqual(expect.stringContaining('evidence is missing'))
+        expect(doctor.diagnostics.map(({ code }) => code)).not.toContain('EVIDENCE_UNAVAILABLE')
+        expect(doctor.result.checks).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: 'MACHINE_MEMORY_BELOW_FLOOR', verdict: 'pass' }),
+            expect.objectContaining({ code: 'RUNNING_CHECKOUT_MISMATCH', verdict: 'not-applicable' }),
+        ]))
+    })
+
+    // Docker that could not say what runs left the verdict to the running-stack reads, which failed after
+    // every check was committed to a running stack. Calling the stack asleep instead would hide
+    // containers that may still run, so the one finding says Docker could not be read.
+    // The machine floor is measured through Docker, so with no Docker to reach it is not applicable
+    // rather than missing evidence.
+    it.each([
+        ['cannot list the stack\'s services', 'case " $* " in *" ps "*) echo "Cannot connect to the Docker daemon" >&2; exit 1 ;; esac\n', 'pass'],
+        ['cannot be reached at all', 'echo "Cannot connect to the Docker daemon" >&2; exit 1\n', 'not-applicable'],
+    ])('says once that Docker could not be read when it %s for a stack its ended sessions left, and still runs the checks that need no stack', async (_, unreadable, floor) => {
+        const candidate = await fixture({ configuredRuntime: true })
+        await holdLeftByEndedSession(candidate)
+        const docker = join(candidate.root, 'docker')
+        await writeFile(docker, (await readFile(docker, 'utf8')).replace('#!/bin/sh\n', `#!/bin/sh\n${unreadable}`))
+
+        const doctor = await runDoctor({ configPath: candidate.configPath }, createHealthCommandAdapters({
+            configPath: candidate.configPath,
+            env: { PATH: `${candidate.root}:${process.env.PATH}`, HOME: candidate.home },
+            timeoutMs: 5_000,
+        }, executeProbe))
+
+        expect(doctor.diagnostics.filter(({ code }) => code === 'STACK_NOT_RUNNING' || code === 'RUNTIME_UNAVAILABLE'), JSON.stringify(doctor.diagnostics)).toEqual([
+            expect.objectContaining({ code: 'RUNTIME_UNAVAILABLE', target: candidate.stack, message: expect.stringContaining('Docker') })])
+        expect(doctor.diagnostics.map(({ message }) => message)).not.toContainEqual(expect.stringContaining('is asleep'))
+        expect(doctor.diagnostics.map(({ message }) => message)).not.toContainEqual(expect.stringContaining('evidence is missing'))
+        expect(doctor.diagnostics.map(({ code }) => code)).not.toContain('EVIDENCE_UNAVAILABLE')
+        expect(doctor.result.checks).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: 'MACHINE_MEMORY_BELOW_FLOOR', verdict: floor }),
+            expect.objectContaining({ code: 'RUNNING_CHECKOUT_MISMATCH', verdict: 'not-applicable' }),
+        ]))
     })
 
     it('names no check as waiting for a running stack in a cockpit that declares no runtime', async () => {

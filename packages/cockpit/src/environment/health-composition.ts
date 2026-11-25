@@ -169,13 +169,14 @@ async function heldOnlyByEndedSessions(
 // evidence, and the missing runtime row read as an unusable Docker. One none of whose services runs
 // is asleep. Deciding that only after the running-stack reads failed left about a dozen checks
 // reported as missing evidence, the machine floors and the agent surfaces among them, though none
-// of them needs a running stack.
+// of them needs a running stack. Services Docker still lists are returned as 'present', so a stack
+// whose reads then fail is not called asleep.
 async function endedSessionsStack(
     namespace: Extract<Awaited<ReturnType<typeof selectStateRoot>>, { readonly kind: 'complete' }>['value'],
     stack: ReturnType<typeof stackId>,
     input: Readonly<{ configPath: string; env: Readonly<Record<string, string | undefined>>; timeoutMs: number }>,
     execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
-): Promise<EnvironmentDiagnostic | undefined> {
+): Promise<EnvironmentDiagnostic | 'present' | undefined> {
     if (!await heldOnlyByEndedSessions(namespace, stack, execute)) return undefined
     const adapters = createLifecycleCommandAdapters({ ...input, sessionId: 'cockpit-health-read-only' }, execute)
     const loaded = await adapters.load({ configPath: input.configPath })
@@ -185,17 +186,27 @@ async function endedSessionsStack(
     if (!progress || progress.teardownComplete) return undefined
     const started = new Set(progress.completedServices.map(({ service }) => service))
     const states = await adapters.withRuntimeReadiness(loaded.result, async (runtime) => {
-        const observed = await observeRuntimeServiceStates({ topology: runtime.topology, execute })
-        return { observed, complete: runtime.topology.services.every(({ id }) => started.has(id)) }
+        let unanswered = false
+        const observed = await observeRuntimeServiceStates({ topology: runtime.topology, execute: async (step) => {
+            const outcome = await execute(step)
+            unanswered ||= outcome.kind !== 'complete'
+            return outcome
+        } })
+        return { observed, unanswered, complete: runtime.topology.services.every(({ id }) => started.has(id)) }
     })
-    // Docker could not say what runs, so the reads of a running stack get their chance and say why they failed.
+    // Docker that could not be asked what runs leaves containers that may still run, so the stack is
+    // not called asleep.
+    if (states?.observed.kind === 'unavailable' && states.unanswered) {
+        return runtimeUnavailable(`Docker could not list this stack's services, so whether any of them runs is unknown (${states.observed.reason})`, stack)
+    }
+    // Docker answered with something else, so the reads of a running stack get their chance.
     if (!states || states.observed.kind !== 'complete') return undefined
     const running = states.observed.services.filter(({ state }) => state === 'running').length
     // A restarting or paused container is still there, so only a stack with none left is asleep.
     const present = states.observed.services.filter(({ state }) => !['absent', 'created', 'exited', 'dead'].includes(state)).length
     if (present === 0) return asleep(stack, input.configPath, 'every session that held it has ended and none of its services is running')
     // A finished start whose sessions ended still runs; it is observed like any running stack.
-    if (states.complete || running === 0) return undefined
+    if (states.complete || running === 0) return 'present'
     return {
         severity: 'error' as const, code: ENVIRONMENT_CODES.STACK_NOT_RUNNING, target: stack,
         message: `the session that was starting this stack ended before it finished (${running} of ${states.observed.services.length} services running), so the stack is only partly running; run up to finish starting it, or down to remove it`,
@@ -215,6 +226,26 @@ function runtimeUnavailable(reason: string, target: string, fix = 'install or st
     }
 }
 
+// Why Docker cannot be used here, if it cannot; `installed` is false when no docker is on PATH at all.
+async function dockerProblem(
+    input: Readonly<{ env: Readonly<Record<string, string | undefined>>; cwd: string; timeoutMs: number; stack: ReturnType<typeof stackId> }>,
+    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
+): Promise<Readonly<{ diagnostic: EnvironmentDiagnostic; installed: boolean }> | undefined> {
+    const docker = await resolveDockerExecutable(input.env)
+    if (docker.state !== 'available') return { diagnostic: runtimeUnavailable(docker.reason, input.stack), installed: false }
+    const observed = await observeDockerRuntime({
+        executable: docker.value,
+        cwd: input.cwd,
+        env: Object.fromEntries(Object.entries(input.env).filter((entry): entry is [string, string] =>
+            ['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'].includes(entry[0])
+            && typeof entry[1] === 'string',
+        )),
+        timeoutMs: input.timeoutMs,
+    }, execute)
+    return observed.kind === 'complete' ? undefined
+        : { diagnostic: runtimeUnavailable(observed.reason, input.stack, observed.fix), installed: true }
+}
+
 function probeTimedOut(step: ExecutionStep): EnvironmentDiagnostic {
     return {
         severity: 'warning' as const,
@@ -222,6 +253,73 @@ function probeTimedOut(step: ExecutionStep): EnvironmentDiagnostic {
         message: `the ${step.id} probe timed out after ${Math.ceil(step.timeoutMs / 1000)} s, so the checks it answers were not observed`,
         target: step.id,
         fix: 'the machine may be too busy for its probes to finish in time; rerun this command once the load drops',
+    }
+}
+
+// The running stack's lifecycle, lease and runtime, read before any check is committed to it.
+async function readRunningStack(input: {
+    readonly config: Awaited<ReturnType<typeof loadCockpitConfig>> & { readonly kind: 'complete' }
+    readonly stack: ReturnType<typeof stackId>
+    readonly env: Readonly<Record<string, string | undefined>>
+    readonly timeoutMs: number
+    readonly execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
+    readonly refuse?: (diagnostics: readonly EnvironmentDiagnostic[]) => undefined
+}) {
+    const adapters = createLifecycleCommandAdapters({
+        configPath: input.config.result.source.path,
+        env: input.env,
+        sessionId: 'cockpit-health-read-only',
+        timeoutMs: input.timeoutMs,
+    }, input.execute)
+    const loaded = await adapters.load({ configPath: input.config.result.source.path })
+    if (loaded.kind === 'refusal') return input.refuse?.(loaded.diagnostics)
+    if (loaded.kind !== 'complete' || loaded.result.stackId !== input.stack) return undefined
+    const stored = await readState(loaded.result.namespace.paths.lifecycle(loaded.result.stackId))
+    if (stored.kind !== 'complete') return undefined
+    const lifecycle = decodeLifecycleRecord(stored.value, loaded.result)
+    if (!lifecycle) return undefined
+    const retained = await observeRetainedPortFamily({
+        namespace: loaded.result.namespace,
+        stackId: loaded.result.stackId,
+        holderId: lifecycle.value.holderId,
+        checkoutId: loaded.result.checkoutId,
+        config: loaded.result.ports,
+    })
+    if (retained.kind !== 'complete') return undefined
+    const entrypoints = deriveEntrypoints({ lease: retained.lease, declarations: loaded.result.entrypointDerivatives })
+    if (entrypoints.kind !== 'complete') return undefined
+    const ports = await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })
+    if (!ports) return undefined
+    const readiness = await adapters.withRuntimeReadiness<RuntimeReadiness | undefined>(loaded.result, async (value) => value, ports,
+        (diagnostics) => input.refuse?.(diagnostics))
+    return readiness ? { adapters, context: loaded.result, readiness, lifecycle, ports,
+        lifecycleSnapshot: JSON.stringify(stored.value) } : undefined
+}
+
+type RunningStack = NonNullable<Awaited<ReturnType<typeof readRunningStack>>>
+
+// A stack that could not be read was taken as running, so every check was committed to it and
+// each one that needs no stack (the Git working tree, the machine floors, the agent surfaces)
+// failed as missing evidence beside the one stack finding. Whatever kept it from being read, it is
+// now the one finding and those checks run.
+async function unreadStack(
+    namespace: Extract<Awaited<ReturnType<typeof selectStateRoot>>, { readonly kind: 'complete' }>['value'],
+    input: Readonly<{ stack: ReturnType<typeof stackId>; configPath: string; servicesPresent: boolean
+        docker: Awaited<ReturnType<typeof dockerProblem>> }>,
+    execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>,
+): Promise<EnvironmentDiagnostic> {
+    const { stack, configPath } = input
+    if (input.docker) return input.docker.diagnostic
+    if (!await heldOnlyByEndedSessions(namespace, stack, execute)) return {
+        severity: 'error', code: ENVIRONMENT_CODES.STACK_NOT_RUNNING, target: stack,
+        message: 'a session holds this stack, but its running services could not be read, so the checks that need a running stack were not run; run up to resume it, or down to release it if the session that holds it has ended',
+        fix: cockpitCommand('up', { config: configPath }),
+    }
+    if (!input.servicesPresent) return asleep(stack, configPath, 'every session that held it has ended and none of its services could be read')
+    return {
+        severity: 'error' as const, code: ENVIRONMENT_CODES.STACK_NOT_RUNNING, target: stack,
+        message: 'every session that held this stack has ended, and Docker still lists its services, but they could not be read as this stack, so the checks that need a running stack were not run; run up to take the stack over, or down to remove it',
+        fix: cockpitCommand('up', { config: configPath }),
     }
 }
 
@@ -234,22 +332,17 @@ function producers(input: {
     readonly env: Readonly<Record<string, string | undefined>>
     readonly timeoutMs: number
     readonly execute: (step: ExecutionStep) => Promise<ExecuteProbeOutcome>
-    // Why the running stack could not be read (a configuration edited since `up`, say) reaches the
-    // command through here instead of surfacing only as missing evidence.
-    readonly refuse?: (diagnostics: readonly EnvironmentDiagnostic[]) => undefined
-    // No stack runs (never brought up, asleep, or no runtime declared): every row that needs none is
-    // still observed, from the declaration and the machine, and the rest are left to the evaluation.
+    // The stack as read before the checks were committed to it; undefined when it could not be read.
+    readonly running: RunningStack | undefined
+    // No stack runs (never brought up, asleep, unreadable, or no runtime declared): every row that needs
+    // none is still observed, from the declaration and the machine, and the rest are left to the evaluation.
     readonly stopped: boolean
+    // Why Docker is not usable, read once before the checks start, when no running stack is read.
+    readonly runtimeProblem: Awaited<ReturnType<typeof dockerProblem>>
     // Refusals met on the way that explain missing evidence (no container runtime, for one).
     readonly notice: (diagnostics: readonly EnvironmentDiagnostic[]) => void
 }): Readonly<{ observations: HealthObservationProducers; revalidate: () => Promise<boolean> }> {
-    // On a busy machine a probe can run out of time. Without naming it, the rows it would have
-    // answered read as a missing runtime or a broken stack.
-    const execute = async (step: ExecutionStep): Promise<ExecuteProbeOutcome> => {
-        const outcome = await input.execute(step)
-        if (outcome.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT) input.notice([probeTimedOut(step)])
-        return outcome
-    }
+    const { execute } = input
     const observedAt = () => new Date().toISOString()
     const siblingRoot = resolve(dirname(input.config.result.source.path), input.config.result.config.cockpit.siblings_root)
     const declaresStack = input.config.result.config.environment.compose_files.length > 0
@@ -259,66 +352,10 @@ function producers(input: {
     const configuredRuntime = !declaresNothingToRun(input.config.result.config.environment)
     // Before the first `up` there are no runtime rows to observe, but an unusable Docker or a Compose
     // below the floor is still named here rather than first at bring-up.
-    const probeRuntime = async (reportMissing: boolean) => {
-        const docker = await resolveDockerExecutable(input.env)
-        if (docker.state !== 'available') {
-            if (reportMissing) input.notice([runtimeUnavailable(docker.reason, input.stack)])
-            return
-        }
-        const observed = await observeDockerRuntime({
-            executable: docker.value,
-            cwd: input.checkout.currentCheckoutPath,
-            env: Object.fromEntries(Object.entries(input.env).filter((entry): entry is [string, string] =>
-                ['PATH', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH'].includes(entry[0])
-                && typeof entry[1] === 'string',
-            )),
-            timeoutMs: input.timeoutMs,
-        }, execute)
-        if (observed.kind !== 'complete') input.notice([runtimeUnavailable(observed.reason, input.stack, observed.fix)])
+    if (configuredRuntime && !runningStack && input.runtimeProblem && (input.runtimeProblem.installed || input.stopped)) {
+        input.notice([input.runtimeProblem.diagnostic])
     }
-    const runtimeCheck = configuredRuntime && !runningStack ? probeRuntime(input.stopped) : undefined
-    const runtimeSession = runningStack ? (async () => {
-        const adapters = createLifecycleCommandAdapters({
-            configPath: input.config.result.source.path,
-            env: input.env,
-            sessionId: 'cockpit-health-read-only',
-            timeoutMs: input.timeoutMs,
-        }, execute)
-        const loaded = await adapters.load({ configPath: input.config.result.source.path })
-        if (loaded.kind === 'refusal') return input.refuse?.(loaded.diagnostics)
-        if (loaded.kind !== 'complete' || loaded.result.stackId !== input.stack) return undefined
-        const stored = await readState(loaded.result.namespace.paths.lifecycle(loaded.result.stackId))
-        if (stored.kind !== 'complete') return undefined
-        const lifecycle = decodeLifecycleRecord(stored.value, loaded.result)
-        if (!lifecycle) return undefined
-        const retained = await observeRetainedPortFamily({
-            namespace: loaded.result.namespace,
-            stackId: loaded.result.stackId,
-            holderId: lifecycle.value.holderId,
-            checkoutId: loaded.result.checkoutId,
-            config: loaded.result.ports,
-        })
-        if (retained.kind !== 'complete') return undefined
-        const entrypoints = deriveEntrypoints({ lease: retained.lease, declarations: loaded.result.entrypointDerivatives })
-        if (entrypoints.kind !== 'complete') return undefined
-        const ports = await projectRetainedPortFamilyResult({ retainedResult: retained, entrypointResult: entrypoints })
-        if (!ports) return undefined
-        const readiness = await adapters.withRuntimeReadiness<RuntimeReadiness | undefined>(loaded.result, async (value) => value, ports,
-            (diagnostics) => input.refuse?.(diagnostics))
-        return readiness ? { adapters, context: loaded.result, readiness, lifecycle, ports,
-            lifecycleSnapshot: JSON.stringify(stored.value) } : undefined
-    })().then(async (session) => {
-        // A session that ended without sleep or down still holds the stack, so it reads as running.
-        if (!session) input.notice([await heldOnlyByEndedSessions(input.namespace, input.stack, execute)
-            ? asleep(input.stack, input.config.result.source.path, 'every session that held it has ended and none of its services could be read')
-            : { severity: 'error', code: ENVIRONMENT_CODES.STACK_NOT_RUNNING, target: input.stack,
-                message: 'a session holds this stack, but its running services could not be read, so the checks that need a running stack have no evidence; run up to resume it, or down to release it if the session that holds it has ended',
-                fix: cockpitCommand('up', { config: input.config.result.source.path }) }])
-        // A held stack that could not be read may have no Docker under it at all, which only the
-        // probe says; without it the rows read as missing evidence and named no runtime problem.
-        if (!session) await probeRuntime(true)
-        return session
-    }) : undefined
+    const runtimeSession = runningStack ? Promise.resolve(input.running) : undefined
     const stableSession = async () => {
         const session = await runtimeSession
         if (!session) return undefined
@@ -451,7 +488,6 @@ function producers(input: {
             if (!configuredRuntime) return []
             if (!runningStack) {
                 // An unusable runtime is already a notice; the rows that need a running stack are left unobserved.
-                await runtimeCheck
                 return []
             }
             const [session, services] = await Promise.all([stableSession(), currentServices])
@@ -487,9 +523,9 @@ function producers(input: {
             siblings: input.config.result.config.sibling,
         }),
     }
-    // A running stack that could never be read, as one a session holds after it ended, gave no check its evidence;
+    // A running stack that could never be read, as one a live session holds, gave no check its evidence;
     // those checks already say so, and there is nothing that could have moved under the rest.
-    return { observations, revalidate: async () => !runningStack || await runtimeSession === undefined || await stableSession() !== undefined }
+    return { observations, revalidate: async () => !runningStack || input.running === undefined || await stableSession() !== undefined }
 }
 
 async function checkoutProjection(
@@ -609,6 +645,7 @@ export function createHealthCommandAdapters(
         selectedOwn = { cockpitId: checkout.cockpitId, stackId: currentStack, mainCheckoutPath: checkout.mainCheckoutPath,
             configPath: loaded.result.source.path }
         let stopped: EnvironmentDiagnostic | null = notDeclared ?? null
+        let servicesPresent = false
         const refreshPreflight = async (previous?: PreflightContext): Promise<PreflightContext | undefined> => {
             const observedAt = new Date().toISOString()
             const configuration = (await observeConfiguration({
@@ -642,9 +679,13 @@ export function createHealthCommandAdapters(
                             message: `no completed bring-up is recorded for this stack (a stack started by an earlier cockpit release counts as not yet up), so only the checks that need no running stack ran; fix: ${fix}; then retry the command that stopped`,
                             fix,
                         }
-                    } else stopped = await sleepingStack(namespace.value, currentStack, loaded.result.source.path)
-                        ?? await endedSessionsStack(namespace.value, currentStack,
-                            { configPath: loaded.result.source.path, env: input.env, timeoutMs: input.timeoutMs }, execute) ?? null
+                    } else {
+                        const ended = await sleepingStack(namespace.value, currentStack, loaded.result.source.path)
+                            ?? await endedSessionsStack(namespace.value, currentStack,
+                                { configPath: loaded.result.source.path, env: input.env, timeoutMs: input.timeoutMs }, execute)
+                        servicesPresent = ended === 'present'
+                        stopped = ended === 'present' ? null : ended ?? null
+                    }
                 }
                 return {
                 authorities: [authority],
@@ -660,6 +701,36 @@ export function createHealthCommandAdapters(
         const preflight = await refreshPreflight()
         if (!preflight) return undefined
         const notices: EnvironmentDiagnostic[] = []
+        // The stack finding is already the one that names a problem, so a probe repeating it is dropped.
+        const notice = (diagnostics: readonly EnvironmentDiagnostic[]) => {
+            for (const diagnostic of diagnostics) {
+                if (stopped?.code === diagnostic.code && stopped.target === diagnostic.target) continue
+                if (!notices.some(({ code, target }) => code === diagnostic.code && target === diagnostic.target)) notices.push(diagnostic)
+            }
+        }
+        // On a busy machine a probe can run out of time. Without naming it, the rows it would have
+        // answered read as a missing runtime or a broken stack.
+        const observe = async (step: ExecutionStep): Promise<ExecuteProbeOutcome> => {
+            const outcome = await execute(step)
+            if (outcome.kind === 'refusal' && outcome.code === ENVIRONMENT_CODES.EXECUTION_TIMEOUT) notice([probeTimedOut(step)])
+            return outcome
+        }
+        // Why the running stack could not be read (a configuration edited since `up`, say) reaches the
+        // command through here instead of surfacing only as missing evidence.
+        const refuseRead = refuse ? (diagnostics: readonly EnvironmentDiagnostic[]) => refuse(diagnostics) : undefined
+        const declaresStack = loaded.result.config.environment.compose_files.length > 0
+        const readsStack = stopped === null && declaresStack
+        const running = readsStack
+            ? await readRunningStack({ config: loaded, stack: currentStack, env: input.env, timeoutMs: input.timeoutMs, execute: observe,
+                ...(refuseRead ? { refuse: refuseRead } : {}) })
+            : undefined
+        const runtimeProblem = running === undefined && !notDeclared
+            ? await dockerProblem({ env: input.env, cwd: checkout.currentCheckoutPath, timeoutMs: input.timeoutMs, stack: currentStack }, observe)
+            : undefined
+        if (readsStack && !running) {
+            stopped = await unreadStack(namespace.value, { stack: currentStack, configPath: loaded.result.source.path, servicesPresent,
+                docker: runtimeProblem }, observe)
+        }
         const sourceProducers = producers({
             checkout,
             config: loaded,
@@ -668,14 +739,11 @@ export function createHealthCommandAdapters(
             git: git.value,
             env: input.env,
             timeoutMs: input.timeoutMs,
-            execute,
-            ...(refuse ? { refuse: (diagnostics: readonly EnvironmentDiagnostic[]) => refuse(diagnostics) } : {}),
+            execute: observe,
+            running,
             stopped: stopped !== null,
-            notice: (diagnostics) => {
-                for (const diagnostic of diagnostics) {
-                    if (!notices.some(({ code, target }) => code === diagnostic.code && target === diagnostic.target)) notices.push(diagnostic)
-                }
-            },
+            runtimeProblem,
+            notice,
         })
         const secondObservedAt = new Date().toISOString()
         const secondObservation = await observeSetupCheckout({
@@ -699,6 +767,7 @@ export function createHealthCommandAdapters(
             producers: sourceProducers.observations,
             refreshPreflight: async (previous) => await sourceProducers.revalidate() ? refreshPreflight(previous) : undefined,
             stopped,
+            runtimeUnusable: runtimeProblem !== undefined,
             notices: () => [...notices],
         }))
     }

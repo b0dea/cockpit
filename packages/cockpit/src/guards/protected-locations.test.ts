@@ -10,6 +10,7 @@ import { GUARD_SECRET_FILE_LIMIT } from './evaluator.js'
 import { guardArchiveEntries, guardBranchFacts, guardInstalledDirectories, guardPackageManifest, guardPatchTargets, guardRemoteCredentials, guardSearchDirectories, guardSearchPathRelativeEntry,
     guardCommittedSensitivePaths, guardSecretFiles, guardSensitivePathsBelow, guardTrackedSensitivePaths, guardUnignoredSensitivePaths, guardWorktreeChanges } from './protected-locations.js'
 import { guardCarriedPathsBelow } from './protected-locations.js'
+import { guardStagedPaths } from './protected-locations.js'
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -97,6 +98,37 @@ describe('guard protected locations', () => {
         expect(guardSensitivePathsBelow(join(root, 'tree'), 6)).toBeNull()
         // A tool that follows links, as diff does, reads what the walk never sees behind one.
         expect(guardSensitivePathsBelow(join(root, 'tree'), undefined, true)).toBeNull()
+    })
+
+    it('lists what a staging glob or directory stages: changed, deleted and untracked paths, never ones a .gitignore hides', async () => {
+        const resolution = await resolveGitExecutable({ PATH: GUARD_EXECUTABLE_SEARCH_PATH })
+        if (resolution.state !== 'available') throw new Error(resolution.reason)
+        const git = resolution.value
+        const root = scratch()
+        const write = (path: string, content = 'x\n') => { mkdirSync(join(root, path, '..'), { recursive: true }); writeFileSync(join(root, path), content) }
+        execFileSync('git', ['init', '-q', root])
+        write('.gitignore', '.secrets/\n')
+        for (const path of ['src/app/s/[domain]/page.tsx', 'src/app/s/d/page.tsx', 'src/app/s/x/page.tsx', 'src/keep.ts', 'src/gone.ts']) write(path)
+        execFileSync('git', ['-C', root, 'add', '.'])
+        execFileSync('git', ['-C', root, '-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test', 'commit', '-q', '-m', 'Synthetic'])
+        for (const path of ['src/app/s/[domain]/page.tsx', 'src/app/s/d/page.tsx', 'src/app/s/x/page.tsx', 'src/app/s/o/page.tsx', 'src/New.ts', 'src/.secrets/key']) write(path, 'changed\n')
+        rmSync(join(root, 'src/gone.ts'))
+        const staged = (cwd: string, pathspec: string, literal = false) => guardStagedPaths(join(root, cwd), pathspec, literal, git, executeProbe)
+        // A bracket is a glob class: `[domain]` also matches the one-letter directories d and o, never x.
+        expect(await staged('.', 'src/app/s/[domain]/page.tsx')).toEqual(['src/app/s/[domain]/page.tsx', 'src/app/s/d/page.tsx', 'src/app/s/o/page.tsx'].map(path => join(root, path)))
+        expect(await staged('src/app', 's/[domain]/page.tsx', true)).toEqual([join(root, 'src/app/s/[domain]/page.tsx')])
+        // The unchanged file is not listed, and neither is the ignored secrets directory.
+        expect(await staged('src', '.', true)).toEqual(['src/New.ts', 'src/app/s/[domain]/page.tsx', 'src/app/s/d/page.tsx', 'src/app/s/o/page.tsx', 'src/app/s/x/page.tsx', 'src/gone.ts'].map(path => join(root, path)))
+        // Matched without regard to case, as a case-insensitive volume may.
+        expect(await staged('.', 'SRC/new.ts', true)).toEqual([join(root, 'src/New.ts')])
+        // A re-inclusion that matches only without regard to case, as on a case-insensitive volume, is listed too.
+        write('src/.gitignore', '!.SECRETS/\n')
+        execFileSync('git', ['-C', root, 'config', 'core.ignoreCase', 'true'])
+        expect(await staged('src', '.secrets', true)).toEqual([join(root, 'src/.secrets/key')])
+        rmSync(join(root, 'src/.gitignore'))
+        // Other magic, and a pathspec outside the repository, are not listed.
+        expect(await staged('.', ':(glob)src/*')).toBeUndefined()
+        expect(await staged('src', '../../outside', true)).toBeUndefined()
     })
 
     it('lists the protected paths a default ripgrep search reads from Git, and declines where Git cannot stand for ripgrep', async () => {

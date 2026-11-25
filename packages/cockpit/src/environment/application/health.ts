@@ -83,6 +83,8 @@ export interface HealthObservationSourceInput {
     readonly refreshPreflight: (previous: PreflightContext) => Promise<PreflightContext | undefined>
     /** Why no stack runs to observe (never brought up, asleep, or no runtime declared); null while one runs. */
     readonly stopped: EnvironmentDiagnostic | null
+    /** Docker is missing or unusable, so the machine floor it measures cannot be read either. */
+    readonly runtimeUnusable?: boolean
     /** Refusals the producers met that explain missing evidence, read once evaluation has finished. */
     readonly notices: () => readonly EnvironmentDiagnostic[]
 }
@@ -294,7 +296,7 @@ export function issueHealthObservationSource(
             expectedPreflight,
             stopped: stopped === null ? null : { ...stopped },
             notices,
-            unobservable: stopped === null ? new Map<string, string>() : stoppedStackApplicability({ runtimeDeclared }),
+            unobservable: stopped === null ? new Map<string, string>() : stoppedStackApplicability({ runtimeDeclared, runtimeUsable: rawSource.runtimeUnusable !== true }),
         }
     } catch (error) {
         throw new RefusalError(
