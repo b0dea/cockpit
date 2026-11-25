@@ -540,7 +540,8 @@ gives one to the person.
    the main checkout's own Node and cockpit by absolute path. Run that command exactly, alone, from the
    worktree root, before installing anything there, then install the worktree's dependencies as usual.
    A worktree whose guard holds every call after a rebase or install changed cockpit prints the same
-   kind of command; run it the same way.
+   kind of command; run it the same way. A session started in the main checkout that changes into
+   the worktree gets the same answers there, from the worktree's own guard once it is bound.
    When the bind refuses (`GUARD_WORKTREE_BIND_REFUSED`), hand the person the sync it names for a
    terminal outside the agent. Done when a call in the worktree is judged by its own guard.
 

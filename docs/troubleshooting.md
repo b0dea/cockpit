@@ -153,6 +153,13 @@ grant: another configuration, siblings that resolve elsewhere, a tracked input o
 other bytes than the main checkout's (the message names the first), or another running cockpit or
 Node. A person reviews the worktree and syncs it in a terminal.
 
+A refusal saying a call `is in` another checkout of this repository `whose own guard judges it, but
+that guard's check could not run` comes from a session that started in one checkout and made a call in
+another, such as a worktree beside it. The guard hands such a call to the hook's check for that
+checkout, and the message names what stopped it: the check below `~/.cockpit/guards` missing or not a
+regular file, `/bin/sh` unavailable, or the guard's deadline. A
+person runs sync in a terminal to rewrite the check; until then, start the session in that checkout.
+
 `GUARD_HANDLER_SUPERSEDED` means the cockpit installed under the root resolves to another path than
 the one sync bound the guard to. A package manager that keeps each version at its own path, as pnpm
 does, leaves the earlier version in place after an upgrade. The guard keeps judging calls with it until

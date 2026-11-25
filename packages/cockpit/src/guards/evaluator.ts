@@ -1856,15 +1856,20 @@ function jqCode(filter: string): string {
 }
 const readsJqEnvironment = (filter: string) => JQ_ENVIRONMENT.test(jqCode(filter))
 function dumpsEnvironment(invocation: ParsedInvocation): boolean {
-    const program = posix.basename(invocation.executable ?? '')
+    const executable = invocation.executable ?? ''
+    // A command word holding a slash is a file the shell runs, never a builtin, and one ending in a slash is a directory,
+    // which runs nothing: `local/` is not `local`. A path can still name the env or printenv program.
+    if (executable.endsWith('/')) return false
+    const program = posix.basename(executable)
+    const builtin = executable.includes('/') ? undefined : program
     const argv = invocation.argv
     const options = argv.filter(arg => arg.startsWith('-'))
     const names = argv.filter(arg => !arg.startsWith('-'))
     const referenced = (word: string) => [...word.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g)].map(match => match[1]!)
     if (program === 'printenv') return names.length === 0 || names.some(secretVariable)
-    if (program === 'env' || program === 'set') return argv.length === 0
+    if (program === 'env' || builtin === 'set') return argv.length === 0
     // Bare, or with only flags that print: `export -p`, `declare -x`, `typeset -p`, `readonly`; and `-p` with a secret's name prints that one.
-    if (['export', 'declare', 'typeset', 'readonly', 'local'].includes(program)) return names.length === 0 && options.every(arg => /^-[xprgaAfFi]*$/.test(arg))
+    if (['export', 'declare', 'typeset', 'readonly', 'local'].includes(builtin ?? '')) return names.length === 0 && options.every(arg => /^-[xprgaAfFi]*$/.test(arg))
         || options.some(arg => /^-[a-zA-Z]*p/.test(arg)) && names.some(secretVariable)
     // npm's built-in `env` script, which yarn and pnpm run as well, prints the whole environment.
     if (['npm', 'yarn', 'pnpm'].includes(program)) return ['run', 'run-script'].includes(argv[0] ?? '') && argv[1] === 'env'
@@ -2383,16 +2388,18 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
     // session or job runs can outlive the call and those permissions, so it still asks, as does text that may dump the
     // environment or substitute a download, which a readable call refuses but no name in the text gives away.
     if (input.unreadable) {
-        const words = input.unreadable.text.split(/[\s;&|()<>`"'{}]+/).filter(Boolean)
+        // The body of a heredoc that is only data is left out of what is judged, as a file tool's content is; reasons show the whole text.
+        const inner = unreadInner(input)
+        const judged = inner.judged ?? input.unreadable.text
+        const words = judged.split(/[\s;&|()<>`"'{}]+/).filter(Boolean)
         const declared = resolved.declaredDenies.find(rule => words.some((_, at) => rule.argv.every((_, offset) => ruleWordMatches(rule.argv, offset, words[at + offset], true))))
-        const refusal = textDenial(input.unreadable.text, input.cwd)
+        const refusal = textDenial(judged, input.cwd)
         // Running cockpit beside a form the guard cannot read is refused for the form; name it, so the fix is plain.
         if (refusal === unreadInstalledCodeDenial) return deny(`${refusal.reason} Here it is a form the guard does not read: ${input.unreadable.reason}`)
         // A command the text runs is judged as written: a secret or the root read or archived through eval, a shell's -c,
         // script or xargs names nothing the text check finds. The run is only possibly a command, so it asks, not refuses.
         // Only a refusal counts, since a run may be prose, such as a heredoc's body, and a path outside the roots is read every day.
         if (!refusal && !declared) {
-            const inner = unreadInner(input)
             // A run may be prose no command would hold, so a run the guard fails to judge asks, naming its words.
             const judgeRun = (call: (typeof inner.commands)[number], counts: (judged: GuardDecision) => boolean): GuardDecision | undefined => {
                 try {
@@ -2409,7 +2416,7 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (held) return ask(`The guard does not read this shell form (${input.unreadable.reason}) and a command inside it is one it would not run unasked: ${held.reason}`)
         }
         return refusal ?? (declared ? deny(`${declared.reason}${declared.fix ? ` Fix: ${declared.fix}` : ''}`)
-            : input.unreadable.outlives || /(?:^|[\s;&|(`{])(?:env|printenv|set|(?:export|declare|typeset)\s+-p)\s*(?:$|[;&|)>`}])|[$<]\(\s*(?:curl|wget)\b/m.test(input.unreadable.text) ? ask(`The guard does not read this shell form (${input.unreadable.reason}) Write it as plain commands joined with &&, use \`[ … ] &&\` or \`if\`, or put it in a script file.`)
+            : input.unreadable.outlives || /(?:^|[\s;&|(`{])(?:env|printenv|set|(?:export|declare|typeset)\s+-p)\s*(?:$|[;&|)>`}])|[$<]\(\s*(?:curl|wget)\b/m.test(judged) ? ask(`The guard does not read this shell form (${input.unreadable.reason}) Write it as plain commands joined with &&, use \`[ … ] &&\` or \`if\`, or put it in a script file.`)
             : { decision: 'allow', reason: unreadDeferred })
     }
     // The current branch and where a bare push goes, for the repository at `cwd`, as Git reports them.
@@ -2838,6 +2845,13 @@ function judgeGuard(input: unknown, policy: unknown, inspect: PathInspection): G
             if (kind !== 'listing' && !secretFiles || kind === 'tree' && resolved.protectedFilesLinked) safe = false
             const evidence = resolvedEvidence({ path, cwd: access.cwd, operation: kind === 'tree' ? access.skipsIgnored ? 'unignored-search' : 'search' : kind === 'listing' && external ? 'list' : 'read',
                 ...kind === 'tree' && access.followsLinks ? { followsLinks: true as const } : {}, ...kind === 'tree' && access.carries ? { carries: true as const } : {} })
+            // With native external reads a read outside the roots is the agent tool's to permit, so a link there matters only
+            // where it leads, which is judged as named: a secret refuses it, the roots judge it, and elsewhere it is left to
+            // the agent tool too. A link the inspector cannot resolve keeps the refusal below.
+            if (!evidence && inspectedLink && external && kind !== 'tree' && resolved.externalReads === 'native') {
+                const landing = externalLanding({ path, cwd: access.cwd, operation: 'read' }, lexical)
+                if (landing && landing.landsAt !== lexical) { visit(landing.landsAt, kind); return }
+            }
             if (!evidence || external && evidence.identity === null && !(kind === 'read' && access.revisionOperands)) {
                 if (external && kind === 'tree' && evidence) searchBlocker ??= ask(`${shownGuardWord(path)} does not exist outside the configured roots. Name an existing regular file.`)
                 else if (external && kind === 'tree') searchBlocker ??= ask(`A search of ${shownGuardWord(path)} outside the configured roots must name a regular file: there the guard recognises only .env and .secrets names, not other credential files, so it does not search a directory or follow a link. Search the named files instead.`)

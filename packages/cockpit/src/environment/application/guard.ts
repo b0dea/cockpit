@@ -50,7 +50,7 @@ import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../../gene
 import { parseOwnershipManifest } from '../../surfaces/ownership.js'
 import { installedPackageMetadata } from '../../package-metadata.js'
 import { GUARD_LOCAL_PATHS, guardHandlerSuperseded, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
-import { linkedWorktreeMainCheckout } from '../../guards/linked-worktree.js'
+import { checkoutOf, linkedWorktreeMainCheckout } from '../../guards/linked-worktree.js'
 import { inspectGuardRecord } from '../../guards/guard-record.js'
 import {
     guardInstalledDirectories,
@@ -100,6 +100,8 @@ export interface GuardEvaluationApplicationInput {
     readonly askIsDeny?: boolean
     /** The call is made in a linked worktree nobody has synced, which this checkout's guard judges for it. */
     readonly unsyncedWorktree?: boolean
+    /** Another checkout's guard handed this call over; it is judged here and never handed on. */
+    readonly delegated?: boolean
     readonly ripgrepConfigActive?: boolean
     /** The harness's command search path, whose directories inside the allowed roots the guard protects. */
     readonly searchPath?: string
@@ -123,6 +125,8 @@ interface GuardEvaluationApplicationResult {
     readonly decision: GuardDecision
     readonly diagnostics: readonly import('../contract.js').Diagnostic[]
     readonly fixContext?: FixContext
+    /** The checkout whose own hook check judges this call; the decision beside it refuses for a caller that cannot run it. */
+    readonly delegate?: string
 }
 
 // Every refusal below holds all of the agent's guarded calls, `git restore` included, so each says what
@@ -211,13 +215,21 @@ type WorktreeBootstrap = Readonly<{
  * The check hands this checkout a worktree whose own guard cannot run: no identity, or one naming a runtime that is gone.
  */
 function worktreeBootstrap(cwd: string, identity: GuardHandlerIdentity): WorktreeBootstrap | undefined {
-    let root: string | undefined
-    for (let directory = cwd; root === undefined; directory = dirname(directory)) {
-        const entry = lstatIfPresentSync(join(directory, '.git'))
-        if (entry) { if (!entry.isFile()) return undefined; root = directory }
-        else if (directory === dirname(directory)) return undefined
-    }
-    return linkedWorktreeMainCheckout(root) === identity.root ? worktreeBind(root, identity) : undefined
+    const checkout = checkoutOf(cwd)
+    return checkout && checkout.top !== checkout.main && checkout.main === identity.root ? worktreeBind(checkout.top, identity) : undefined
+}
+
+/**
+ * The top of another checkout of the repository the cockpit at `root` is checked out from, when it holds `cwd` and `cwd`
+ * lies outside every root this guard manages: a linked worktree of it, or its main checkout when `root` is a linked
+ * worktree. Git's own files must name each linked worktree back, as the hook's check requires before it runs a guard.
+ */
+function otherCheckoutOfRepository(cwd: string, root: string, allowedRoots: readonly string[]): string | undefined {
+    if (allowedRoots.some(allowed => confinedPath(allowed, cwd))) return undefined
+    const own = checkoutOf(root)
+    if (own?.top !== root) return undefined
+    const other = checkoutOf(cwd)
+    return other && other.top !== root && other.main === own.main ? other.top : undefined
 }
 
 /**
@@ -284,13 +296,14 @@ export async function runGuardEvaluationApplication(
         return { decision: { ...decision, reason }, diagnostics: [{ severity: 'error', code: 'GUARD_REFUSED', message: reason, target: 'guard' }] }
     }
     try {
-        const data = ownDataValues(snapshotJson(input), ['cwd', 'guardRoot', 'harness', 'identity', 'payload'], ['askIsDeny', 'unsyncedWorktree', 'ripgrepConfigActive', 'searchPath', 'home', 'xdgConfigHome', 'agentSession', 'agentEnvironment'])
+        const data = ownDataValues(snapshotJson(input), ['cwd', 'guardRoot', 'harness', 'identity', 'payload'], ['askIsDeny', 'unsyncedWorktree', 'delegated', 'ripgrepConfigActive', 'searchPath', 'home', 'xdgConfigHome', 'agentSession', 'agentEnvironment'])
         const directory = (value: unknown) => value === undefined || typeof value === 'string' && isAbsolute(value) && !/[\x00-\x1f\x7f]/.test(value)
             && Buffer.byteLength(value) <= GUARD_INPUT_LIMITS.pathBytes
         if (!data || !directory(data.home) || !directory(data.xdgConfigHome)
             || data.searchPath !== undefined && (typeof data.searchPath !== 'string' || /[\x00-\x1f\x7f]/.test(data.searchPath) || Buffer.byteLength(data.searchPath) > GUARD_INPUT_LIMITS.inputBytes)
             || data.askIsDeny !== undefined && typeof data.askIsDeny !== 'boolean'
             || data.unsyncedWorktree !== undefined && typeof data.unsyncedWorktree !== 'boolean'
+            || data.delegated !== undefined && typeof data.delegated !== 'boolean'
             || data.ripgrepConfigActive !== undefined && typeof data.ripgrepConfigActive !== 'boolean'
             || !isGuardSurfaceTarget(data.harness)) return unavailable('Guard request is malformed.')
         const agentSession = data.agentSession === undefined ? {} : ownDataValues(data.agentSession, [], ['transcriptPath', 'sessionId', 'scratchpadDir', 'agentType'])
@@ -498,6 +511,19 @@ export async function runGuardEvaluationApplication(
                 ? `Guard policy authority could not be authenticated: ${prepared.diagnostics[0]?.message ?? 'no reason given'}`
                 : prepared.diagnostics[0]?.message ?? 'Guard checkout observation failed without a reason.')
         }
+        // A session that starts in one checkout and works in another checkout of the same repository, such as a worktree
+        // kept beside it, had every call there refused as outside this guard's roots. Such a call is handed whole to the
+        // hook's check, started from that checkout, which then picks and authenticates its guard exactly as for a session
+        // started there, and that answer stands unchanged. This grants no more than starting the session there: only a
+        // call this guard would refuse as outside its roots is handed over, only to a checkout whose Git files name this
+        // repository back, the bound the check itself applies, and the guard that judges it is the one that protects that
+        // checkout's own guard, records and settings. A handed-over call is never handed on, nor is one this checkout
+        // judges for a worktree nobody has synced, so no chain of checkouts can pass a call along to a looser guard.
+        const handedTo = data.unsyncedWorktree === true || data.delegated === true ? undefined
+            : otherCheckoutOfRepository(parsed.cwd, identity.root, prepared.result.policy.allowedRoots)
+        if (handedTo !== undefined) {
+            return { ...unavailable(`${parsed.cwd} is in ${handedTo}, another checkout of this repository, whose own guard judges this call.`), delegate: handedTo }
+        }
         // A call that only changes or prints the working directory: enough to leave a worktree nobody has synced.
         const leaves = parsed.tool === 'Bash' && !parsed.background && !parsed.unreadable
             && parsed.invocations.every(({ executable, argv, words, redirects }) => redirects.length === 0
@@ -670,8 +696,11 @@ export async function runGuardEvaluationApplication(
             }
             return false
         }
+        // Every path the evaluator asked about outside the roots, kept only to word a refusal.
+        const outside = new Set<string>()
         const inspect: import('../../guards/evaluator.js').PathInspection = request => {
             const path = resolve(request.cwd, request.path)
+            if (!allowed(path)) outside.add(path)
             if (request.operation === 'branch') {
                 const facts = branches.get(path)
                 return facts ? { status: 'resolved', path, ...facts } : { status: 'unavailable', path, symlink: false }
@@ -872,7 +901,16 @@ export async function runGuardEvaluationApplication(
                 + (bootstrap.refused ? `. The bind is not admitted: ${bootstrap.refused}` : '')
             return refused({ decision: 'deny', reason: `${parsed.cwd} is in a linked worktree where nobody has installed dependencies and synced cockpit, so it has no guard of its own. `
                 + `Until it does, the checkout at ${identity.root} judges calls made there and admits only \`cd\` and \`pwd\`${binds}. `
-                + 'Otherwise change to the main checkout and work on the worktree from there with `git -C <worktree>`, or a person installs dependencies and syncs cockpit in the worktree.' })
+                + `Otherwise change back to ${identity.root} with \`cd\`, or a person installs dependencies and syncs cockpit in the worktree.` })
+        }
+        // A path in another checkout of this repository is refused here even though a call made there is handed to that
+        // checkout's own guard, so the refusal says where to run it. The decision stays this guard's.
+        const elsewhere = judged.decision === 'allow' || !judged.reason.includes('escapes configured roots') ? undefined
+            : [...outside, ...parsed.invocations.flatMap(invocation => [invocation.cwd, gitInvocation(invocation)?.cwd ?? invocation.cwd])]
+                .map(path => otherCheckoutOfRepository(path, identity.root, policy.allowedRoots)).find(top => top !== undefined)
+        if (elsewhere !== undefined) {
+            const kind = checkoutOf(elsewhere)?.main === elsewhere ? 'the main checkout' : 'a linked worktree'
+            return refused({ ...judged, reason: `${judged.reason} ${elsewhere} is ${kind} of this repository: run the command from there (cd ${elsewhere} first), where its own guard judges it.` })
         }
         return refused(judged)
     } catch (error) {

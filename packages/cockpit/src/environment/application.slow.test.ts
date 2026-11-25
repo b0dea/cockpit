@@ -387,6 +387,40 @@ describe('guard policy construction', () => {
         expect(await decide(`cp notes.md '${outside}/.toolrc'`)).toMatchObject({ decision: 'deny' })
     }, 120_000)
 
+    // Another checkout with its own pnpm install reaches a package through a link into its store. Outside the roots a
+    // read is the agent tool's to permit, so a link there matters only where it leads: to a secret, or into the roots.
+    it('judges a read through a link outside the roots where the link leads', async () => {
+        const { root, configPath } = await observedPolicy()
+        const config = CockpitConfig.parse(parse(readFileSync(configPath, 'utf8')))
+        config.guards.external_reads = 'native'
+        writeFileSync(configPath, stringify(config))
+        expect(await generatedCurrentnessOwner.syncGeneratedEnvironment({ configPath })).toMatchObject({ kind: 'complete' })
+        const checkout = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-linked-install-')))
+        scratch.push(checkout)
+        const store = join(checkout, 'node_modules/.pnpm/pkg@1.0.0/node_modules/pkg')
+        mkdirSync(join(store, 'dist/guards'), { recursive: true })
+        writeFileSync(join(store, 'dist/guards/evaluator.js'), 'export const note = "would read"\n')
+        writeFileSync(join(store, '.env'), 'SYNTHETIC_KEY=synthetic\n')
+        mkdirSync(join(checkout, 'node_modules/@scope'), { recursive: true })
+        symlinkSync('../.pnpm/pkg@1.0.0/node_modules/pkg', join(checkout, 'node_modules/@scope/pkg'))
+        symlinkSync(join(root, 'app/config'), join(checkout, 'config-link'))
+        symlinkSync(join(checkout, 'missing'), join(checkout, 'dangling'))
+        symlinkSync(join(store, '.env'), join(checkout, 'notes.md'))
+        const identity = parseGuardLocalIdentity(readFileSync(join(root, '.cockpit/local/guard-identity'), 'utf8'))!
+        const adapters = { loadConfig: loadCockpitConfig, observeCheckout: observeSetupCheckout,
+            resolveGit: async () => ({ state: 'available' as const, value: gitExecutable }) }
+        const decide = async (command: string) => (await runGuardEvaluationApplication({ identity, guardRoot: root, harness: 'claudecode', cwd: root,
+            payload: shellPayload(command, root), searchPath: '/usr/bin:/bin' }, adapters)).decision
+        const linked = join(checkout, 'node_modules/@scope/pkg')
+        for (const command of [`grep -n -B3 -A12 'would read' '${linked}/dist/guards/evaluator.js' | head -120`, `cat '${linked}/dist/guards/evaluator.js'`]) {
+            expect(await decide(command), command).toEqual({ decision: 'allow', reason: expect.stringContaining('outside') })
+        }
+        // A secret where the link leads, a declared instance through a link into the roots, and a link that leads nowhere stay refused.
+        for (const command of [`cat '${checkout}/notes.md'`, `cat '${checkout}/config-link/runtime.env'`, `cat '${checkout}/dangling'`]) {
+            expect(await decide(command), command).toMatchObject({ decision: 'deny' })
+        }
+    }, 120_000)
+
     // One cockpit.toml serves every checkout of a product, so a related_checkouts entry can name the very checkout
     // the guard runs in, or a directory holding it. That entry is no other checkout and reserves nothing: it used
     // to refuse every write in the cockpit as a change to a related checkout.
