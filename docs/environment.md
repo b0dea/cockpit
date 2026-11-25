@@ -922,8 +922,9 @@ review.
 
 `preflight` is the blocking gate; `doctor` reports the same checks. Neither repairs anything, runs
 `sync`, seeds data or advances lifecycle progress. Before the first bring-up (`STATE_UNSEEDED`),
-while the stack sleeps or every session that held it has ended with nothing running
-(`STACK_NOT_RUNNING`), and for a cockpit with no runtime (`ENVIRONMENT_NOT_DECLARED`, `doctor`
+while the stack sleeps, when every session that held it has ended, or when a session holds it but it
+cannot be read (`STACK_NOT_RUNNING`), when Docker cannot be reached or cannot list the stack's services
+(`RUNTIME_UNAVAILABLE`; the machine-floor checks, which Docker measures, then do not apply either), and for a cockpit with no runtime (`ENVIRONMENT_NOT_DECLARED`, `doctor`
 only), both still run every check that needs no running stack and report the rest as not
 applicable, named on one `CHECKS_NEED_RUNNING_STACK` info line rather than as errors; `preflight`
 never passes in those states. A check can pass,

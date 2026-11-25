@@ -450,6 +450,27 @@ it('consumes vendor and exact build/test authority through installed hook regist
     // bash warns on stderr that it cannot read the removed directory; the answer is on stdout.
     expect(fromRemoved(`cd ${JSON.stringify(root)} && npm run build`)).toMatchObject({ status: 0, stdout: permitted.stdout })
     expect(fromRemoved('cat app/.env').stdout).toContain('permissionDecision":"deny')
+    // A linked worktree inside the checkout removed under the session: the agent tool starts the hook in the checkout and
+    // reports the removed directory, and the call is judged from the checkout, so the cd back, writes and Git there run.
+    const author = ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.test']
+    expect(spawnSync('git', ['-C', root, ...author, 'commit', '--quiet', '--allow-empty', '-m', 'Synthetic']).status).toBe(0)
+    expect(spawnSync('git', ['-C', root, 'worktree', 'add', '--quiet', '-b', 'removed-worktree', '.worktrees/x']).status).toBe(0)
+    expect(spawnSync('git', ['-C', root, 'worktree', 'remove', '.worktrees/x']).status).toBe(0)
+    const inRemovedWorktree = (command: string | { tool_name: string; tool_input: object }) => spawnSync('/bin/sh', ['-c', hook], {
+        cwd: root, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: root },
+        input: JSON.stringify({ hook_event_name: 'PreToolUse', cwd: join(root, '.worktrees/x'), ...typeof command === 'string' ? { tool_name: 'Bash', tool_input: { command } } : command }),
+    })
+    for (const command of [`cd ${JSON.stringify(root)} && pwd`, 'git status', { tool_name: 'Write', tool_input: { file_path: join(root, 'app/notes.md'), content: 'Synthetic.\n' } }]) {
+        expect(inRemovedWorktree(command), JSON.stringify(command)).toMatchObject(permitted)
+    }
+    expect(inRemovedWorktree('cat app/.env').stdout).toContain('permissionDecision":"deny')
+    // A bracketed route directory is staged by what Git lists for it, and a multi-line message is text.
+    await mkdir(join(root, 'app/routes/[slug]'), { recursive: true })
+    await writeFile(join(root, 'app/routes/[slug]/page.tsx'), 'export {}\n')
+    for (const command of ['git add -- "routes/[slug]/page.tsx"', 'GIT_LITERAL_PATHSPECS=1 git add -- "routes/[slug]/page.tsx"', 'git add -u routes',
+        'git commit -qm "Subject\n\nBody.\n\nTrailer: x"']) {
+        expect(invoke(command), command).toMatchObject(permitted)
+    }
     const launcher = fileURLToPath(new URL('../../bin/cockpit.mjs', import.meta.url))
     expect(invoke(`${JSON.stringify(launcher)} check --config ${JSON.stringify(configPath)}`, root)).toMatchObject(permitted)
     // The reset preview deletes nothing; applying one waits for a person where no seed refills the data.

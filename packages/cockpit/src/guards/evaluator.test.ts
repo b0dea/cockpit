@@ -344,7 +344,7 @@ describe('resolved guard evaluation', () => {
     })
 
     it('refuses unproven staging pathspecs before path inspection even with an exact grant', () => {
-        const decisions = ['config/*', 'config/active.*', 'config/active.?nstance', 'config/[a]ctive.instance', ':(literal)config/active.instance', ':config/active.instance'].map(path => {
+        const decisions = ['config/*', 'config/active.*', 'config/active.?nstance', 'config/[a]ctive.instance', ':config/active.instance'].map(path => {
             const configured = policy()
             configured.projectCommands.push({ checkoutRoot: root, kind: 'test', executable: 'git', argv: ['add', path] })
             const staged: string[] = []
@@ -356,11 +356,76 @@ describe('resolved guard evaluation', () => {
             return `${path}: ${decision}`
         })
         expect(decisions).toEqual(['config/*: unavailable', 'config/active.*: unavailable', 'config/active.?nstance: unavailable', 'config/[a]ctive.instance: unavailable',
-            ':(literal)config/active.instance: unavailable', ':config/active.instance: deny'])
+            ':config/active.instance: deny'])
         const configured = policy()
         configured.projectCommands.push({ checkoutRoot: root, kind: 'test', executable: 'git', argv: ['add', 'config/template'] })
         expect(decide('git add config/template', configured).decision).toBe('allow')
         expect(decide("git add 'config/active.instance'", configured).decision).toBe('deny')
+        // `:(literal)` names one path exactly, judged as if named plainly.
+        expect(decide("git add ':(literal)config/active.instance'").decision).toBe('deny')
+        expect(decide("git add -- ':(literal)src/app/[id]/page.tsx'").decision).toBe('allow')
+        expect(decide("git add ':(literal).cockpit/guards/bash-guard.sh'")).toEqual({ decision: 'deny',
+            reason: 'Refusing to stage guard files that differ from what the last cockpit sync recorded. Review them, then a person stages them: ! git add -- .cockpit/guards/bash-guard.sh' })
+    })
+
+    it('judges a staging glob or directory by each changed or untracked path Git lists for it', () => {
+        // What Git lists for each glob or directory pathspec, from the checkout root; anything else is not listed.
+        const lists: Record<string, string[]> = {
+            'src/app/s/[domain]/page.tsx': ['src/app/s/[domain]/page.tsx', 'src/app/s/d/page.tsx'],
+            src: ['src/a.ts', 'src/gone.ts'],
+            '.cockpit': ['.cockpit/guards/bash-guard.sh'],
+            app: ['app/.secrets/key'],
+            config: ['config/active.instance/data'],
+        }
+        const staged: string[] = []
+        const listing: PathInspection = request => {
+            if (request.operation === 'stage') staged.push(request.path)
+            const listed = request.operation === 'pathspec' && request.cwd === root && !request.literal ? lists[request.path] : undefined
+            return listed ? { status: 'resolved', path: posix.resolve(request.cwd, request.path), matches: listed.map(path => `${root}/${path}`) } : inspect(request)
+        }
+        const run = (command: string) => { staged.length = 0; return evaluateGuard(parseGuardInput(shellPayload(command)), policy(), listing) }
+        expect(run(`git add -- 'src/app/s/[domain]/page.tsx'`)).toMatchObject({ decision: 'allow' })
+        expect(staged).toEqual(['src/app/s/[domain]/page.tsx', 'src/app/s/d/page.tsx'])
+        // A pathspec limits `-u` and `-A`, so the instance elsewhere in the tree is not staged.
+        for (const command of ['git add -u src', 'git add -A src', 'git add src && git commit -m Synthetic', 'git commit -m Synthetic -- src']) {
+            expect(run(command), command).toMatchObject({ decision: 'allow' })
+        }
+        // Read literally, a bracket names one path, which is judged as spelled.
+        for (const command of [`GIT_LITERAL_PATHSPECS=1 git add -- 'src/app/s/[domain]/page.tsx'`, `git --literal-pathspecs add -- 'src/app/s/[domain]/page.tsx'`,
+            `git --literal-pathspecs commit -m Synthetic -- 'src/app/s/[domain]/page.tsx'`]) {
+            expect(run(command), command).toMatchObject({ decision: 'allow' })
+            expect(staged, command).toEqual(['src/app/s/[domain]/page.tsx'])
+        }
+        expect(run(`GIT_LITERAL_PATHSPECS=1 git add -- 'config/active.instance'`)).toMatchObject({ decision: 'deny' })
+        // A listed guard script, secrets file or file of an instance is refused as if named.
+        expect(run('git add -u .cockpit')).toEqual({ decision: 'deny',
+            reason: 'Refusing to stage guard files that differ from what the last cockpit sync recorded. Review them, then a person stages them: ! git add -- .cockpit/guards/bash-guard.sh' })
+        expect(run('git add app')).toMatchObject({ decision: 'deny' })
+        expect(run('git add config')).toMatchObject({ decision: 'deny', reason: 'Refusing mutation or staging of a declared environment instance.' })
+        // `-f` stages ignored files Git does not list, and an earlier command can change what it would; both keep today's answer.
+        expect(run(`git add -f -- 'src/app/s/[domain]/page.tsx'`)).toMatchObject({ decision: 'unavailable', reason: 'Unproven Git staging pathspec grammar.' })
+        expect(run(`touch src/new.ts && git add -- 'src/app/s/[domain]/page.tsx'`)).toMatchObject({ decision: 'unavailable', reason: 'Unproven Git staging pathspec grammar.' })
+        // Other verbs keep reading `--literal-pathspecs` as an unproven profile.
+        expect(run('git --literal-pathspecs checkout -- src/a.ts')).toMatchObject({ decision: 'ask' })
+        // A wrapper can drop the assignment before Git starts, and a backslash escape is a glob that matches the unescaped
+        // name: neither is read as naming one path.
+        for (const command of [`GIT_LITERAL_PATHSPECS=1 env -u GIT_LITERAL_PATHSPECS git add -A -- ':!x'`, `GIT_LITERAL_PATHSPECS=1 exec -c git add -- 'config/active.instanc?'`,
+            "git add 'config/active.instanc\\e'", "git commit -m Synthetic -- 'config/active.instanc\\e'"]) {
+            expect(run(command).decision, command).not.toBe('allow')
+        }
+        expect(run("git add '.cockpit/guard\\s/bash-guard.sh'")).toMatchObject({ decision: 'deny' })
+        expect(run('git commit -m Synthetic --pathspec-from-file=paths.txt')).toMatchObject({ decision: 'ask' })
+    })
+
+    it('reads a commit message as text, whichever short options it is bundled with', () => {
+        for (const command of ['git commit -am "Subject\n\nBody line.\n\nTrailer: x"', 'git commit -qm "Subject\n\nBody"', 'git commit -m "*"', 'git commit -vam "[wip] *"']) {
+            expect(decide(command), command).toMatchObject({ decision: 'allow' })
+        }
+        // A path after the message is still staged and judged; -S takes only the rest of its word, so `.env` is a path.
+        for (const command of ['git commit -am Subject .env', 'git commit -Sm .env', 'git commit -mSubject -- .env']) expect(decide(command), command).toMatchObject({ decision: 'deny' })
+        // A word judged as a path that no path holds is named, with the rule it breaks.
+        expect(decide('git add "a\nb"')).toEqual({ decision: 'unavailable',
+            reason: 'Guard path or working directory is malformed: the word "a\\nb", judged as a path, holds a control character, such as a newline, which no path the guard judges holds.' })
     })
 
     it('denies exact instance writes, moves, redirects and staged directories while permitting templates', () => {
