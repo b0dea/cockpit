@@ -235,11 +235,16 @@ describe('Claude Code local guard registration', () => {
             const main = join(home, 'main/node_modules/@b00dea/cockpit/dist')
             mkdirSync(main, { recursive: true })
             writeFileSync(join(main, 'cli.js'), '')
+            writeFileSync(join(main, '../package.json'), JSON.stringify({ name: '@b00dea/cockpit', version: '1.0.1' }))
             writeFileSync(join(root, '.cockpit/local/guard-identity'), encodeGuardLocalIdentity({ root, rootInode: '1', configPath: join(root, 'cockpit.toml'),
                 configSha256: digest, configInode: '2', node: '/usr/bin/node', nodeSha256: digest, nodeFingerprint: 'synthetic',
                 module: join(main, 'cli.js'), moduleSha256: digest }))
             await writeGuardRecord(root, home)
             expect(inspectAgentSettingsHazards(root, [], home)).toEqual([])
+            // Another release whose entry module happens to hold the same bytes has moved on too.
+            writeFileSync(join(main, '../package.json'), JSON.stringify({ name: '@b00dea/cockpit', version: '1.0.0' }))
+            expect(inspectAgentSettingsHazards(root, [], home)).toEqual([expect.objectContaining({ code: 'GUARD_HANDLER_SUPERSEDED' })])
+            writeFileSync(join(main, '../package.json'), JSON.stringify({ name: '@b00dea/cockpit', version: '1.0.1' }))
             writeFileSync(join(upgraded, 'dist/cli.js'), '// another release\n')
             expect(inspectAgentSettingsHazards(root, [], home)).toEqual([expect.objectContaining({ code: 'GUARD_HANDLER_SUPERSEDED' })])
         } finally {

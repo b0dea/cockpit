@@ -267,6 +267,8 @@ describe('cockpit upgrade for an agent and a person', () => {
             "review git diff, then commit exactly the files the upgrade changed: git add -- AGENTS.md package-lock.json package.json && git commit -m 'chore: upgrade cockpit to 9.9.9' -- AGENTS.md package-lock.json package.json",
             `run \`${check} && ${doctor}\``,
         ])
+        // The sync binds the guard, a linked worktree's included, so nothing else waits for a person after the upgrade.
+        expect(run.json().result.guard).toBe(`the sync bound the guard of ${dirty.project} to @b00dea/cockpit@9.9.9, so no other sync or --bind-worktree follows`)
         // A clean work branch with an upstream needs no new branch; a person reads each step on its own line.
         // The root is named through a link, and the files are still named from it.
         const clean = repository({ branch: 'topic' })

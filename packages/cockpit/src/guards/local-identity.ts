@@ -63,17 +63,37 @@ export function installedGuardHandler(root: string): string | undefined {
     }
 }
 
-function describeHandler(handler: string): string {
-    const directory = dirname(dirname(handler))
-    let version: unknown
+/** A string field of the package.json at `path`, or undefined when it is unreadable or holds none. */
+function packageField(path: string, read: (manifest: Record<string, unknown>) => unknown): string | undefined {
+    let value: unknown
     try {
-        const read = readBoundedFile(join(directory, 'package.json'), LOCAL_FILE_MAX_BYTES)
-        if (read.kind === 'complete') version = (JSON.parse(read.bytes.toString('utf8')) as { version?: unknown } | null)?.version
+        const bytes = readBoundedFile(path, LOCAL_FILE_MAX_BYTES)
+        const manifest = bytes.kind === 'complete' ? JSON.parse(bytes.bytes.toString('utf8')) as unknown : undefined
+        if (manifest !== null && typeof manifest === 'object' && !Array.isArray(manifest)) value = read(manifest as Record<string, unknown>)
     } catch (error) {
-        // The version only words the message; without it the directory still names the copy.
+        // The value only words a message or a hint; without it the caller says less.
         if (!(error instanceof SyntaxError) && !hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'EISDIR', 'EACCES', 'ELOOP', 'EIO')) throw error
     }
-    return typeof version === 'string' && /^[0-9A-Za-z.+-]{1,64}$/.test(version) ? `@b00dea/cockpit ${version} at ${directory}` : `the cockpit at ${directory}`
+    return typeof value === 'string' && /^[0-9A-Za-z.+-]{1,64}$/.test(value) ? value : undefined
+}
+
+/** The version of the cockpit copy that holds the handler `handler`, when its package names one. */
+export function handlerVersion(handler: string): string | undefined {
+    return packageField(join(dirname(dirname(handler)), 'package.json'), manifest => manifest.version)
+}
+
+/** The exact cockpit version package.json in `root` pins as a development dependency, when it pins one. */
+export function pinnedCockpitVersion(root: string): string | undefined {
+    return packageField(join(root, 'package.json'), manifest => {
+        const dependencies = manifest.devDependencies
+        return dependencies !== null && typeof dependencies === 'object' ? (dependencies as Record<string, unknown>)['@b00dea/cockpit'] : undefined
+    })
+}
+
+/** The cockpit copy that holds the handler `handler`, named by its version when its package says one. */
+export function describeHandler(handler: string): string {
+    const version = handlerVersion(handler)
+    return version !== undefined ? `@b00dea/cockpit ${version} at ${dirname(dirname(handler))}` : `the cockpit at ${dirname(dirname(handler))}`
 }
 
 /**
@@ -85,14 +105,15 @@ function describeHandler(handler: string): string {
 export function guardHandlerSuperseded(root: string, bound: string): string | undefined {
     const installed = installedGuardHandler(root)
     if (installed === undefined || installed === bound) return undefined
-    // A worktree bound to its main checkout's cockpit, outside the worktree, that later installs the same handler bytes
-    // itself has not moved on: its guard still runs the cockpit it was bound to.
+    // A worktree bound to its main checkout's cockpit, outside the worktree, that later installs the same release
+    // itself has not moved on: its guard still runs the cockpit it was bound to. The handler is a small entry module
+    // that rarely changes between releases, so its bytes alone do not tell two releases apart; the versions must match too.
     const digest = (path: string) => {
         const read = readBoundedFile(path, 16_777_216)
         return read.kind === 'complete' ? createHash('sha256').update(read.bytes).digest('hex') : undefined
     }
     const outside = relative(root, bound).startsWith('..') || isAbsolute(relative(root, bound))
-    try { if (outside && digest(installed) === digest(bound)) return undefined }
+    try { if (outside && handlerVersion(installed) === handlerVersion(bound) && digest(installed) === digest(bound)) return undefined }
     catch (error) { if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'ELOOP', 'EISDIR')) throw error }
     return `the installed cockpit changed since the guards were generated: sync bound the guard to ${describeHandler(bound)}, and ${describeHandler(installed)} is installed now`
 }

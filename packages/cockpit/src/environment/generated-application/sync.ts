@@ -1,10 +1,10 @@
 import { prepareTeamMetadata, applyTeamMetadata, type TeamMetadataChange } from '../../team-metadata.js'
 import { createHash } from 'node:crypto'
-import { lstatSync } from 'node:fs'
-import { lstat, readFile, realpath } from 'node:fs/promises'
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { constants, lstatSync } from 'node:fs'
+import { access, lstat, readFile, realpath } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { GUARD_LOCAL_PATHS, parseGuardLocalIdentity, writeCockpitLocalFiles, writeGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
+import { describeHandler, GUARD_LOCAL_PATHS, handlerVersion, installedGuardHandler, parseGuardLocalIdentity, pinnedCockpitVersion, writeCockpitLocalFiles, writeGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
 import { linkedWorktreeMainCheckout } from '../../guards/linked-worktree.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode } from '../contract.js'
 import { readBoundedFile } from '../../bounded-read.js'
@@ -38,9 +38,11 @@ import { inputSourcesCurrent, ownedInputOverlap, preparePublication } from './pu
 import { checkCanonicalGeneratedEnvironment, issueRepairAuthority, issuedRepairs } from './check.js'
 import { openCodeGrantFile, staleMcpOutputsOnly } from './surface-outputs.js'
 import { readSiblingCheckouts } from '../sibling-checkouts.js'
-import { openCodeGrantDirectory, openCodePatternUnsafe, writeClaudeLocalGuard } from '../served-checkout-grants.js'
-import { GUARD_SCRIPT_PATH, writeGuardRecord } from '../../guards/guard-record.js'
-import { installedSyncLine } from '../../fix-catalogue.js'
+import { claudeLocalSettingsPaths, openCodeGrantDirectory, openCodePatternUnsafe, writeClaudeLocalGuard } from '../served-checkout-grants.js'
+import { GUARD_SCRIPT_PATH, inspectGuardRecord, writeGuardRecord } from '../../guards/guard-record.js'
+import { formatShellCommand, installedSyncLine } from '../../fix-catalogue.js'
+import { readPendingApprovals } from '../../pending-approvals.js'
+import { personApproveCommand } from '../upgrade-application.js'
 
 async function prepareGeneratedEnvironmentSync(
     input: GeneratedEnvironmentSyncInput,
@@ -110,9 +112,78 @@ function sameTrackedBytes(left: string, right: string): boolean {
     return Buffer.isBuffer(a) ? Buffer.isBuffer(b) && a.equals(b) : a === b && a !== 'other'
 }
 
-function bindRefusal(configPath: string, reason: string, fix = `a person reviews the worktree, then runs \`${installedSyncLine(resolve(configPath))}\` in a terminal outside the agent`): RefusalOutcome {
+async function bindRefusal(configPath: string, reason: string, fix?: string): Promise<RefusalOutcome> {
     return refuse('GUARD_WORKTREE_BIND_REFUSED' satisfies typeof ENVIRONMENT_CODES.GUARD_WORKTREE_BIND_REFUSED,
-        `${reason}, so the worktree's guard was not bound and nothing was written`, 'guard', fix)
+        `${reason}, so the worktree's guard was not bound and nothing was written`, 'guard', fix ?? await personBindRoute(resolve(configPath)))
+}
+
+/**
+ * The one step a person takes to bind the guard of the worktree configured at `configPath` when an agent's bind cannot: the
+ * approve already waiting there when it syncs, since that sync binds the guard to the cockpit installed there, or else the
+ * worktree's own sync. Naming a sync while an upgrade waited sent the person through two steps, the second a no-op.
+ */
+async function personBindRoute(configPath: string): Promise<string> {
+    const root = dirname(configPath)
+    // A list approve cannot read is its own refusal at approve; the sync route still binds.
+    const pending = readPendingApprovals(root)
+    const config = await realpath(configPath)
+    const waiting = pending.kind === 'complete' ? pending.items.filter(item => item.config === config).map(item => item.argv[0]) : []
+    if (waiting.includes('upgrade') || waiting.includes('sync')) {
+        return `a person runs \`cd ${formatShellCommand([root])} && ${await personApproveCommand(process.env, root)}\` in a terminal outside the agent: `
+            + `the ${waiting.includes('upgrade') ? 'upgrade waiting there installs and syncs' : 'sync waiting there runs'}, which binds the worktree's guard to the cockpit installed there, and no bind follows it`
+    }
+    return `a person reviews the worktree${installedGuardHandler(root) === undefined ? ', installs its dependencies' : ''}, then runs `
+        + `\`${installedSyncLine(configPath)}\` in a terminal outside the agent, which binds the worktree's guard to the cockpit installed there`
+}
+
+/** What a bind answers when the worktree's guard is already bound: nothing was written. */
+export type WorktreeAlreadyBoundOutcome = Readonly<{
+    kind: 'complete'; artifact: null; destination: null; diagnostics: readonly []; status: 0
+    result: Readonly<{ action: 'sync'; dryRun: false; changes: readonly []; guard: Readonly<{ root: string; cockpit: string; state: 'already-bound' }> }>
+}>
+
+/**
+ * The answer to a bind when the guard of the linked worktree configured at `configPath` is already bound and current, or
+ * undefined when it is not: its identity names this configuration with the bytes it holds now, a Node that runs, and a
+ * handler that still holds the bytes recorded and is the worktree's own installed cockpit or its main checkout's, and the
+ * hook's record matches both files. A person's approve of an upgrade in the worktree binds it to the cockpit installed
+ * there, and the bind an agent ran after it was refused as another cockpit's although nothing was left to bind. This
+ * answer writes nothing, so it grants nothing either.
+ */
+async function alreadyBoundWorktree(configPath: string): Promise<WorktreeAlreadyBoundOutcome | undefined> {
+    let config: string
+    try { config = await realpath(resolve(configPath)) } catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'ELOOP')) return undefined; throw error }
+    const root = dirname(config)
+    const main = linkedWorktreeMainCheckout(root)
+    if (!main || main === root) return undefined
+    // Bounded: the handler may be the worktree's own install, where an agent can put a file that never ends.
+    const read = async (path: string) => {
+        try {
+            const result = readBoundedFile(path, 16_777_216)
+            return result.kind === 'complete' ? result.bytes : undefined
+        } catch (error) {
+            if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'ELOOP', 'EISDIR', 'EACCES')) return undefined
+            throw error
+        }
+    }
+    const identityBytes = await read(join(root, GUARD_LOCAL_PATHS.identity))
+    const identity = identityBytes && parseGuardLocalIdentity(identityBytes.toString('utf8'))
+    if (!identity || identity.root !== root || identity.configPath !== config) return undefined
+    const mainBytes = await read(join(main, GUARD_LOCAL_PATHS.identity))
+    const mainIdentity = mainBytes && parseGuardLocalIdentity(mainBytes.toString('utf8'))
+    if (identity.module !== installedGuardHandler(root) && identity.module !== (mainIdentity?.root === main ? mainIdentity.module : undefined)) return undefined
+    // A handler of another release than the worktree pins is one the guard holds for its version, though its entry module,
+    // which rarely changes between releases, still matches what was recorded.
+    const [pinned, version] = [pinnedCockpitVersion(root), handlerVersion(identity.module)]
+    if (pinned !== undefined && pinned !== version) return undefined
+    const [configBytes, moduleBytes] = await Promise.all([read(config), read(identity.module)])
+    if (!configBytes || sha256(configBytes) !== identity.configSha256 || !moduleBytes || sha256(moduleBytes) !== identity.moduleSha256
+        || await realpath(identity.module) !== identity.module
+        || String((await lstat(root)).ino) !== identity.rootInode || String((await lstat(config)).ino) !== identity.configInode) return undefined
+    try { await access(identity.node, constants.X_OK) } catch (error) { if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'ELOOP', 'EACCES')) return undefined; throw error }
+    if (inspectGuardRecord(root) !== 'match') return undefined
+    return { kind: 'complete', artifact: null, destination: null, diagnostics: [], status: 0,
+        result: { action: 'sync', dryRun: false, changes: [], guard: { root, cockpit: describeHandler(identity.module), state: 'already-bound' } } }
 }
 
 /**
@@ -163,7 +234,8 @@ async function bindLinkedWorktree(request: GeneratedEnvironmentSyncInput,
     if ('refusal' in publication) return publication.refusal
     const { prepared, plan } = publication
     const main = linkedWorktreeMainCheckout(prepared.root)
-    if (!main) return bindRefusal(request.configPath, `${prepared.root} is not a linked worktree whose Git record names it back from a main checkout`)
+    if (!main) return bindRefusal(request.configPath, `${prepared.root} is not a linked worktree whose Git record names it back from a main checkout`,
+        `a person runs \`${installedSyncLine(prepared.configPath)}\` in a terminal outside the agent`)
     let mainIdentity: GuardHandlerIdentity | undefined
     try { mainIdentity = parseGuardLocalIdentity(await readFile(join(main, GUARD_LOCAL_PATHS.identity), 'utf8')) }
     catch (error) { if (!hasErrorCode(error, 'ENOENT', 'ENOTDIR')) return bindRefusal(request.configPath, `the guard identity of ${main} could not be read (${errorCause(error)})`) }
@@ -228,11 +300,17 @@ async function unapprovedGuardWidening(prepared: PreparedEnvironment, approval: 
 export async function syncTeamGeneratedEnvironment(
     input: GeneratedEnvironmentSyncInput,
     adapterOverrides: Partial<GeneratedEnvironmentCommandAdapters> = {},
-): Promise<GeneratedEnvironmentCommandOutcome> {
+): Promise<GeneratedEnvironmentCommandOutcome | WorktreeAlreadyBoundOutcome> {
     const request = syncCommandInput(input)
     if (!request) return refuse('GENERATED_INPUT_INVALID', 'generated environment command input is invalid', 'generated-environment')
+    // Judged before anything this cockpit would write or render: a worktree bound to a newer cockpit it installs pins that
+    // version, which this one's team metadata would refuse.
+    const bound = request.bindWorktree ? await alreadyBoundWorktree(request.configPath) : undefined
+    if (bound) return bound
     const metadata = await prepareTeamMetadata(request.configPath)
-    if (metadata.kind === 'refusal') return refuse(metadata.code, metadata.message, metadata.target, metadata.fix)
+    if (metadata.kind === 'refusal') return request.bindWorktree && metadata.pin
+        ? bindRefusal(request.configPath, metadata.message)
+        : refuse(metadata.code, metadata.message, metadata.target, metadata.fix)
     if (request.bindWorktree) {
         return metadata.authority.changes.length
             ? bindRefusal(request.configPath, `it would write the team metadata ${metadata.authority.changes[0]!.path}`)
@@ -269,6 +347,15 @@ export async function applyGeneratedEnvironmentRepair(
     const { prepared, adapters } = record
     const changedOriginal = prepared.changedOverrideOriginals[0]
     if (changedOriginal && settings.dryRun !== true) return overrideChangedRefusal(changedOriginal)
+    // Read before anything is written, so the summary can say when sync bound the guard although no generated file changed.
+    const fileBytes = (path: string) => readFile(path, 'utf8').catch((error: unknown) => {
+        if (hasErrorCode(error, 'ENOENT', 'ENOTDIR', 'EISDIR', 'ELOOP')) return undefined
+        throw error
+    })
+    const localBytes = (name: string) => fileBytes(join(prepared.root, GUARD_LOCAL_PATHS.directory, name))
+    const identityBefore = prepared.guardHandler && settings.dryRun !== true ? await localBytes(basename(GUARD_LOCAL_PATHS.identity)) : undefined
+    const recordBefore = prepared.guardHandler && settings.dryRun !== true ? inspectGuardRecord(prepared.root) : undefined
+    const localWrites: string[] = []
     const outcome = await runPublicationPlan(record.plan, {
         ...adapters,
         dryRun: settings.dryRun === true,
@@ -305,11 +392,18 @@ export async function applyGeneratedEnvironmentRepair(
         if (record.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
             `the committed guard files were published, but ${record.message}; the guard refuses ${GUARD_HELD_CALLS} until it is recorded`,
             GUARD_LOCAL_PATHS.identity, `run \`${installedSyncLine(prepared.configPath)}\` again in a terminal`)
+        // A repository top that cannot be found is the write's refusal to report, with its reason, just below.
+        let settingsPaths: readonly string[] = []
+        try { settingsPaths = claudeLocalSettingsPaths(prepared.root) } catch { settingsPaths = [] }
+        const settingsBefore = await Promise.all(settingsPaths.map(fileBytes))
         // A Claude Code session started below the cockpit root reads only the local settings at the root.
         const claude = await writeClaudeLocalGuard(prepared.root)
         if (claude.kind === 'refusal') return refuse('GENERATED_PUBLICATION_FAILED',
             `the committed guard files were published, but ${claude.message}; a Claude Code session started below the cockpit root runs without the guard until it is written`,
             '.claude/settings.local.json', `a person makes .claude/settings.local.json a JSON object or removes it, since the guard refuses an agent's write there, then run \`${installedSyncLine(prepared.configPath)}\` again`)
+        for (const [index, path] of settingsPaths.entries()) {
+            if (await fileBytes(path) !== settingsBefore[index]) localWrites.push(relative(prepared.root, path).startsWith('..') ? path : relative(prepared.root, path))
+        }
     }
     if (prepared.openCodeGrantRoots.length > 0 && settings.dryRun !== true) {
         // A checkout `use` serves from outside the declared one is what OpenCode is granted, as `use` wrote it.
@@ -320,6 +414,7 @@ export async function applyGeneratedEnvironmentRepair(
         const grants = prepared.openCodeGrantRoots.map(row => ({ name: basename(openCodeGrantFile(row.slug)),
             bytes: openCodeGrantDirectory(row.root, Object.hasOwn(recorded.checkouts, row.slug) ? recorded.checkouts[row.slug] : undefined) }))
         const unsafe = grants.map(row => openCodePatternUnsafe(row.bytes)).find(reason => reason !== undefined)
+        for (const grant of grants) if (await localBytes(grant.name) !== grant.bytes) localWrites.push(`${GUARD_LOCAL_PATHS.directory}/${grant.name}`)
         if (unsafe) return refuse('GENERATED_PUBLICATION_FAILED', `the committed OpenCode settings were published, but its grants were not written: ${unsafe}`,
             GUARD_LOCAL_PATHS.directory, 'serve the sibling from a checkout at a plain path with `./node_modules/@b00dea/cockpit/bin/cockpit.mjs use`, then run sync again')
         const local = await writeCockpitLocalFiles(prepared.root, grants)
@@ -328,5 +423,12 @@ export async function applyGeneratedEnvironmentRepair(
             GUARD_LOCAL_PATHS.directory, `fix the path, then run \`${installedSyncLine(prepared.configPath)}\` again`)
     }
     const needsApproval = outcome.staleRemoval && !staleMcpOutputsOnly(outcome.staleRemoval.entries.map(entry => entry.path), prepared.configuredHarnesses)
-    return complete('sync', prepared, settings.dryRun === true, outcome.changes, settings.dryRun && needsApproval ? outcome.staleRemoval : undefined)
+    const completed = complete('sync', prepared, settings.dryRun === true, outcome.changes, settings.dryRun && needsApproval ? outcome.staleRemoval : undefined)
+    // A sync that changed no generated file still binds the guard when the identity or the hook's record was not this one,
+    // as after an install moved cockpit, and said only "Nothing to sync" while the guard started working.
+    const bound = prepared.guardHandler && settings.dryRun !== true
+        && (recordBefore !== 'match' || identityBefore !== await localBytes(basename(GUARD_LOCAL_PATHS.identity)))
+    return completed.kind === 'refusal' ? completed : { ...completed, result: { ...completed.result,
+        ...bound ? { guard: { root: prepared.root, cockpit: describeHandler(prepared.guardHandler!.module), state: 'bound' as const } } : {},
+        ...localWrites.length ? { local: localWrites } : {} } }
 }

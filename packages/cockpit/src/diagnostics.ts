@@ -362,24 +362,36 @@ export function renderHumanDiagnostics(
             return changes.length === 0 ? 'No generated changes.\n'
                 : `${changes.map((change) => `${change.operation} ${terminalSafeJson(change.path)}`).join('\n')}\n`
         }
+        // A worktree bind that found the guard already bound wrote nothing.
+        const guard = command === 'sync' && 'guard' in outcome.result ? outcome.result.guard as { root?: unknown; cockpit?: unknown; state?: unknown } | undefined : undefined
+        const named = guard && typeof guard.root === 'string' && typeof guard.cockpit === 'string'
+            ? { root: escapeForTerminal(guard.root), cockpit: escapeForTerminal(guard.cockpit) } : undefined
+        if (named && guard?.state === 'already-bound') return `Nothing to bind: the guard of ${named.root} is already bound to ${named.cockpit}; nothing was written.\n`
+        const bound = named && `the guard of ${named.root} to ${named.cockpit}`
         // An applied sync printed nothing, so a person at a terminal could not tell that it ran, or that
-        // it left files to commit.
+        // it left files to commit. One that changed no generated file but bound the guard, or wrote local
+        // settings, said only "Nothing to sync" while the guard started working.
         if (command === 'sync' && 'dryRun' in outcome.result && outcome.result.dryRun === false
             && 'changes' in outcome.result && Array.isArray(outcome.result.changes)
             && 'paths' in outcome.result && Array.isArray(outcome.result.paths)) {
             const changes = outcome.result.changes as readonly { operation: unknown; path: unknown }[]
             if (!changes.every((change) => change && (change.operation === 'write' || change.operation === 'remove')
                 && typeof change.path === 'string')) return ''
+            const local = 'local' in outcome.result && Array.isArray(outcome.result.local)
+                ? (outcome.result.local as readonly unknown[]).filter((path): path is string => typeof path === 'string') : []
+            const also = [bound && `Sync bound ${bound}.`,
+                local.length ? `Sync updated files Git does not track: ${local.map(path => terminalSafeJson(path)).join(', ')}.` : undefined]
+                .filter(Boolean).map(line => `${line}\n`).join('')
             const changed = new Set(changes.map(change => change.path))
             const current = (outcome.result.paths as readonly unknown[]).filter(path => !changed.has(path)).length
             const files = (count: number) => `${count} ${count === 1 ? 'file' : 'files'}`
             const unchanged = `${current} generated ${current === 1 ? 'file was' : 'files were'} already current`
-            if (changes.length === 0) return `Nothing to sync: all ${unchanged}.\n`
+            if (changes.length === 0) return `${also ? 'No generated file changed' : 'Nothing to sync'}: all ${unchanged}.\n${also}`
             const written = changes.filter(change => change.operation === 'write').length
             const removed = changes.length - written
             return `${changes.map((change) => `${change.operation} ${terminalSafeJson(change.path)}`).join('\n')}\n`
                 + `Sync ${[written ? `wrote ${files(written)}` : '', removed ? `removed ${files(removed)}` : ''].filter(Boolean).join(' and ')}; ${unchanged}. `
-                + 'Review them with git status --short and commit them so teammates get the same files.\n'
+                + `Review them with git status --short and commit them so teammates get the same files.\n${also}`
         }
         if (command === 'logs' && 'records' in outcome.result && Array.isArray(outcome.result.records)) {
             const records = outcome.result.records as readonly { timestamp: unknown; stream: unknown; message: unknown }[]

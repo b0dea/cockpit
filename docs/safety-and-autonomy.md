@@ -207,7 +207,9 @@ Limits, stated plainly:
   whose cockpit is running, that the configuration it read has the bytes that checkout synced, that
   each sibling resolves to the same directory or to the same place inside each checkout, such as the
   root sibling `dir = "."`, and that every tracked input sync reads, adopted settings copies included,
-  and every file it generates hold the main checkout's bytes; otherwise it refuses (`GUARD_WORKTREE_BIND_REFUSED`) and a person syncs the worktree. It
+  and every file it generates hold the main checkout's bytes; otherwise it refuses (`GUARD_WORKTREE_BIND_REFUSED`) and a person syncs the worktree,
+  or approves the upgrade or sync waiting there, whose sync binds it. A worktree whose guard is already bound and current, as after an
+  upgrade approved there, is answered `Nothing to bind` and nothing is written. It
   then binds the worktree's guard to that same Node and cockpit, so the worktree's own guard judges
   from then on, its dependency installs included. The same bind repairs a worktree whose binding went
   stale, as after a rebase onto a main checkout that upgraded cockpit or an install that replaced the

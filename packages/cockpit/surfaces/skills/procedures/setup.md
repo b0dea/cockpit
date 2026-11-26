@@ -545,8 +545,10 @@ gives one to the person.
    Code, move it with the EnterWorktree tool and the worktree's path: a Bash `cd` outside the
    session's directories does not persist (measured 2026-11-25). Under Codex or OpenCode, start the
    session in the worktree.
-   When the bind refuses (`GUARD_WORKTREE_BIND_REFUSED`), hand the person the sync it names for a
-   terminal outside the agent. Done when a call in the worktree is judged by its own guard.
+   `Nothing to bind` means the worktree's guard is already bound, as after an upgrade approved
+   there; nothing else is needed. When the bind refuses (`GUARD_WORKTREE_BIND_REFUSED`), hand the
+   person the one step its fix names, `npx --no cockpit approve` or a sync, for a terminal outside
+   the agent. Done when a call in the worktree is judged by its own guard.
 
 ## Diagnose
 

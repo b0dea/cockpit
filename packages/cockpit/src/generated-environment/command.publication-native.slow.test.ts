@@ -425,6 +425,8 @@ describe('public surface publication transaction', () => {
             await mkdir(join(variant, 'cockpit/adopted/.claude'), { recursive: true })
             await writeFile(join(variant, 'cockpit/adopted/.claude/settings.json'), `${JSON.stringify({ env: { SYNTHETIC_SETTING: '1' } })}\n`)
             expect(await syncTeamGeneratedEnvironment({ configPath: join(variant, 'cockpit.toml') })).toMatchObject({ kind: 'complete' })
+            // That sync bound the variant's own guard, which a bind answers as already bound; unbound, it is judged against the main checkout.
+            await rm(join(variant, '.cockpit/local/guard-identity'))
             expect(binds(variant)).toMatchObject({ status: 2, output: expect.stringMatching(/GUARD_WORKTREE_BIND_REFUSED[\s\S]*cockpit\/adopted\/\.claude\/settings\.json differs from the copy in/) })
             // The state the bind copies must be what the main checkout's last sync recorded: an adopted copy and the settings
             // regenerated from it, edited there without a sync and matched by a worktree synced from them, are refused.

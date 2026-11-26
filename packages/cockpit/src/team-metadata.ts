@@ -7,7 +7,7 @@ import { parseAllDocuments } from 'yaml'
 import { loadCockpitConfig, readBoundedInput } from './config/load.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, isMissing, parseJsonText, RefusalError, tryParseJson, type EnvironmentDiagnostic } from './environment/contract.js'
 import type { CockpitConfig } from './schema.js'
-import { installedPackageMetadata } from './package-metadata.js'
+import { compareVersions, EXACT_VERSION, installedPackageMetadata } from './package-metadata.js'
 import { cockpitCommand, formatShellCommand, installedSyncLine, oneCommandLine } from './fix-catalogue.js'
 import { GUARD_LOCAL_PATHS, guardHandlerSuperseded, parseGuardLocalIdentity } from './guards/local-identity.js'
 import { EXACT_DEV_INSTALL, NODE_EXEC, nodeLockfile } from './init/derive.js'
@@ -43,11 +43,16 @@ export interface TeamMetadataChange {
 }
 
 export type TeamMetadataResult = Readonly<{ kind: 'complete'; changed: boolean; changes: readonly TeamMetadataChange[] }>
-    | Readonly<{ kind: 'refusal'; code: EnvironmentDiagnostic['code']; message: string; target: string; fix?: string }>
+    | Readonly<{ kind: 'refusal'; code: EnvironmentDiagnostic['code']; message: string; target: string; fix?: string
+        /** Set when package.json pins another cockpit than the one running. */
+        pin?: true }>
+
+/** package.json pins another cockpit than the one running: why, and the line that runs the right one. */
+type PinMismatch = Readonly<{ pin: true; message: string; fix: string }>
 
 function refuse(code: typeof ENVIRONMENT_CODES.TEAM_METADATA_UNAVAILABLE | typeof ENVIRONMENT_CODES.COCKPIT_VERSION_MISMATCH,
-    message: string, target: string): Extract<TeamMetadataResult, { kind: 'refusal' }> {
-    return { kind: 'refusal', code, message, target }
+    reason: string | PinMismatch, target: string): Extract<TeamMetadataResult, { kind: 'refusal' }> {
+    return typeof reason === 'string' ? { kind: 'refusal', code, message: reason, target } : { kind: 'refusal', code, target, ...reason }
 }
 
 // The loader already names the failing key and reason; replacing it with a generic refusal left
@@ -193,6 +198,8 @@ function packageCandidate(bytes: string | undefined, root: Readonly<{ manager: s
     bytes: string
     valid: boolean
     misplaced?: readonly string[]
+    /** Set when the cause is a version pin other than the running one. */
+    pinned?: unknown
     cause?: string
 }> {
     let parsed: unknown = {}
@@ -210,9 +217,7 @@ function packageCandidate(bytes: string | undefined, root: Readonly<{ manager: s
     if (pinned !== undefined && pinned !== VERSION && pinned !== verifiedLocalPin) {
         if (typeof pinned === 'string' && pinned.startsWith('file:')) return { bytes: '', valid: false,
             cause: `package.json pins ${PACKAGE} to ${pinned}, but ${root.lockfile} and node_modules do not resolve that archive to the running ${VERSION}; run ${root.manager} install` }
-        const install = EXACT_DEV_INSTALL[root.lockfile] ?? EXACT_DEV_INSTALL['package-lock.json']!
-        return { bytes: '', valid: false, cause: `package.json pins ${PACKAGE} ${String(pinned)}, but ${VERSION} is running; `
-            + `run ${install.manager} ${install.verb} ${install.flags.join(' ')} ${PACKAGE}@${VERSION}` }
+        return { bytes: '', valid: false, pinned }
     }
     // The script's own text is the product's and is not echoed.
     const taken = Object.keys(SCRIPTS).find(name => scripts[name] !== undefined && !cockpitScript(name, scripts[name]))
@@ -346,6 +351,42 @@ async function rootPackageManager(root: string): Promise<Readonly<{ manager: key
     return node ?? { manager: 'npm', lockfile: 'package-lock.json' }
 }
 
+/** The version of the cockpit installed in `root`'s own node_modules, or undefined when none is readable there. */
+async function installedVersion(root: string): Promise<string | undefined> {
+    try {
+        const read = await readBoundedInput(join(root, 'node_modules', ...PACKAGE.split('/'), 'package.json'))
+        const version = read.kind === 'complete' ? (tryParseJson(Buffer.from(read.bytes).toString('utf8')) as { version?: unknown } | null)?.version : undefined
+        return typeof version === 'string' ? version : undefined
+    } catch (error) {
+        if (isMissing(error) || hasErrorCode(error, 'ELOOP', 'EISDIR')) return undefined
+        throw error
+    }
+}
+
+/**
+ * Why package.json in `root` pins `pinned` rather than the running cockpit, and the one line that fixes it from any
+ * directory. A newer pin is that checkout's own cockpit, as after an upgrade a person approved there: telling an older
+ * cockpit's run to install itself there undid that upgrade, so the line runs the pinned copy, installing the checkout's
+ * dependencies first when its install does not hold that version. An older pin runs its own copy the same way, or moves
+ * forward through upgrade. A pin that names no exact version takes the running one.
+ */
+async function pinMismatch(root: string, configPath: string, pinned: unknown, command: 'sync' | 'check'): Promise<PinMismatch> {
+    const config = basename(configPath)
+    const { manager, lockfile } = await rootPackageManager(root)
+    if (typeof pinned !== 'string' || !EXACT_VERSION.test(pinned)) {
+        const install = EXACT_DEV_INSTALL[lockfile] ?? EXACT_DEV_INSTALL['package-lock.json']!
+        return { pin: true, message: `package.json in ${root} ${pinned === undefined ? `does not pin ${PACKAGE}` : `pins ${PACKAGE} ${String(pinned)}, which is no exact version`}, and ${VERSION} is running`,
+            fix: `run \`${oneCommandLine([formatShellCommand([install.manager, install.verb, ...install.flags, `${PACKAGE}@${VERSION}`]), cockpitCommand(command, { config })], root)}\`` }
+    }
+    const installFirst = await installedVersion(root) === pinned ? [] : [`${manager} install`]
+    const own = `\`${oneCommandLine([...installFirst, cockpitCommand(command, { config })], root)}\`${installFirst.length ? `, which installs ${pinned} there first` : ''}`
+    if (compareVersions(pinned, VERSION) > 0) return { pin: true,
+        message: `package.json in ${root} pins ${PACKAGE} ${pinned}, newer than the ${VERSION} running: that checkout runs its own cockpit, not this one`,
+        fix: `run its own cockpit: ${own}` }
+    return { pin: true, message: `package.json in ${root} pins ${PACKAGE} ${pinned}, older than the ${VERSION} running`,
+        fix: `run that checkout's own cockpit: ${own}; or move it to ${VERSION}: \`${oneCommandLine([...installFirst, cockpitCommand('upgrade', { config, args: VERSION })], root)}\`` }
+}
+
 async function holdsGitMetadata(directory: string): Promise<boolean> {
     try {
         await lstat(join(directory, '.git'))
@@ -410,8 +451,9 @@ export async function prepareTeamMetadata(configPath: string): Promise<Extract<T
         const candidate = packageCandidate(packageBefore?.bytes, await rootPackageManager(root), await verifiedLocalPin(authority, packageBefore?.bytes))
         if (candidate.misplaced) return refuse('TEAM_METADATA_UNAVAILABLE',
             misplacedDependencyMessage(candidate.misplaced, root), packagePath)
-        if (!candidate.valid) return refuse('TEAM_METADATA_UNAVAILABLE',
-            `${candidate.cause}, then run ${cockpitCommand('sync', { config: configPath })}`, packagePath)
+        if (!candidate.valid) return refuse('TEAM_METADATA_UNAVAILABLE', 'pinned' in candidate
+            ? await pinMismatch(root, configPath, candidate.pinned, 'sync')
+            : `${candidate.cause}, then run ${cockpitCommand('sync', { config: configPath })}`, packagePath)
         const ignorePath = join(root, '.gitignore')
         const ignoreBefore = await readOptional(authority, ignorePath)
         const nextIgnore = ignoreCandidate(ignoreBefore?.bytes ?? '', block)
@@ -474,9 +516,7 @@ export async function validateTeamMetadata(configPath: string): Promise<TeamMeta
                     `package.json pins ${PACKAGE} to ${pinned}, but ${lockfile} and node_modules do not resolve that archive to the running ${VERSION}; run \`${oneCommandLine([`${manager} install`, cockpitCommand('check')], root)}\``, packagePath)
             }
         } else if (pinned !== VERSION) {
-            const install = EXACT_DEV_INSTALL[(await rootPackageManager(root)).lockfile] ?? EXACT_DEV_INSTALL['package-lock.json']!
-            return refuse('COCKPIT_VERSION_MISMATCH',
-                `package.json pins ${PACKAGE} ${String(pinned ?? '(missing)')}, but ${VERSION} is running; run ${install.manager} ${install.verb} ${install.flags.join(' ')} ${PACKAGE}@${VERSION}`, packagePath)
+            return refuse('COCKPIT_VERSION_MISMATCH', await pinMismatch(root, configPath, pinned, 'check'), packagePath)
         }
         const scripts = object(parsed) && object(parsed.scripts) ? parsed.scripts : undefined
         if (!scripts || Object.entries(SCRIPTS).some(([name, command]) => scripts[name] !== command)) {

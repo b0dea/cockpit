@@ -71,13 +71,18 @@ function packedTarball(): string {
 // What `npm install --save-dev --save-exact` lays out, without the registry: the tarball's bytes,
 // its declared dependencies beside it and the .bin link. Under pnpm the package lives in
 // node_modules/.pnpm behind a symlink, .bin holds a shell shim, and a pnpm lockfile is present.
-function install(root: string, layout: 'npm' | 'pnpm'): void {
+// `version` stands for another release: the same bytes, whose manifest names that version.
+function install(root: string, layout: 'npm' | 'pnpm', version?: string): void {
     const modules = join(root, 'node_modules')
     const store = layout === 'npm' ? modules : join(modules, '.pnpm/@b00dea+cockpit/node_modules')
     const installed = join(store, '@b00dea/cockpit')
     mkdirSync(installed, { recursive: true })
     execFileSync('tar', ['-xzf', packedTarball(), '-C', installed, '--strip-components=1'])
     const manifest = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8')) as { version: string; dependencies: Record<string, string> }
+    if (version !== undefined) {
+        manifest.version = version
+        writeFileSync(join(installed, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+    }
     for (const dependency of Object.keys(manifest.dependencies)) {
         cpSync(join(repositoryRoot, 'node_modules', dependency), join(store, dependency), { recursive: true })
     }
@@ -279,6 +284,16 @@ export function cloneProduct(source: Product, name: string, machine: Machine): P
     execFileSync('git', ['clone', '--quiet', source.root, root], { env: source.env })
     cpSync(join(source.root, 'node_modules'), join(root, 'node_modules'), { recursive: true, verbatimSymlinks: true })
     return productAt(root, machine)
+}
+
+/**
+ * A linked worktree of `source` beside it, as `git worktree add` makes one: the committed files and nothing installed.
+ * `install` puts cockpit there, of another `version` when given, as an upgrade approved in the worktree leaves it.
+ */
+export function linkedWorktree(source: Product, name: string, machine: Machine): Product & { install(version?: string): void } {
+    const root = join(scratch, 'products', name)
+    execFileSync('git', ['worktree', 'add', '--quiet', '--detach', root], { cwd: source.root, env: source.env })
+    return { ...productAt(root, machine), install: (version?: string) => install(root, 'npm', version) }
 }
 
 // script(1) gives the command a pseudo-terminal, which BSD and util-linux spell differently. The

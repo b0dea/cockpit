@@ -32,7 +32,7 @@ describe('public surface publication transaction', () => {
             const first = await syncTeamGeneratedEnvironment({ configPath: fixture.configPath })
             expect(first).toMatchObject({ kind: 'complete' })
             if (first.kind !== 'complete') return
-            const cursorFile = first.result.paths.find(path => path.startsWith('.cursor/'))!
+            const cursorFile = ('paths' in first.result ? first.result.paths : []).find(path => path.startsWith('.cursor/'))!
             expect(cursorFile).toBeDefined()
             const removed = withoutCursor(await readFile(fixture.configPath, 'utf8'))
             await writeFile(fixture.configPath, removed)

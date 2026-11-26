@@ -52,7 +52,7 @@ import { GUARD_INPUT_LIMITS, leavesCdpathAlone, parseGuardInput, type ParsedInvo
 import { readAnchoredFile, readAnchoredBatches, nodeAuthority } from '../../generated-environment/transaction.js'
 import { parseOwnershipManifest } from '../../surfaces/ownership.js'
 import { installedPackageMetadata } from '../../package-metadata.js'
-import { GUARD_LOCAL_PATHS, guardHandlerSuperseded, parseGuardLocalIdentity, type GuardHandlerIdentity } from '../../guards/local-identity.js'
+import { GUARD_LOCAL_PATHS, guardHandlerSuperseded, handlerVersion, parseGuardLocalIdentity, pinnedCockpitVersion, type GuardHandlerIdentity } from '../../guards/local-identity.js'
 import { checkoutOf, mainCheckoutGuardIdentity, recordedWorktreeHolds, worktreeBindArgv } from '../../guards/linked-worktree.js'
 import { inspectGuardRecord } from '../../guards/guard-record.js'
 import {
@@ -283,6 +283,18 @@ function worktreeBind(root: string, identity: GuardHandlerIdentity): WorktreeBoo
     return { root, bind, ...refused === undefined ? {} : { refused } }
 }
 
+/**
+ * Why the bind through the main checkout's cockpit, which `identity` names, would refuse the worktree at `root`: it pins
+ * another cockpit version, as after an upgrade approved there, and the bind runs only the main checkout's. Offering it
+ * sent the agent into that refusal; the worktree's own sync, a person's, binds it. The handler's own bytes do not tell
+ * two releases apart, since its entry module rarely changes between them.
+ */
+function pinsOtherCockpit(root: string, identity: GuardHandlerIdentity): string | undefined {
+    const [pinned, running] = [pinnedCockpitVersion(root), handlerVersion(identity.module)]
+    return pinned !== undefined && running !== undefined && pinned !== running
+        ? `${root} pins @b00dea/cockpit ${pinned}, not ${running}, the cockpit the guard of ${identity.root} runs` : undefined
+}
+
 /** Whether the call is exactly the bind, alone and from the worktree root. */
 function bootstrapAdmits(parsed: Extract<ReturnType<typeof parseGuardInput>, { status: 'parsed' }>, bootstrap: WorktreeBootstrap): boolean {
     const call = parsed.invocations[0]
@@ -368,7 +380,8 @@ export async function runGuardEvaluationApplication(
             if (early?.status === 'parsed' && early.cwd === data.cwd && bootstrapAdmits(early, rebind)) {
                 return { decision: { decision: 'allow', reason: `Binds the guard of the linked worktree ${rebind.root} to the cockpit and configuration its main checkout synced.` }, diagnostics: [] }
             }
-            return rebind.refused ? held : unavailable(`${held.decision.reason} Or, since this is a linked worktree, run alone from ${rebind.root} the command that binds its guard `
+            const main = rebind.refused === undefined ? mainCheckoutGuardIdentity(rebind.root) : undefined
+            return !main || pinsOtherCockpit(rebind.root, main) ? held : unavailable(`${held.decision.reason} Or, since this is a linked worktree, run alone from ${rebind.root} the command that binds its guard `
                 + `to its main checkout's cockpit and configuration: \`${formatShellCommand(rebind.bind)}\`.`)
         }
         const changed = (what: string) => unavailable(guardHeld(identity, `${what} since the guards were generated`,
@@ -618,7 +631,9 @@ export async function runGuardEvaluationApplication(
         // Judged before this checkout's policy, which does not reach a worktree kept beside it, and before its own
         // pending widening or the ask for another cockpit's configuration: the bind applies only what this checkout's
         // sync applied, and refuses anything else itself.
-        const bootstrap = data.unsyncedWorktree === true ? worktreeBootstrap(parsed.cwd, identity) : undefined
+        const found = data.unsyncedWorktree === true ? worktreeBootstrap(parsed.cwd, identity) : undefined
+        const other = found && found.refused === undefined ? pinsOtherCockpit(found.root, identity) : undefined
+        const bootstrap = found && other !== undefined ? { ...found, refused: other } : found
         if (bootstrap && leaves) return refused({ decision: 'allow', reason: 'Changes or prints the working directory only.' })
         if (bootstrap && bootstrapAdmits(parsed, bootstrap)) {
             return refused({ decision: 'allow', reason: `Binds the guard of the linked worktree ${bootstrap.root} to the cockpit and configuration ${identity.root} synced.` })
