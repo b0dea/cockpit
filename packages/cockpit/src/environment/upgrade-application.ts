@@ -24,7 +24,7 @@ import { EXACT_DEV_INSTALL } from '../init/derive.js'
 import type { Diagnostic } from '../diagnostics.js'
 import { EXIT_CODES } from '../invocation.js'
 import type { Approval } from '../operator-confirmation.js'
-import { installedPackageMetadata } from '../package-metadata.js'
+import { compareVersions, EXACT_VERSION, installedPackageMetadata } from '../package-metadata.js'
 import { sha256Hex } from '../sha256.js'
 import { ENVIRONMENT_CODES, errorCause, hasErrorCode, tryParseJson, type ExecutionStep } from './contract.js'
 import { GIT_CHILD_CONFIG, locateExecutable, resolveExecutable, resolveExecutablePath, type ResolvedExecutable } from './executable.js'
@@ -54,7 +54,6 @@ export interface UpgradeOutcome {
     readonly diagnostics: readonly Diagnostic[]
 }
 
-const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/
 const LOCKFILES = ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'npm-shrinkwrap.json', 'bun.lock', 'bun.lockb'] as const
 // What a package manager's minimum-package-age filter (a supply-chain wrapper around npm) prints when it
 // hid releases; its answer is then an older version, not the registry's latest.
@@ -74,24 +73,6 @@ const INSTALL_TIMEOUT_MS = 600_000
 // Each call site writes its code and fix as literals so the troubleshooting index captures them.
 function refused(diagnostic: Diagnostic, status = 2): UpgradeOutcome {
     return { status, result: null, diagnostics: [diagnostic] }
-}
-
-/** Orders two versions; a prerelease sorts before its release, and prerelease identifiers compare as semver says. */
-function compareVersions(a: string, b: string): number {
-    const [x, y] = [VERSION.exec(a)!, VERSION.exec(b)!]
-    for (let i = 1; i <= 3; i++) if (x[i] !== y[i]) return Number(x[i]) < Number(y[i]) ? -1 : 1
-    if (x[4] === y[4]) return 0
-    if (x[4] === undefined || y[4] === undefined) return x[4] === undefined ? 1 : -1
-    const [p, q] = [x[4].split('.'), y[4].split('.')]
-    for (let i = 0; i < Math.max(p.length, q.length); i++) {
-        if (p[i] === undefined || q[i] === undefined) return p[i] === undefined ? -1 : 1
-        if (p[i] === q[i]) continue
-        const numeric = [/^\d+$/.test(p[i]!), /^\d+$/.test(q[i]!)]
-        if (numeric[0] && numeric[1]) return Number(p[i]) < Number(q[i]) ? -1 : 1
-        if (numeric[0] !== numeric[1]) return numeric[0] ? -1 : 1
-        return p[i]! < q[i]! ? -1 : 1
-    }
-    return 0
 }
 
 // `whole`: a read that is parsed, so output past the bound fails the step instead of losing its start.
@@ -124,7 +105,7 @@ function upgradeNotes(changelog: string, from: string, to: string): string[] {
     let inRange = false
     for (const line of changelog.split('\n')) {
         const heading = /^## (\S+)\s*$/.exec(line)
-        if (heading) inRange = VERSION.test(heading[1]!) && compareVersions(heading[1]!, from) > 0 && compareVersions(heading[1]!, to) <= 0
+        if (heading) inRange = EXACT_VERSION.test(heading[1]!) && compareVersions(heading[1]!, from) > 0 && compareVersions(heading[1]!, to) <= 0
         else if (inRange && /\bUpgrade:/.test(line)) notes.push(line.trim().replace(/^[-*]\s+/, ''))
     }
     return notes
@@ -148,7 +129,7 @@ function publishedVersion(stdout: string): string | undefined {
     }
     const versions = values.flatMap(parsed => {
         const value = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : parsed
-        return typeof value === 'string' && VERSION.test(value) ? [value] : []
+        return typeof value === 'string' && EXACT_VERSION.test(value) ? [value] : []
     })
     return versions.length === 1 ? versions[0] : undefined
 }
@@ -282,14 +263,14 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
             fix: 'check the network, the registry login and that npm is on PATH, or name the version: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config <your cockpit.toml> <version>' })
         if (AGE_FILTER_NOTICE.test(answer) && compareVersions(published, installed) <= 0) {
             const real = await readLatestRelease(dependencies.releaseTransport)
-            const latest = real.kind === 'known' && VERSION.test(real.latestVersion) ? real.latestVersion : undefined
+            const latest = real.kind === 'known' && EXACT_VERSION.test(real.latestVersion) ? real.latestVersion : undefined
             return refused({ severity: 'error' as const, code: 'UPGRADE_LATEST_FILTERED' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_LATEST_FILTERED,
                 message: `the package manager's minimum package age filter hid newer ${name} releases, so its latest answer (${published}) says nothing about whether installed ${installed} is current; `
                     + (latest ? `the registry's latest is ${latest}, so run ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade ${latest} --config <your cockpit.toml>` : `the registry's latest could not be read (${real.kind === 'unknown' ? real.reason : 'unexpected answer'})`),
                 fix: 'name the latest version the message gives (or look it up on the registry) instead of asking the package manager: ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade <version> --config <your cockpit.toml>' })
         }
         target = published
-    } else if (!VERSION.test(target)) return refused({ severity: 'error' as const, code: 'UPGRADE_VERSION_INVALID' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_VERSION_INVALID, target: '<version>',
+    } else if (!EXACT_VERSION.test(target)) return refused({ severity: 'error' as const, code: 'UPGRADE_VERSION_INVALID' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_VERSION_INVALID, target: '<version>',
         message: `"${target}" is not an exact version`, fix: 'give a full version such as 1.2.3, not a range or tag' })
 
     const order = compareVersions(target, installed)
@@ -343,7 +324,8 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
         : `in a terminal outside the agent, run \`${oneCommandLine([approveCommand], root)}\` to approve the upgrade`
     if (input.agent) return { status: 2, result: { ...result, approve: approveCommand, next: approve },
         diagnostics: [{ severity: 'error' as const, code: 'UPGRADE_PERSON_REQUIRED' as const satisfies typeof ENVIRONMENT_CODES.UPGRADE_PERSON_REQUIRED,
-            message: `upgrading cockpit from ${installed} to ${target} installs a new package version, which a person approves; nothing was installed${branch ? `; ${branch}` : ''}`,
+            message: `upgrading cockpit from ${installed} to ${target} installs a new package version, which a person approves; nothing was installed${branch ? `; ${branch}` : ''}; `
+                + 'the approval installs it and syncs, which binds this checkout\'s guard to it, a linked worktree\'s included, so no other sync or --bind-worktree follows',
             fix: 'in a terminal outside the agent, run `cd <the cockpit root> && npx --no cockpit approve`' }] }
     // A person at approve installs past Safe Chain's minimum package age for cockpit alone, and only in
     // the install's own environment: the sync after it and every later command run without it.
@@ -413,7 +395,8 @@ export async function runUpgrade(input: UpgradeInput, dependencies: UpgradeDepen
                     : `${held.length ? `review ${held.join(', ')} first, which held changes before the upgrade; then ` : ''}review git diff, then commit exactly the files the upgrade changed: ${commitCommand}`,
         checks,
     ].filter(Boolean).join('\n')
-    const finished = { ...result, upgradeSteps }
+    // The sync binds the guard to the cockpit it runs, the one just installed, so a worktree upgraded here needs no bind after it.
+    const finished = { ...result, upgradeSteps, guard: `the sync bound the guard of ${root} to ${spec}, so no other sync or --bind-worktree follows` }
     if (!input.commit) return { status: 0, diagnostics: [], result: { ...finished, next: next(false) } }
 
     const uncommitted = (reason: string): UpgradeOutcome => ({ status: 2, result: { ...finished, next: next(false) },

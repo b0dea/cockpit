@@ -323,6 +323,10 @@ interface CommandResult {
     readonly paths: readonly string[]
     readonly application: GeneratedApplicationProjection
     readonly staleRemoval?: GeneratedStaleRemovalApprovalRequest
+    /** Set when sync bound the guard to another cockpit or identity than the one the hook ran before it. */
+    readonly guard?: Readonly<{ root: string; cockpit: string; state: 'bound' }>
+    /** Machine-local files Git does not track whose bytes sync changed, other than the guard's own. */
+    readonly local?: readonly string[]
 }
 
 export interface GeneratedApplicationProjection {

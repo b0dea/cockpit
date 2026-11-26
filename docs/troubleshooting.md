@@ -148,10 +148,19 @@ worktree's own guard is bound. The message prints the one command that binds it:
 --bind-worktree`, run alone from the worktree root through the main checkout's Node and cockpit by
 absolute path. The agent runs it, then installs the worktree's dependencies under the worktree's own
 guard. A worktree's own guard held because its binding went stale, after a rebase or an install that
-changed cockpit, prints and admits the same command. `GUARD_WORKTREE_BIND_REFUSED` means the bind found something the main checkout's sync did not
+changed cockpit, prints and admits the same command, unless the worktree pins another cockpit release
+than its main checkout runs: that bind would refuse, so the hold names the worktree's own sync, and a
+worktree nobody has synced is not admitted the bind either. A bind of a worktree whose guard is already
+bound and current prints `Nothing to bind` and writes nothing. `GUARD_WORKTREE_BIND_REFUSED` means the bind found something the main checkout's sync did not
 grant: another configuration, siblings that resolve elsewhere, a tracked input or generated file with
-other bytes than the main checkout's (the message names the first), or another running cockpit or
-Node. A person reviews the worktree and syncs it in a terminal.
+other bytes than the main checkout's (the message names the first), a worktree that pins another
+cockpit release, or another running cockpit or Node. Its fix names the one step a person takes:
+`npx --no cockpit approve` in the worktree when an upgrade or sync waits there, since that sync binds
+the worktree's guard, otherwise the worktree's own sync in a terminal.
+
+An upgrade approved in a linked worktree needs nothing after the approval: its sync binds the
+worktree's guard to the cockpit it installed there. A sync that changes no generated file but binds
+the guard, or rewrites local settings Git does not track, says so under its summary.
 
 A refusal saying a call `is in` another checkout of this repository `whose own guard judges it, but
 that guard's check could not run` comes from a session that started in one checkout and made a call in

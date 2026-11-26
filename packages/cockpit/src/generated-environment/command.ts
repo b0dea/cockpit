@@ -31,6 +31,7 @@ import {
     applyGeneratedEnvironmentRepair as applyRepair,
     syncGeneratedEnvironment as synchronize,
     syncTeamGeneratedEnvironment as synchronizeTeam,
+    type WorktreeAlreadyBoundOutcome,
 } from '../environment/generated-application/sync.js'
 
 export type {
@@ -92,7 +93,7 @@ export function syncGeneratedEnvironment(
 export function syncTeamGeneratedEnvironment(
     input: GeneratedEnvironmentSyncInput,
     adapters?: Partial<GeneratedEnvironmentCommandAdapters>,
-): Promise<GeneratedEnvironmentCommandOutcome> {
+): Promise<GeneratedEnvironmentCommandOutcome | WorktreeAlreadyBoundOutcome> {
     return synchronizeTeam(input, adapters)
 }
 

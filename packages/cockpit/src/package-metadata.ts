@@ -25,3 +25,24 @@ export const installedPackageMetadata: InstalledPackageMetadata = Object.freeze(
     engines: Object.freeze({ node: engines.node }),
     cockpitSourceRevision: fields.cockpitSourceRevision,
 })
+
+/** An exact version, as cockpit pins itself and the registry answers; a range or tag is none. */
+export const EXACT_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/
+
+/** Orders two exact versions; a prerelease sorts before its release, and prerelease identifiers compare as semver says. */
+export function compareVersions(a: string, b: string): number {
+    const [x, y] = [EXACT_VERSION.exec(a)!, EXACT_VERSION.exec(b)!]
+    for (let i = 1; i <= 3; i++) if (x[i] !== y[i]) return Number(x[i]) < Number(y[i]) ? -1 : 1
+    if (x[4] === y[4]) return 0
+    if (x[4] === undefined || y[4] === undefined) return x[4] === undefined ? 1 : -1
+    const [p, q] = [x[4].split('.'), y[4].split('.')]
+    for (let i = 0; i < Math.max(p.length, q.length); i++) {
+        if (p[i] === undefined || q[i] === undefined) return p[i] === undefined ? -1 : 1
+        if (p[i] === q[i]) continue
+        const numeric = [/^\d+$/.test(p[i]!), /^\d+$/.test(q[i]!)]
+        if (numeric[0] && numeric[1]) return Number(p[i]) < Number(q[i]) ? -1 : 1
+        if (numeric[0] !== numeric[1]) return numeric[0] ? -1 : 1
+        return p[i]! < q[i]! ? -1 : 1
+    }
+    return 0
+}

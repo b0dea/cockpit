@@ -452,7 +452,9 @@ An upgrade replaces the generated files that guard and instruct every agent, so 
 
 `upgrade` resolves the target, refuses one that is older than the installed version, detects the
 package manager from the one lockfile at the cockpit root, installs the exact version as a dev
-dependency, then runs the new package's `sync` in a new process so the new version renders. Sync's
+dependency, then runs the new package's `sync` in a new process so the new version renders. That sync
+binds the guard to the cockpit just installed, in a linked worktree too, so no further sync or
+`--bind-worktree` follows the upgrade. Sync's
 output and exit code pass through: it removes stale generated files, and an upgrade that widens what
 agents may do waits for a person's `npx --no cockpit approve` yes. It ends by printing the `Upgrade:`
 lines from the installed `CHANGELOG.md` between the two versions (each names a step `sync` does not

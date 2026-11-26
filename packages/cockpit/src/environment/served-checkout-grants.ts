@@ -325,6 +325,12 @@ function claudeGuardFiles(root: string, settingsRoot = root): Readonly<{ wanted:
     return { wanted: settingsRoot === root ? wanted : gatedEntries(root, wanted), deny, local }
 }
 
+/** The Claude Code local settings files writeClaudeLocalGuard keeps for the cockpit at `root`. */
+export function claudeLocalSettingsPaths(root: string): readonly string[] {
+    const top = repositoryTopAbove(root)
+    return (top === undefined ? [root] : [root, top]).map(settingsRoot => join(settingsRoot, CLAUDE_LOCAL_SETTINGS))
+}
+
 /**
  * Repeats the committed guard registration in Claude Code's local settings at the cockpit root, and at
  * the repository's top when the cockpit lies below it, or takes cockpit's entry back when none is committed.

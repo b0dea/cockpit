@@ -782,6 +782,21 @@ describe('generated environment process contract', () => {
         expect(await runCli(['sync', '--config', 'cockpit.toml'], unchanged.io, { loadPolicy: quietPolicy,
             sync: async (input) => ({ status: 0, diagnostics: [], result: { action: 'sync', dryRun: input.dryRun === true, sourceSha256: 'a'.repeat(64), paths: ['AGENTS.md', 'CLAUDE.md'], changes: [] } }) }, person)).toBe(0)
         expect(unchanged.output().stdout).toBe('Nothing to sync: all 2 generated files were already current.\n')
+        // A sync that changed no generated file but bound the guard, as after an install moved cockpit, said only
+        // "Nothing to sync" while the guard started working; local settings Git does not track are named too.
+        const rebound = captureIo(async () => false)
+        expect(await runCli(['sync', '--config', 'cockpit.toml'], rebound.io, { loadPolicy: quietPolicy,
+            sync: async (input) => ({ status: 0, diagnostics: [], result: { action: 'sync', dryRun: input.dryRun === true, sourceSha256: 'a'.repeat(64), paths: ['AGENTS.md', 'CLAUDE.md'], changes: [],
+                guard: { root: '/work/feature', cockpit: '@b00dea/cockpit 9.9.9 at /work/feature/node_modules/@b00dea/cockpit', state: 'bound' },
+                local: ['.claude/settings.local.json'] } }) }, person)).toBe(0)
+        expect(rebound.output().stdout).toBe('No generated file changed: all 2 generated files were already current.\n'
+            + 'Sync bound the guard of /work/feature to @b00dea/cockpit 9.9.9 at /work/feature/node_modules/@b00dea/cockpit.\n'
+            + 'Sync updated files Git does not track: ".claude/settings.local.json".\n')
+        const already = captureIo()
+        expect(await runCli(['sync', '--config', 'cockpit.toml', '--bind-worktree'], already.io, { loadPolicy: quietPolicy,
+            sync: async () => ({ status: 0, diagnostics: [], result: { action: 'sync', dryRun: false, changes: [],
+                guard: { root: '/work/feature', cockpit: '@b00dea/cockpit 9.9.9 at /work/feature/node_modules/@b00dea/cockpit', state: 'already-bound' } } }) }, { env: {} })).toBe(0)
+        expect(already.output().stdout).toBe('Nothing to bind: the guard of /work/feature is already bound to @b00dea/cockpit 9.9.9 at /work/feature/node_modules/@b00dea/cockpit; nothing was written.\n')
     })
 
     // Agents are told to pass --json to every command but session.

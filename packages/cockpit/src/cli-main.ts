@@ -611,7 +611,7 @@ function teamMetadataOutcome(result: Extract<TeamMetadataResult, { kind: 'refusa
 function teamMetadataOutcome(result: TeamMetadataResult): GeneratedEnvironmentCommandOutcome | undefined
 function teamMetadataOutcome(result: TeamMetadataResult): GeneratedEnvironmentCommandOutcome | undefined {
     if (result.kind === 'complete') return undefined
-    return refusalOutcome(result.code, result.message, result.target)
+    return refusalOutcome(result.code, result.message, result.target, result.fix)
 }
 
 function defaultHandlers(runtime: CliRuntime): Partial<CommandHandlers> {

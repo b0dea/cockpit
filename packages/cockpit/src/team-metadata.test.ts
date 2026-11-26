@@ -253,14 +253,31 @@ purpose = "Synthetic local repository"
         expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe(ignore)
     })
 
-    it('refuses version drift with an actionable exact install command', async () => {
+    // A worktree whose upgrade a person approved pins a newer cockpit than its main checkout's, and a run of the main
+    // checkout's cockpit there told the reader to install that older version, undoing the upgrade, from the wrong directory.
+    it('refuses version drift with the line that runs the pinned cockpit, or moves an older pin forward, from that checkout', async () => {
+        const { name, version } = installedPackageMetadata
         const root = await fixture()
-        await writeFile(join(root, 'package.json'), JSON.stringify({ devDependencies: { [installedPackageMetadata.name]: '9.9.9' } }))
-        expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'refusal', code: 'COCKPIT_VERSION_MISMATCH',
-            message: expect.stringContaining(`npm install --save-dev --save-exact ${installedPackageMetadata.name}@${installedPackageMetadata.version}`) })
+        const pin = async (pinned: string | undefined) => {
+            await writeFile(join(root, 'package.json'), JSON.stringify({ devDependencies: pinned === undefined ? {} : { [name]: pinned } }))
+            return validateTeamMetadata(join(root, 'cockpit.toml'))
+        }
+        const own = (...first: string[]) => `\`${[`cd ${root}`, ...first, './node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml'].join(' && ')}\``
+        expect(await pin('9.9.9')).toMatchObject({ kind: 'refusal', code: 'COCKPIT_VERSION_MISMATCH',
+            message: `package.json in ${root} pins ${name} 9.9.9, newer than the ${version} running: that checkout runs its own cockpit, not this one`,
+            fix: `run its own cockpit: ${own('npm install')}, which installs 9.9.9 there first` })
         await writeFile(join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n')
-        expect(await validateTeamMetadata(join(root, 'cockpit.toml'))).toMatchObject({ kind: 'refusal', code: 'COCKPIT_VERSION_MISMATCH',
-            message: expect.stringContaining(`pnpm add --save-dev --save-exact ${installedPackageMetadata.name}@${installedPackageMetadata.version}`) })
+        await mkdir(join(root, 'node_modules', name), { recursive: true })
+        await writeFile(join(root, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '9.9.9' }))
+        expect(await pin('9.9.9')).toMatchObject({ fix: `run its own cockpit: ${own()}` })
+        // An older pin is that checkout's own cockpit too, or moves to the running version through upgrade.
+        expect(await pin('0.0.1')).toMatchObject({ kind: 'refusal', code: 'COCKPIT_VERSION_MISMATCH',
+            message: `package.json in ${root} pins ${name} 0.0.1, older than the ${version} running`,
+            fix: `run that checkout's own cockpit: ${own('pnpm install')}, which installs 0.0.1 there first; `
+                + `or move it to ${version}: \`cd ${root} && pnpm install && ./node_modules/@b00dea/cockpit/bin/cockpit.mjs upgrade --config cockpit.toml ${version}\`` })
+        // No exact pin takes the running version.
+        for (const pinned of [undefined, '^1.0.0']) expect(await pin(pinned)).toMatchObject({ kind: 'refusal', code: 'COCKPIT_VERSION_MISMATCH',
+            fix: `run \`cd ${root} && pnpm add --save-dev --save-exact ${name}@${version} && ./node_modules/@b00dea/cockpit/bin/cockpit.mjs check --config cockpit.toml\`` })
     })
 
     // The parser quotes the text where it stopped, and a refusal may reach a reader who cannot open
@@ -331,9 +348,9 @@ purpose = "Synthetic local repository"
             await writeFile(join(root, 'package.json'), JSON.stringify(manifest))
             return (await prepareTeamMetadata(join(root, 'cockpit.toml'))) as { message?: string }
         }
-        const pinned = await refusalFor({ devDependencies: { [name]: '9.9.9' } })
-        expect(pinned.message).toContain(`package.json pins ${name} 9.9.9, but ${installedPackageMetadata.version} is running; `
-            + `run npm install --save-dev --save-exact ${name}@${installedPackageMetadata.version}`)
+        const pinned = await refusalFor({ devDependencies: { [name]: '9.9.9' } }) as { message?: string; fix?: string }
+        expect(pinned.message).toContain(`pins ${name} 9.9.9, newer than the ${installedPackageMetadata.version} running: that checkout runs its own cockpit`)
+        expect(pinned.fix).toMatch(/^run its own cockpit: `cd \S+ && npm install && \.\/node_modules\/@b00dea\/cockpit\/bin\/cockpit\.mjs sync --config cockpit\.toml`/)
         const archive = await refusalFor({ devDependencies: { [name]: 'file:../archives/cockpit.tgz' } })
         expect(archive.message).toContain(`package.json pins ${name} to file:../archives/cockpit.tgz, but package-lock.json and node_modules do not resolve that archive to the running ${installedPackageMetadata.version}; run npm install`)
         const script = await refusalFor({ scripts: { 'cockpit:sync': 'make sync' } })
